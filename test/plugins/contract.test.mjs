@@ -1,6 +1,7 @@
 // The checker against this repository's own agent entries, each with what it drives stood in for, so that no login is
 // needed and nothing of this machine's is touched: Claude with the fixture SDK, Codex with a fixture app-server, Kimi with
-// the checker's honest fake agent as `kimi acp`, Grok with a fixture CLI. They pass every level, as Coda holds them.
+// the checker's honest fake agent as `kimi acp` and `copilot --acp --stdio`, Grok with a fixture CLI. They pass every
+// level, as Coda holds them.
 import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,10 +16,12 @@ const at = path => fileURLToPath(new URL(path, import.meta.url));
 const limits = { settle: 10_000 };
 const root = mkdtempSync(join(tmpdir(), 'coda-plugins-contract-'));
 after(() => rmSync(root, { recursive: true, force: true }));
-// A program at `path` that runs a Node script.
-function program(path, script) {
+const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
+// A program at `path` that runs a Node script, optionally checking the CLI arguments before speaking ACP.
+function program(path, script, args) {
   mkdirSync(join(path, '..'), { recursive: true });
-  writeFileSync(path, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(script)}\n`);
+  const checkArgs = args ? `[ "$#" -eq ${args.length} ] && ${args.map((arg, i) => `[ "$${i + 1}" = ${quote(arg)} ]`).join(' && ')} || exit 64\n` : '';
+  writeFileSync(path, `#!/bin/sh\n${checkArgs}exec ${quote(process.execPath)} ${quote(script)}\n`);
   chmodSync(path, 0o755);
   return path;
 }
@@ -61,6 +64,19 @@ test('kimi, its relay with a fake kimi acp', async () => {
   program(join(root, 'kimi-bin/kimi'), at('../fixtures/liar.mjs'));
   const report = await check('kimi', 'kimi', { HOME: home, KIMI_CODE_HOME: join(home, '.kimi-code'), PATH: `${join(root, 'kimi-bin')}:${process.env.PATH}` });
   assertPasses(report, EVERY);
+});
+
+test('copilot, its native ACP command prefers ~/.local/bin and falls back to PATH', async t => {
+  for (const local of [true, false]) await t.test(local ? 'executable in ~/.local/bin takes priority' : 'non-executable local file falls back to PATH', async () => {
+    const dir = join(root, `copilot-${local ? 'local' : 'path'}`), home = join(dir, 'home with spaces'), bin = join(dir, 'bin');
+    const localCli = program(join(home, '.local/bin/copilot'), at('../fixtures/liar.mjs'), ['--acp', '--stdio']);
+    const pathCli = program(join(bin, 'copilot'), at('../fixtures/liar.mjs'), ['--acp', '--stdio']);
+    if (local) writeFileSync(pathCli, '#!/bin/sh\nexit 99\n');
+    else chmodSync(localCli, 0o644);
+    // Keep PATH isolated too: a failure to select either fixture must never run a real Copilot installation.
+    const report = await check('copilot', 'copilot', { HOME: home, PATH: bin });
+    assertPasses(report, EVERY);
+  });
 });
 
 test('grok, its approval-mode entry with a fake Grok CLI', async () => {

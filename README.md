@@ -14,12 +14,15 @@ plugins/grok/            Grok：转发运行机上 Grok CLI 的 ACP，并适配�
 plugins/opencode/        OpenCode：只有清单，运行机上的 opencode acp
 plugins/codex-accounts/  Codex 多账号：管理登录、自动续期与账号选择，接管 Codex 额度面板
 plugins/cursor/          Cursor：只有清单，运行机上的 Cursor CLI 自己讲 ACP
+plugins/copilot/         GitHub Copilot：只有清单，运行机上的 Copilot CLI 原生 ACP（copilot --acp --stdio）
 templates/agent/         最小的 Agent 插件：手写 ACP 的回声 Agent，演示 Agent 活动与自主轮次
 templates/panel/         最小的面板插件：一张卡片、一条进度条、一个按钮
 bin/、check/             契约检查（仓库根的 package.json 就是它，@coda-console/plugin-check）
 test/                    检查包的测试；test/plugins/ 是各插件的测试（插件目录里只放运行要用的文件）
 docs/agent-protocol.md   Coda 接入协议正文的公开副本
 ```
+
+GitHub Copilot 的运行机安装、登录与验收见 [Copilot 插件说明](plugins/copilot/README.md)。
 
 ## Coda 自带的插件
 
@@ -107,7 +110,7 @@ Dependabot（`.github/dependabot.yml`）每周为它们各开一个 PR，连同 
 「设置 › 插件 › 从仓库添加…」：
 
 1. **仓库**填 `coda-console/coda-plugins`（或 `https://github.com/coda-console/coda-plugins`）；**版本**留空是默认分支，也可以填分支、标签或完整的提交号。
-2. **读取**：Coda 拉取那个提交，把仓库根与两层以内 `package.json` 带 `contributes` 的目录各列成一个插件——这个仓库里是 `plugins/` 下的七个与两个模板（与 Coda 内置同名的六个，要 Coda 支持从同一来源更新内置插件之后才装得上）。
+2. **读取**：Coda 拉取那个提交，把仓库根与两层以内 `package.json` 带 `contributes` 的目录各列成一个插件——这个仓库里是 `plugins/` 下的八个与两个模板（与 Coda 内置同名的六个，要 Coda 支持从同一来源更新内置插件之后才装得上）。
 3. 选一个，确认里逐条列出它会运行的命令（Agent 的 `command`、面板的命令与动作），确认就是批准：这些命令以你的账户在空间里每台机器上运行，Coda 不做隔离，只装你信任的来源。
 
 **Coda 只认提交**：安装时钉在读取到的那个提交上，每台机器各自取同一个提交。「检查更新」用记下的仓库与版本再读一次，提交变了才有更新；
