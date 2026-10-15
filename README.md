@@ -14,7 +14,7 @@ plugins/grok/            Grok：转发运行机上 Grok CLI 的 ACP，并适配�
 plugins/opencode/        OpenCode：只有清单，运行机上的 opencode acp
 plugins/codex-accounts/  Codex 多账号：管理登录、自动续期与账号选择，接管 Codex 额度面板
 plugins/cursor/          Cursor：只有清单，运行机上的 Cursor CLI 自己讲 ACP
-plugins/copilot/         GitHub Copilot：只有清单，运行机上的 Copilot CLI 原生 ACP（copilot --acp --stdio）
+plugins/copilot/         GitHub Copilot：运行机上的 Copilot CLI 原生 ACP，独立账号额度面板
 templates/agent/         最小的 Agent 插件：手写 ACP 的回声 Agent，演示 Agent 活动与自主轮次
 templates/panel/         最小的面板插件：一张卡片、一条进度条、一个按钮
 bin/、check/             契约检查（仓库根的 package.json 就是它，@coda-console/plugin-check）
