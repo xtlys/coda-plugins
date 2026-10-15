@@ -1,7 +1,7 @@
 # GitHub Copilot
 
-把 GitHub Copilot CLI 接进 Coda。插件直接启动 CLI 的[原生 ACP 服务](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server)
-（`copilot --acp --stdio`），每个会话一个进程，通过标准输入输出交换 JSON-RPC 消息；没有额外适配器或 npm 依赖。
+把 GitHub Copilot CLI 接进 Coda。插件入口启动 CLI 的[原生 ACP 服务](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server)
+（`copilot --acp --stdio`），在 CLI 与 Coda 之间转发标准输入输出的 JSON-RPC 消息，规整 Copilot 的完成摘要；没有额外 npm 依赖。
 资源页的「GitHub Copilot」面板独立读取当前账号额度。
 
 ## 安装与登录
@@ -59,6 +59,11 @@ CLI 仍需在实际运行会话的每台机器上分别安装和登录。
 ## 接入行为
 
 - 模型、模式、工具审批、输出和会话恢复按 CLI 实际声明的 ACP 能力处理。插件不固定模型列表，也不添加自动放行参数。
+- Copilot 通过 `task_complete` 工具交付的完成摘要，由插件 relay 转成标准 `agent_message_chunk`，在核心中按 `channel=answer`
+  保存和展示。仅在工具 `completed` 且本轮以 `end_turn` 正常结束时转换，答复在本轮结束回执之前送达。
+  摘要优先取 `rawOutput.summary`，兼容 `rawOutput.content`、工具的文本 `content` 和 `rawInput.summary`。
+  成功转换的 `task_complete` 通知不再作为工具转发，避免它遮住已有的最终正文；已有等价的末尾正文时不重复添加摘要。
+  新增摘要使用独立消息 ID，与之前的进度文字分开。思考不会转成正文；失败、取消、异常退出或没有摘要时保留原始工具记录。
 - 未配置 Coda 的「自动审批」「全部放行」模式映射；不能假定 Copilot 的工作模式就是审批策略。
 - Coda 将项目 skills 放在 `.github/skills`，由 Copilot CLI 原生加载。
 - 配置变化监测包含 `COPILOT_HOME` 下的 `settings.json`、`providers.json`，`COPILOT_PROVIDERS_CONFIG` 指向的文件，
@@ -76,7 +81,8 @@ node bin/check.mjs plugins/copilot             # 真实 CLI：握手、新建会
 node bin/check.mjs plugins/copilot --live      # 真实账号：回复、取消、按声明检查会话恢复
 ```
 
-自动化测试使用假的 CLI 验证命令参数、路径选择和 ACP 生命周期；真实 CLI 的验收结果另行记录。
+自动化测试使用假的 CLI 验证命令参数、路径选择、ACP 生命周期和完成摘要适配（仅摘要、进度后收尾、正文去重、失败及异常退出）；
+真实 CLI 的验收结果另行记录。
 
 2026-10-14 已使用本机 Copilot CLI 1.0.95 跑过真实 `--live` 检查：ACP 版本 1、新建会话与当前模型、回复、取消、
 新进程恢复会话、标准输入关闭和 SIGTERM 退出均通过（12 项通过、0 项失败）。Coda 的安装发现仍以提交后「读取来源」为准。

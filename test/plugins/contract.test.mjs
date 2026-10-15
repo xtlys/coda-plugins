@@ -66,7 +66,7 @@ test('kimi, its relay with a fake kimi acp', async () => {
   assertPasses(report, EVERY);
 });
 
-test('copilot, its native ACP command prefers ~/.local/bin and falls back to PATH', async t => {
+test('copilot, its ACP relay prefers ~/.local/bin and falls back to PATH', async t => {
   for (const local of [true, false]) await t.test(local ? 'executable in ~/.local/bin takes priority' : 'non-executable local file falls back to PATH', async () => {
     const dir = join(root, `copilot-${local ? 'local' : 'path'}`), home = join(dir, 'home with spaces'), bin = join(dir, 'bin');
     const localCli = program(join(home, '.local/bin/copilot'), at('../fixtures/liar.mjs'), ['--acp', '--stdio']);
