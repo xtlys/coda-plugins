@@ -1,0 +1,41 @@
+{
+  "name": "dsh-upstreams",
+  "displayName": "DSH 多上游",
+  "description": "管理 DeepSeek Harness 的多组 base_url 与 API Key，在资源面板切换；下一次模型请求生效。",
+  "version": "1.0.0",
+  "type": "module",
+  "extensionDependencies": ["dsh"],
+  "dependencies": {
+    "proper-lockfile": "4.1.2"
+  },
+  "contributes": {
+    "extensions": {
+      "dsh/upstream-source": {
+        "command": "exec \"$CODA_NODE\" \"$CODA_PLUGIN_PATH/scripts/source.mjs\""
+      }
+    },
+    "commands": [
+      {
+        "name": "dsh-upstreams",
+        "command": "exec \"$CODA_NODE\" \"$CODA_PLUGIN_PATH/scripts/cli.mjs\""
+      }
+    ],
+    "panels": [
+      {
+        "id": "upstreams",
+        "title": "DSH 多上游",
+        "command": "\"$CODA_NODE\" \"$CODA_PLUGIN_PATH/scripts/panel.mjs\"",
+        "maxAge": "PT0S",
+        "actions": {
+          "select": {
+            "command": "\"$CODA_NODE\" \"$CODA_PLUGIN_PATH/scripts/select.mjs\""
+          },
+          "remove": {
+            "command": "\"$CODA_NODE\" \"$CODA_PLUGIN_PATH/scripts/remove.mjs\"",
+            "confirm": "删除此上游及其保存的 API Key？删除正在使用的上游后，需要重新选择才能继续请求。"
+          }
+        }
+      }
+    ]
+  }
+}

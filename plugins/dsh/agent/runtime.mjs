@@ -151,7 +151,7 @@ export function install({ ctx, sessions, implementation: api, RequestError, crea
 
   api.initialize = async params => {
     const result = await native.initialize(params);
-    result.agentInfo = { name: 'dsh', title: 'DeepSeek Harness', version: '1.0.0' };
+    result.agentInfo = { name: 'dsh', title: 'DeepSeek Harness', version: '1.1.0' };
     result.agentCapabilities.loadSession = true;
     result.agentCapabilities.sessionCapabilities.systemPrompt = {};
     result.agentCapabilities._meta = { coda: { waits: {} } };

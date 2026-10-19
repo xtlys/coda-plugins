@@ -13,6 +13,7 @@ export function turnError(error, RequestError) {
 }
 
 export function authError(error, RequestError) {
+  if (error?.upstreamSource) return new RequestError(-32000, error.message);
   if (['AUTH', 'MISSING_CREDENTIAL'].includes(error?.code)) return new RequestError(-32000, 'DeepSeek 尚未认证：请配置运行机的 API Key。');
   return error;
 }

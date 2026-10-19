@@ -25,6 +25,11 @@ node plugins/dsh/scripts/cli.mjs web
 `DEEPSEEK_BASE_URL`、代理与模型配置仍由 Harness 处理。新版配置保存在
 `$DSH_HOME/profiles/acp/cordis.patch.yml` 和 `$DSH_HOME/cordis.patch.yml`，不再以旧版 `settings.yaml` 为主。
 
+需要在多组地址和密钥之间切换时，安装独立的 [DSH 多上游](../dsh-upstreams/README.md) 插件。
+DSH **1.1.0** 提供 `upstream-source` 扩展点：对 `deepseek-official` 路由在每次模型调用时读取整组 `base_url` / API Key，
+正在发送的请求保持原配对。接入后不会回退到原生凭据；未安装时继续使用上面的原生配置方式。
+该扩展使用原生 Messages 适配器，不转换为 OpenAI Chat Completions 协议。
+
 ## Coda 语义
 
 | 能力 | 实现 |
@@ -54,6 +59,7 @@ node plugins/dsh/scripts/cli.mjs web
 入口参考 `codex` 插件：在同一 Node 进程中运行锁定依赖，用 `registerHooks` 仅在加载时接入原生 ACP，
 不改 `node_modules`。接入点不匹配、profile 没有挂载锁定的 ACP 时启动失败，避免静默丢失 Coda 语义。
 `agent/coda.patch.yml` 是最后应用的启动 overlay，不修改用户的 profile 文件。
+`agent/upstreams.mjs` 在加载时接入锁定版本的 API Key provider，地址和认证按请求固定在内存中，密钥不进入会话配置或日志。
 
 ```sh
 npm ci

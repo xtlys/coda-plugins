@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>DSH 多上游</title>
+  <style>
+    :root { color-scheme: light dark; font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; padding: 28px 20px; background: light-dark(#f5f6fa, #17181b); color: light-dark(#20222a, #eceef5); }
+    main { max-width: 480px; margin: 0 auto; }
+    h1 { font-size: 26px; margin: 0 0 8px; }
+    p { color: light-dark(#555e72, #adb6cb); }
+    form { padding: 22px; border-radius: 18px; background: light-dark(#fff, #22252c); }
+    label { display: block; font-weight: 600; margin-bottom: 20px; }
+    input { display: block; box-sizing: border-box; width: 100%; margin-top: 6px; padding: 11px; border: 1px solid #81899a; border-radius: 8px; font: inherit; }
+    small { display: block; font-weight: 400; color: light-dark(#555e72, #adb6cb); }
+    button { width: 100%; padding: 12px; border: 0; border-radius: 10px; background: #315de8; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>DSH 多上游</h1>
+    <p>添加一组接口地址和密钥。使用已有名称会更新该上游。</p>
+    <form method="post" autocomplete="off">
+      <label>上游名称
+        <input name="name" required maxlength="80" placeholder="例如：官方、工作、自建">
+      </label>
+      <label>base_url
+        <input name="baseUrl" type="url" required maxlength="2048" value="https://api.deepseek.com/anthropic" spellcheck="false" autocapitalize="none">
+        <small>填写支持 Messages 协议的 API 根地址，不含 /messages。</small>
+      </label>
+      <label>API Key
+        <input name="apiKey" type="password" required maxlength="4096" autocomplete="new-password" spellcheck="false" autocapitalize="none">
+        <small>仅保存在这台运行机的插件私有目录中。</small>
+      </label>
+      <button type="submit">保存上游</button>
+    </form>
+    <p>第一个上游会自动选用。添加其他上游后，可在 Coda 的「DSH 多上游」面板切换。</p>
+  </main>
+</body>
+</html>
