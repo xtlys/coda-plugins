@@ -1,0 +1,33 @@
+{
+  "name": "dsh",
+  "displayName": "DeepSeek Harness",
+  "description": "DeepSeek Harness：使用 deepseek-flash，适配 Coda 的会话指令、恢复、审批、提问与后台活动。",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-acp": "0.2.1-rc.2"
+  },
+  "contributes": {
+    "agents": [
+      {
+        "id": "dsh",
+        "displayName": "DeepSeek Harness",
+        "icon": { "light": "icons/deepseek.pdf", "template": true },
+        "command": "exec \"$CODA_NODE\" \"$CODA_PLUGIN_PATH/agent/entry.mjs\"",
+        "modes": {
+          "title": "审批模式",
+          "unset": "人工审批",
+          "auto": "workspace-write",
+          "full": "danger-full-access"
+        },
+        "skillsDir": ".agents/skills",
+        "configFiles": [
+          "${DSH_HOME:-~/.dsh}/cordis.patch.yml",
+          "${DSH_HOME:-~/.dsh}/profiles/acp/cordis.patch.yml"
+        ],
+        "setupHint": "请在运行机设置 DEEPSEEK_API_KEY，或使用 DeepSeek Harness 配置 API Key。"
+      }
+    ]
+  }
+}

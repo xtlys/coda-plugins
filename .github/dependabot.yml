@@ -1,4 +1,4 @@
-# Codex CLI 与 Claude Agent SDK 的新版本：每周为它们开一个 PR（docs 见 README「升级 Agent 的 CLI 与 SDK」）。
+# Codex CLI、Claude Agent SDK 与 DeepSeek Harness 的新版本：每周检查（升级说明见各插件 README）。
 # 合并后，Coda 里「设置 › 插件」点「检查更新」就用上；内置副本随 Coda 的 sync-plugins 更新。
 version: 2
 updates:
@@ -18,3 +18,17 @@ updates:
       - dependency-name: "@anthropic-ai/claude-agent-sdk"
     commit-message:
       prefix: "claude"
+  - package-ecosystem: npm
+    directory: /plugins/dsh
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: "@deepseek-ai/dsh"
+      - dependency-name: "@deepseek-ai/dsh-acp"
+    groups:
+      deepseek-harness:
+        patterns:
+          - "@deepseek-ai/dsh"
+          - "@deepseek-ai/dsh-acp"
+    commit-message:
+      prefix: "dsh"

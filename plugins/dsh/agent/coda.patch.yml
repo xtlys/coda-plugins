@@ -1,0 +1,13 @@
+# Final per-launch overlay; no writes to the user's profile or credentials.
+- id: acp
+  config:
+    provider: deepseek-official
+    model: deepseek-flash
+
+# Coda owns retries after a completed failed prompt.
+- id: llm-retry
+  disabled: true
+
+- insert:
+    - id: coda-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
