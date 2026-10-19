@@ -2,7 +2,7 @@
   "name": "copilot",
   "displayName": "GitHub Copilot",
   "description": "GitHub Copilot：通过运行机上 Copilot CLI 的原生 ACP 接入，资源页提供账号额度面板。",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "contributes": {
     "agents": [
       {

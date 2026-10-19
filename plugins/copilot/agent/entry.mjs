@@ -1,4 +1,4 @@
-// Copilot's native ACP, with its task_complete replies normalized by this plugin's relay. The CLI stays in Coda's
+// Copilot's native ACP, with Coda session instructions and completion receipts handled by this plugin's relay. The CLI stays in Coda's
 // process group; its exit and errors remain exits and errors, and its output is drained before this entry ends.
 import { spawn } from 'node:child_process';
 import { copilotBinary } from '../scripts/account.mjs';

@@ -75,7 +75,7 @@ test('copilot, its ACP relay prefers ~/.local/bin and falls back to PATH', async
     else chmodSync(localCli, 0o644);
     // Keep PATH isolated too: a failure to select either fixture must never run a real Copilot installation.
     const report = await check('copilot', 'copilot', { HOME: home, PATH: bin });
-    assertPasses(report, EVERY);
+    assertPasses(report, [...EVERY, 'handshake.system-prompt', 'live.instructions']);
   });
 });
 

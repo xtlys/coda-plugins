@@ -5,7 +5,7 @@ const say = message => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', 
 createInterface({ input: process.stdin }).on('line', line => {
   const message = JSON.parse(line);
   if (message.method !== 'session/prompt') return;
-  const scenario = message.params.prompt[0].text;
+  const scenario = message.params.prompt.at(-1).text;
   const summary = '文档已写好，改动尚未提交。';
   const update = value => say({ method: 'session/update', params: { sessionId: message.params.sessionId, update: value } });
   if (scenario === 'duplicate') update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: summary } });

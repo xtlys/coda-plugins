@@ -14,7 +14,7 @@ plugins/grok/            Grok：转发运行机上 Grok CLI 的 ACP，并适配�
 plugins/opencode/        OpenCode：在运行机的 opencode acp 与 Coda 之间转发，送入会话指令
 plugins/codex-accounts/  Codex 多账号：管理登录、自动续期与账号选择，接管 Codex 额度面板
 plugins/cursor/          Cursor：在运行机的 cursor-agent acp 与 Coda 之间转发，送入会话指令
-plugins/copilot/         GitHub Copilot：转发运行机上 CLI 的原生 ACP，规整完成摘要，独立账号额度面板
+plugins/copilot/         GitHub Copilot：转发原生 ACP，接入会话指令与答复语义，独立账号额度面板
 plugins/dsh/             DeepSeek Harness：锁定官方 harness，默认 deepseek-flash，适配会话、审批、提问及后台活动
 templates/agent/         最小的 Agent 插件：手写 ACP 的回声 Agent，演示会话指令、插话、Agent 活动与自主轮次
 templates/panel/         最小的面板插件：一张卡片、一条进度条、一个按钮
@@ -54,7 +54,7 @@ Coda 的会话指令（`systemPrompt`）各插件都声明并接受，只接受 
 Claude 追加在 `claude_code` 预设的系统提示词后面；Codex 经 `thread/start`、`thread/resume` 作为 `developerInstructions` 交给 Codex，
 接在会话目录下 Codex 自己配置的 `developer_instructions`（`config/read`）后面
 （codex-acp 按 ACP 的 schema 读请求会丢掉 `systemPrompt`，入口改放在请求的 `_meta` 里交给打过补丁的 codex-acp）。
-Kimi、Grok、OpenCode、Cursor 的 CLI 不接受它：入口不转给 CLI，在 `session/new` 建立的原生会话第一次 `session/prompt` 时，
+Kimi、Grok、OpenCode、Cursor、Copilot 的 CLI 不接受它：入口不转给 CLI，在 `session/new` 建立的原生会话第一次 `session/prompt` 时，
 把指令包在 `<coda-session-instructions>` 里作为单独的一段文本放在用户输入前面，之后与 `session/load` 恢复的会话不再送；
 第一条是斜杠命令时留到下一条。Codex 另声明插话：一轮已经结束时收到的 `_session/steering` 回 `promptRequired`，不另开一轮。
 

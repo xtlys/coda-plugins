@@ -68,7 +68,7 @@ test('only text in successful completion output is used, with output ahead of in
   });
 });
 
-test('equivalent native text, before or after completion, remains the only answer and has no trailing tool', async t => {
+test('equivalent native text remains the only answer and any earlier completion stays before it', async t => {
   for (const after of [false, true]) await t.test(after ? 'native reply after tool' : 'native reply before tool', () => {
     const { send, said } = setup();
     const native = [answer('文档已写好，'), answer('改动尚未提交。\r\n')];
@@ -76,7 +76,7 @@ test('equivalent native text, before or after completion, remains the only answe
     send(start(), completed());
     if (after) send(...native);
     send(end());
-    assert.deepEqual(said, [...native, end()]);
+    assert.deepEqual(said, [...(after ? [start(), completed()] : []), ...native, end()]);
   });
 });
 
@@ -110,11 +110,10 @@ test('a separate native final message after progress is also deduplicated', () =
   assert.deepEqual(said, [progress, final, end()]);
 });
 
-test('failed, unfinished and empty completion tools are preserved instead of promoted', async t => {
+test('failed and unfinished completion tools are preserved instead of promoted', async t => {
   for (const [name, begin, done] of [
     ['failed', start(), completed({ status: 'failed', rawOutput: { summary: 'not a success' } })],
     ['unfinished', start(), completed({ status: 'in_progress' })],
-    ['empty', start('complete', ' \n '), completed({ rawOutput: { summary: {} } })],
     ['no result', start(), null],
   ]) await t.test(name, () => {
     const { send, said } = setup();
@@ -136,11 +135,9 @@ test('cancellation, other stop reasons, errors and process exit never invent a s
   }
 });
 
-test('all unrelated traffic, history replay, permissions and session instructions pass unchanged', () => {
+test('unrelated traffic, history replay and permissions pass unchanged', () => {
   const { relay, send, said, told } = setup();
   const requests = [
-    { jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocolVersion: 1 } },
-    { jsonrpc: '2.0', id: 'new', method: 'session/new', params: { systemPrompt: { mode: 'append', content: [{ type: 'text', text: 'instructions' }] } } },
     { jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: SESSION } },
     { jsonrpc: '2.0', id: 'permission', result: { outcome: { outcome: 'cancelled' } } },
   ];
@@ -153,7 +150,7 @@ test('all unrelated traffic, history replay, permissions and session instruction
     { jsonrpc: '2.0', id: 0, result: {} },
   ];
   send(...replies, end());
-  assert.deepEqual(told, [prompt(), ...requests]);
+  assert.deepEqual(told.slice(1), requests);
   assert.deepEqual(said, [...replies, end()]);
 });
 
@@ -214,4 +211,60 @@ test('the manifest entry flushes unconverted completion records and preserves a 
   assert.equal((await agent.exited).code, 7);
   assert.equal(answers(said).length, 0);
   assert.deepEqual(said.map(message => message.params.update.sessionUpdate), ['tool_call', 'tool_call_update']);
+});
+
+test('a completed tool with neither a summary nor native answer reports missing output', () => {
+  const { send, said } = setup();
+  const calls = [start('complete', ''), completed({ rawOutput: {} })];
+  send(...calls, end());
+  assert.deepEqual(said.slice(0, -1), calls);
+  assert.equal(answers(said).length, 0);
+  assert.equal(said.at(-1).error.code, -32603);
+  assert.match(said.at(-1).error.message, /未提供答复正文或完成摘要/);
+});
+
+test('an empty trailing completion does not hide a real native answer', () => {
+  const { send, said } = setup();
+  const native = answer('BYOK 是 Bring Your Own Key，使用自己的模型服务密钥。');
+  send(native, start('complete', ''), completed({ rawOutput: {} }), end());
+  assert.deepEqual(said, [native, end()]);
+});
+
+test('completed, failed, unfinished and empty tools are flushed before later native text, never after it', async t => {
+  for (const [name, calls] of [
+    ['completed', [start(), completed()]],
+    ['failed', [start(), completed({ status: 'failed' })]],
+    ['unfinished', [start()]],
+    ['empty', [start('complete', ''), completed({ rawOutput: {} })]],
+  ]) await t.test(name, () => {
+    const { send, said } = setup();
+    const native = answer('BYOK 是 Bring Your Own Key，使用自己的模型服务密钥。');
+    send(...calls, native);
+    assert.deepEqual(said, [...calls, native], 'native text streams without waiting for the turn to end');
+    const late = completed();
+    send(late, end());
+    assert.deepEqual(said, [...calls, native, late, end()], 'an older completion cannot replace a newer native answer');
+  });
+});
+
+test('new tools and permission requests keep their position relative to held completion records', async t => {
+  for (const next of [
+    update({ sessionUpdate: 'tool_call', toolCallId: 'read', title: 'read_file', status: 'completed' }),
+    { jsonrpc: '2.0', id: 'permission', method: 'session/request_permission', params: { sessionId: SESSION, options: [] } },
+  ]) await t.test(next.method, () => {
+    const { send, said } = setup();
+    const calls = [start(), completed()], native = answer('最终答复');
+    send(...calls, next, native, end());
+    assert.deepEqual(said, [...calls, next, native, end()]);
+  });
+});
+
+test('an explicit cancel never promotes a completion even if the CLI responds end_turn', () => {
+  const { send, said, relay, told } = setup();
+  const calls = [start(), completed()];
+  send(...calls);
+  const cancel = { jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: SESSION } };
+  relay.fromCoda(cancel); send(end());
+  assert.deepEqual(told.at(-1), cancel);
+  assert.deepEqual(said, [...calls, end()]);
 });

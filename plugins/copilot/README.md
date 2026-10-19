@@ -1,7 +1,7 @@
 # GitHub Copilot
 
 把 GitHub Copilot CLI 接进 Coda。插件入口启动 CLI 的[原生 ACP 服务](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server)
-（`copilot --acp --stdio`），在 CLI 与 Coda 之间转发标准输入输出的 JSON-RPC 消息，规整 Copilot 的完成摘要；没有额外 npm 依赖。
+（`copilot --acp --stdio`），在 CLI 与 Coda 之间转发标准输入输出的 JSON-RPC 消息，接入会话指令并适配最终答复；没有额外 npm 依赖。
 资源页的「GitHub Copilot」面板独立读取当前账号额度。
 
 ## 安装与登录
@@ -59,11 +59,14 @@ CLI 仍需在实际运行会话的每台机器上分别安装和登录。
 ## 接入行为
 
 - 模型、模式、工具审批、输出和会话恢复按 CLI 实际声明的 ACP 能力处理。插件不固定模型列表，也不添加自动放行参数。
-- Copilot 通过 `task_complete` 工具交付的完成摘要，由插件 relay 转成标准 `agent_message_chunk`，在核心中按 `channel=answer`
-  保存和展示。仅在工具 `completed` 且本轮以 `end_turn` 正常结束时转换，答复在本轮结束回执之前送达。
-  摘要优先取 `rawOutput.summary`，兼容 `rawOutput.content`、工具的文本 `content` 和 `rawInput.summary`。
-  成功转换的 `task_complete` 通知不再作为工具转发，避免它遮住已有的最终正文；已有等价的末尾正文时不重复添加摘要。
-  新增摘要使用独立消息 ID，与之前的进度文字分开。思考不会转成正文；失败、取消、异常退出或没有摘要时保留原始工具记录。
+- 入口声明并接收 Coda 的 `systemPrompt`，只接受 `append` 模式的文本块。CLI 不接受这个参数：新会话第一次普通输入前，
+  插件把指令放在独立的 `<coda-session-instructions>` 文本块中；斜杠命令延后到下次普通输入，恢复会话不重复注入完整指令。
+- 每次普通输入附带简短的答复约定，包括恢复的旧会话：调用 `task_complete` 时，`summary` 必须包含面向用户的完整答复，
+  不能只说「解释了……」；不调用这个工具时，以普通助手消息交付答案。Autopilot 原生就把 `summary` 显示为 Markdown，
+  见 [CLI 发布说明](https://github.com/github/copilot-cli/releases/tag/v1.0.6)。指令能指导模型，但插件不猜测或改写答案内容，也不能证明答案充分。
+- 末尾成功的 `task_complete` 在 `end_turn` 时转成独立的 `agent_message_chunk`，已有等价正文时不重复添加。
+  成功转换后省略对应工具通知，避免遮住最终答复；工具之后还有正文或新工具时，先按原顺序转发工具，不在结束时重放旧摘要覆盖新答复。
+  普通正文实时转发；失败、取消和异常退出保留原记录。正常完成时既没有末尾正文也没有摘要，则明确报错，不自动重跑任务。
 - 未配置 Coda 的「自动审批」「全部放行」模式映射；不能假定 Copilot 的工作模式就是审批策略。
 - Coda 将项目 skills 放在 `.github/skills`，由 Copilot CLI 原生加载。
 - 配置变化监测包含 `COPILOT_HOME` 下的 `settings.json`、`providers.json`，`COPILOT_PROVIDERS_CONFIG` 指向的文件，
@@ -81,11 +84,6 @@ node bin/check.mjs plugins/copilot             # 真实 CLI：握手、新建会
 node bin/check.mjs plugins/copilot --live      # 真实账号：回复、取消、按声明检查会话恢复
 ```
 
-自动化测试使用假的 CLI 验证命令参数、路径选择、ACP 生命周期和完成摘要适配（仅摘要、进度后收尾、正文去重、失败及异常退出）；
-真实 CLI 的验收结果另行记录。
-
-2026-10-14 已使用本机 Copilot CLI 1.0.95 跑过真实 `--live` 检查：ACP 版本 1、新建会话与当前模型、回复、取消、
-新进程恢复会话、标准输入关闭和 SIGTERM 退出均通过（12 项通过、0 项失败）。Coda 的安装发现仍以提交后「读取来源」为准。
-
-2026-10-15 已使用本机 Copilot CLI 1.0.97 实测额度查询：正确返回当前账号的 AI credits 已用量、总额度和剩余比例，
-以及聊天、代码补全的无限额度；查询过程不创建模型会话。未登录、CLI 不可用、超时等分支由隔离的假 CLI 测试覆盖。
+自动化测试使用假的 CLI 验证命令参数、路径选择、会话指令、ACP 生命周期和最终答复处理（摘要转换、正文去重、
+工具顺序、恢复会话、空答复、取消及异常退出）；未登录、CLI 不可用、额度查询超时也由隔离测试覆盖。
+真实 `--live` 检查需要运行机登录，验证包括指令实际生效、回复、取消和会话恢复。Coda 的安装发现以提交后「读取来源」为准。
