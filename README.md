@@ -262,11 +262,13 @@ Coda 改协议时，同一个改动也给这里开 PR：先改 `check/` 里抄�
 ```sh
 npm ci
 node scripts/install-plugins.mjs          # 在每个带 package-lock.json 的插件目录里 npm ci（照 Coda 装版本目录的参数）
-npm test                                   # node --test 'test/**/*.test.mjs'：检查包（两个模板跑全三级、故意讲错协议的假 Agent）与各插件的测试
+npm test                                   # 检查包（两个模板跑全三级、故意讲错协议的假 Agent）与各插件的测试
 node bin/check.mjs templates/agent --live --prompt "wait 看看自主轮次"
 ```
 
 检查包唯一的依赖是 `@agentclientprotocol/sdk`，版本与 Coda 后端相同（1.4.0）；`zod` 是它的 peer 依赖。
+测试文件最多 4 个并行；多项用例还会启动独立 CLI 子进程，限制并发可减少集中启动造成的超时误报。
+
 `test/plugins/` 的测试从插件目录自己的 `node_modules` 找依赖，没装就报错提示先跑 `install-plugins.mjs`；
 `test/plugins/contract.test.mjs` 用假的对端（Claude 的假 SDK、Codex 的假 app-server、充当 `kimi acp` 的假 Agent）对真实入口跑检查包的三级，不用登录。
 CI 先装各插件的依赖再跑全部测试，`plugins/*` 只查清单：真实的握手与一轮要各家的 CLI 与登录，不在 CI 跑。

@@ -8,6 +8,9 @@ import { panelItems } from '../../../check/panel.mjs';
 import { declaredPanel, run } from '../command.mjs';
 import { pluginDir } from '../plugin.mjs';
 
+// These exercise real subprocesses alongside the rest of the suite: startup time is not a latency assertion.
+const queryTimeoutMs = 10_000;
+
 const alive = pid => {
   try { process.kill(pid, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; throw error; }
 };
@@ -27,7 +30,7 @@ async function machine(t, mode = 'normal') {
     await rm(home, { recursive: true, force: true });
   });
   return { home, binary, env, trace,
-    read: options => readAccount({ env, timeoutMs: 2000, stopMs: 100, ...options }),
+    read: options => readAccount({ env, timeoutMs: queryTimeoutMs, stopMs: 100, ...options }),
     async assertStopped() {
       const start = (await trace()).find(event => event.event === 'start');
       assert.ok(start, 'the fixture started');
@@ -88,11 +91,13 @@ test('timeouts, early exit and ignored SIGTERM all finish promptly without a sur
   for (const [mode, expected] of [['silent', /查询超时/], ['early-exit', /查询完成前退出/], ['ignore-sigterm', null]]) {
     await t.test(mode, async t => {
       const m = await machine(t, mode);
+      // Leave time for the silent fixture to start too, so its cleanup can be checked under parallel test load.
+      const timeoutMs = mode === 'silent' ? 5000 : queryTimeoutMs;
       const started = Date.now();
-      const result = m.read({ timeoutMs: mode === 'silent' ? 1000 : 2000, stopMs: 80 });
+      const result = m.read({ timeoutMs, stopMs: 80 });
       if (expected) await assert.rejects(result, expected);
       else assert.equal((await result).auth.isAuthenticated, true);
-      assert.ok(Date.now() - started < 5000, 'completion and forced cleanup are bounded');
+      assert.ok(Date.now() - started < timeoutMs + 2000, 'completion and forced cleanup are bounded');
       if (mode === 'ignore-sigterm') assert.ok((await m.trace()).some(event => event.signal === 'SIGTERM'));
       await m.assertStopped();
     });

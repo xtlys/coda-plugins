@@ -107,10 +107,11 @@ describe('the plugins here', () => {
     const binary = claudeBinary();
     assert.ok(binary && relative(join(pluginDir('claude'), 'node_modules', '@anthropic-ai'), binary).split(sep)[0].startsWith('claude-agent-sdk-'), binary);
   });
-  test('the entries that relay a CLI\'s ACP carry the same session instructions, each its own copy', () => {
+  test('generic CLI relays carry identical session instructions; Copilot has its own reply contract', () => {
     const copies = plugins.filter(id => existsSync(join(pluginDir(id), 'agent/instructions.mjs')) && id !== 'codex');
-    assert.deepEqual(copies.sort(), ['cursor', 'grok', 'kimi', 'opencode']);
-    for (const id of copies) assert.equal(readFileSync(join(pluginDir(id), 'agent/instructions.mjs'), 'utf8'), readFileSync(join(pluginDir('kimi'), 'agent/instructions.mjs'), 'utf8'), id);
+    assert.deepEqual(copies.sort(), ['copilot', 'cursor', 'grok', 'kimi', 'opencode']);
+    // Copilot adds its task_complete reply contract on every turn; copilot/instructions.test.mjs verifies that behavior.
+    for (const id of copies.filter(id => id !== 'copilot')) assert.equal(readFileSync(join(pluginDir(id), 'agent/instructions.mjs'), 'utf8'), readFileSync(join(pluginDir('kimi'), 'agent/instructions.mjs'), 'utf8'), id);
   });
   // Where each plugin's setup finds its CLI first, and what a recent enough one says to `--version`.
   const ready = { kimi: ['.kimi-code/bin/kimi', 'kimi 2.1.1', 'Kimi CLI 2.1.1'], grok: ['.grok/bin/grok', 'grok 1.0.52', 'Grok CLI 1.0.52'],
