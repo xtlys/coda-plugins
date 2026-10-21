@@ -1,0 +1,35 @@
+{
+  "name": "codex-custom",
+  "displayName": "Codex Custom",
+  "description": "将运行机的 codex-custom 接入 Agent CLI 列表，用独立的 ~/.codex-custom 配置和会话目录运行自定义 provider。",
+  "version": "1.1.0",
+  "extensionDependencies": [
+    "codex"
+  ],
+  "contributes": {
+    "agents": [
+      {
+        "id": "codex-custom",
+        "displayName": "Codex Custom",
+        "icon": {
+          "light": "icons/openai.pdf",
+          "template": true
+        },
+        "command": "exec \"$CODA_NODE\" \"$CODA_PLUGIN_PATH/agent/entry.mjs\"",
+        "modes": {
+          "title": "审批模式",
+          "unset": "人工审批",
+          "auto": "agent",
+          "full": "agent-full-access"
+        },
+        "skillsDir": ".agents/skills",
+        "configFiles": [
+          "~/.codex-custom/config.toml",
+          "~/.codex-custom/models.json",
+          ".codex/config.toml"
+        ],
+        "setupHint": "请安装 ~/.local/bin/codex-custom（或放入 PATH），并在 ~/.codex-custom/config.toml 配置自定义 provider 和模型。"
+      }
+    ]
+  }
+}

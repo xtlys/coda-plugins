@@ -57,6 +57,16 @@ test('codex, its codex-acp with a fixture app-server', async () => {
   assertPasses(report, [...EVERY, 'live.load']);
 });
 
+test('codex-custom, the shared Codex adapter with its own PATH executable and home', async () => {
+  const state = join(root, 'codex-custom'), home = join(state, 'home'), bin = join(state, 'bin');
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(state, 'died'), '');
+  program(join(bin, 'codex-custom'), at('./codex/app-server-fixture.mjs'), ['app-server']);
+  const report = await check('codex-custom', 'codex-custom', { HOME: home, PATH: bin,
+    CODEX_PATH: join(bin, 'must-not-run'), CODEX_HOME: join(state, 'official-home'), FAKE_CODEX_STATE: state });
+  assertPasses(report, [...EVERY, 'live.instructions', 'live.load']);
+});
+
 test('kimi, its relay with a fake kimi acp', async () => {
   // Kimi is looked for in ~/.kimi-code/bin, then on the PATH: here only the fake is found.
   const home = join(root, 'home');

@@ -8,6 +8,7 @@ Agent 讲 [ACP](https://agentclientprotocol.com)，外加 Coda 的 Agent 活动�
 
 ```
 plugins/codex/           Codex：入口在同一进程里运行锁定版本的 codex-acp（npm 依赖），面板「Codex」
+plugins/codex-custom/    Codex Custom：独立 codex-custom 运行时与 ~/.codex-custom 配置，支持初始化 DeepSeek 官方 API
 plugins/claude/          Claude SDK：基于 Claude Agent SDK 的 ACP 入口（npm 依赖），面板「Claude」
 plugins/kimi/            Kimi Code：在运行机的 kimi acp 与 Coda 之间转发，面板「Kimi」
 plugins/grok/            Grok：转发运行机上 Grok CLI 的 ACP，并适配审批模式，面板「Grok」
@@ -25,6 +26,7 @@ docs/agent-protocol.md   Coda 接入协议正文的公开副本
 ```
 
 GitHub Copilot 的运行机安装、登录与验收见 [Copilot 插件说明](plugins/copilot/README.md)。
+独立 `codex-custom` 二进制的接入与配置隔离见 [Codex Custom 插件说明](plugins/codex-custom/README.md)。
 DeepSeek Harness 的 API Key 配置、1017 模型说明与 Coda 语义适配见 [DSH 插件说明](plugins/dsh/README.md)。
 多组 DSH 地址和密钥的配置、选择与删除见 [DSH 多上游插件说明](plugins/dsh-upstreams/README.md)。
 
