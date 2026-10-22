@@ -1,9 +1,9 @@
 <!--
   副本：由 scripts/sync-protocol.mjs 从 Coda 主仓库的 docs/agent-protocol.md 同步，不要直接改；改协议先改 Coda 的正文，再同步。
-  coda-commit: 8e979c5619728f43d3c9eeb2332e7adb89f5edf9
+  coda-commit: e7f08ea6f551b694fd811f6582f5af1741c4bf13
   acp-protocol-version: 1
   acp-sdk: 1.4.0
-  body-sha256: 1ce8b14a03ba51a7a2ffa80b14833faf2365727cdf46e8d4ea7bd6c13a0e12a7
+  body-sha256: 4388998c708dc11fd1a4a199e09020bcd10eba377c67d8951a7fb8ffe4936987
 -->
 # Agent 接入协议
 
@@ -25,12 +25,13 @@ Coda 是 ACP 的客户端。每个会话的 Agent 进程由一个会话托管进
 
 | 方法 | 方向 | Coda 怎么用 |
 | --- | --- | --- |
-| `initialize` | Coda → Agent | 握手。`clientCapabilities` 带 `elicitation.form`、`elicitation.url`、`session.compaction`、`session.configOptions.boolean` 与 `_meta.coda.waits`（见[能力协商](#能力协商)） |
+| `initialize` | Coda → Agent | 握手。`clientCapabilities` 带 `elicitation.form`、`elicitation.url`、`session.compaction`、`session.configOptions.boolean`、`_meta.coda.waits` 与 `_meta.coda.delegation:{version:1}`（见[能力协商](#能力协商)、[逐轮委派策略](#逐轮委派策略)） |
 | `session/new`、`session/load` | Coda → Agent | 新建或恢复原生会话，会话 ID 由 Agent 给；Agent 声明 `loadSession` 才会被要求恢复。带 `systemPrompt`（[会话指令](#会话指令)）。结果里要报出当前模型（见下）。恢复期间重放的历史 Coda 不收（它有自己的），只收命令与标题 |
 | `session/prompt` | Coda → Agent | 一轮：Coda 送出用户的消息或它自己合成的输入（子任务结果等），Agent 回复 `stopReason` 即本轮结束 |
 | `_session/steering` | Coda → Agent | [插话](#插话)：把用户的消息加进正在进行的一轮；只对声明支持的 Agent 发 |
 | `session/cancel` | Coda → Agent | 停止：本轮在进行时取消本轮；Agent 在一轮之外处理活动（`handling`）时，停止处理 |
 | `session/set_config_option`、`session/set_mode`、`session/set_model` | Coda → Agent | 模型、推理强度与模式 |
+| `_coda/delegation/configure` | Coda → Agent | 应用[逐轮委派策略](#逐轮委派策略)，确认原生实际配置；未确认不启动任务 |
 | `session/update` | Agent → Coda | 回复、思考、工具调用、计划、用量、可用命令、会话信息；只收本会话与它的子会话的 |
 | `session/request_permission`、`elicitation/create`（`mode: form` 或 `mode: url`） | Agent → Coda | 审批与提问，作为卡片交给用户；只在一轮里受理（见[规则](#规则)第 3 条） |
 | `$/cancel_request` | Agent → Coda | 撤回它发出、还没得到回答的审批或提问：卡片失效，Coda 回 `cancelled`（表单回 `cancel`），之后用户的回答不再转交 |
@@ -75,6 +76,47 @@ Coda 的 MCP 服务器只提供工具，不带 `instructions`。
 ```json
 {"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/work/app","mcpServers":[],"systemPrompt":{"mode":"append","content":[{"type":"text","text":"# Coda client\n\nYour replies are shown in Coda…"}]}}}
 ```
+
+## 逐轮委派策略
+
+插件可贡献会话策略，宿主负责解析、限制与持久化，Agent 适配器负责真正应用。
+这项能力可选；不能完整做到的适配器不声明，开启策略的轮次会在任务开始前失败。
+
+能力声明在 `initialize` 结果的 `agentCapabilities._meta.coda.delegation`：
+
+```json
+{"version":1,"perTurn":true,"disableNative":true,"actualExecution":true}
+```
+
+四项须同时成立：支持逐轮更新与撤销指令；开启时停用厂商原生多 Agent 工具及其主动委派提示；
+能核对原生运行时实际应用的模型、推理与模型选项。仅修改 ACP 的 JavaScript 配置影子不算确认。
+适配器应只对已验证的原生版本声明；版本不能保证行为时拒绝强策略。
+
+`session/new / session/load` 在适配器声明能力后，以及每次 `session/prompt` 的 `_meta.coda.delegation` 携带：
+
+```json
+{
+  "version":1,"active":true,"role":"parent","instructions":"本轮的模式指令",
+  "childInstructions":"派出的子会话使用的指令",
+  "policies":[{"id":"example/collaboration","plugin":"example","version":"1.0.0"}],
+  "execution":{"agent":"codex","model":"model-a","effort":"high","options":{"fast-mode":"on"}}
+}
+```
+
+`role` 为 `parent / child`。子会话使用 `childInstructions` 作为自己的 `instructions`，同样停用原生派生；
+两种角色均通过 Coda 工具协作，子会话没有 `spawn / send / cancel`。`active:false` 表示本轮没有策略，`instructions` 为空、`policies` 为空数组；
+适配器必须移除上一轮的模式指令并恢复普通工具配置，不能把动态指令永久追加到会话。设置更改只在下一个 prompt 边界应用；不热改正在执行的一轮。
+
+每轮先设置模型选项、无副作用解析策略，再发 `_coda/delegation/configure`，参数为 `{sessionId,delegation,execution}`；
+`delegation` 与随后 prompt 的元数据一致，`execution` 为需确认的 `{agent,model,effort?,options?}`。
+适配器在不执行用户任务的条件下应用配置和指令，返回 `{execution:{agent,model,effort?,options?}}`，值须来自原生确认。
+需要重新订阅或恢复同一原生会话才能更新指令/工具的，由适配器执行；仍有不能安全保留的后台工作时返回错误，不停止或重做那些工作。
+宿主逐项检查实际值与期望值及硬约束，一致后才创建轮次、发 prompt；不一致时没有用户任务开始。
+同一轮次因服务故障或宿主恢复继续时沿用原来的策略与执行快照，不重新解析偏好；任务已执行或接收不明确时不换候选重新执行。
+
+模型推理配置项可在 `_meta.coda` 报 `defaultEffort`（具体默认等级）与 `effortOrder`（该模型支持的全部具体等级，按低到高且无重复）。
+不能明确排序时只报可用值，不报顺序；宿主不使用客户端显示排序推断硬上限。其他配置项可报 `_meta.coda.defaultValue`。
+普通会话保持默认值未选择的表示；强策略会话把已知推理默认规范成具体实际值，未知默认不能用于证明满足推理限制。
 
 ## 插话
 

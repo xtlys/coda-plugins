@@ -17,6 +17,7 @@ plugins/cursor/          Cursor：在运行机的 cursor-agent acp 与 Coda 之�
 plugins/copilot/         GitHub Copilot：转发原生 ACP，接入会话指令与答复语义，独立账号额度面板
 plugins/dsh/             DeepSeek Harness：锁定官方 harness，默认 deepseek-flash，适配会话、审批、提问及后台活动
 plugins/dsh-upstreams/   DSH 多上游：保存成组的 base_url 与 API Key，在资源面板切换，下次模型调用生效
+plugins/ultra/           Ultra：主 Agent 主动组织 Coda 子会话，配置候选优先级、推理限制和并发上限
 templates/agent/         最小的 Agent 插件：手写 ACP 的回声 Agent，演示会话指令、插话、Agent 活动与自主轮次
 templates/panel/         最小的面板插件：一张卡片、一条进度条、一个按钮
 bin/、check/             契约检查（仓库根的 package.json 就是它，@coda-console/plugin-check）
@@ -27,10 +28,11 @@ docs/agent-protocol.md   Coda 接入协议正文的公开副本
 GitHub Copilot 的运行机安装、登录与验收见 [Copilot 插件说明](plugins/copilot/README.md)。
 DeepSeek Harness 的 API Key 配置、1017 模型说明与 Coda 语义适配见 [DSH 插件说明](plugins/dsh/README.md)。
 多组 DSH 地址和密钥的配置、选择与删除见 [DSH 多上游插件说明](plugins/dsh-upstreams/README.md)。
+Ultra 的会话开关、子 Agent 偏好和宿主接口要求见 [Ultra 插件说明](plugins/ultra/README.md)。
 
 ## Coda 自带的插件
 
-`codex`、`claude`、`kimi`、`grok`、`opencode`、`codex-accounts` 是 Coda 内置的插件，源码从此在这里维护。
+`codex`、`claude`、`kimi`、`grok`、`opencode`、`codex-accounts`、`ultra` 是 Coda 随包提供的插件，源码在这里维护。
 Coda 仓库里的 `backend/src/resources/plugins/<id>/` 是本仓库**某个提交的只读副本**：Coda 的同步脚本按它的锁文件
 （记着本仓库的提交与每个目录的树哈希）把那个提交里的 `plugins/<id>` 原样复制过去，新机器、离线首启都带着它们。
 
@@ -137,7 +139,7 @@ Dependabot（`.github/dependabot.yml`）每周为它们各开一个 PR，连同 
 「设置 › 插件 › 从仓库添加…」：
 
 1. **仓库**填 `coda-console/coda-plugins`（或 `https://github.com/coda-console/coda-plugins`）；**版本**留空是默认分支，也可以填分支、标签或完整的提交号。
-2. **读取**：Coda 拉取那个提交，把仓库根与两层以内 `package.json` 带 `contributes` 的目录各列成一个插件——这个仓库里是 `plugins/` 下的插件与两个模板（与 Coda 内置同名的六个，要 Coda 支持从同一来源更新内置插件之后才装得上）。
+2. **读取**：Coda 拉取那个提交，把仓库根与两层以内 `package.json` 带 `contributes` 的目录各列成一个插件——这个仓库里是 `plugins/` 下的插件与两个模板（与 Coda 随包插件同名的，只能从其原来源更新）。
 3. 选一个，确认里逐条列出它会运行的命令（Agent 的 `command`、面板的命令与动作），确认就是批准：这些命令以你的账户在空间里每台机器上运行，Coda 不做隔离，只装你信任的来源。
 
 **Coda 只认提交**：安装时钉在读取到的那个提交上，每台机器各自取同一个提交。「检查更新」用记下的仓库与版本再读一次，提交变了才有更新；
@@ -153,7 +155,7 @@ Dependabot（`.github/dependabot.yml`）每周为它们各开一个 PR，连同 
 
 - `name` 是插件 ID：小写字母、数字和 `-`，以字母开头，至多 40 个字符；不能与 Coda 内置插件同名（`claude`、`codex`、`grok`、`kimi`、`opencode`、`review` 等，完整列表见 `check/coda.mjs`）。
 - `displayName`、`description`、`version` 显示在安装确认与插件页。
-- `contributes` 只能有 Coda 认识的贡献：`agents`、`panels`、`configuration`、`capabilities`、`instructions`、`extensionPoints`、`extensions`、`groups`、`commands`、`services`、`setup`；读不懂的键一律报错，不会被悄悄忽略。
+- `contributes` 只能有 Coda 认识的贡献：`agents`、`panels`、`configuration`、`capabilities`、`instructions`、`extensionPoints`、`extensions`、`groups`、`commands`、`services`、`setup`、`sessionPolicies`；读不懂的键一律报错，不会被悄悄忽略。
 - `setup` 是插件的设置动作：`{ "command": "…" }`，一行、不超过 4000 字（与面板命令同样的规则），没有别的键。
 
 **从仓库安装的限制**：带 npm 依赖（`dependencies`、`optionalDependencies`）就要把 `package-lock.json` 一起提交，Coda 在插件的版本目录里

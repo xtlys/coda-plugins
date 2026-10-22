@@ -5,7 +5,7 @@
 import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk';
 
 // The Coda commit these rules were copied from (an empty current mode is none chosen).
-export const CODA_COMMIT = '8e979c5619728f43d3c9eeb2332e7adb89f5edf9';
+export const CODA_COMMIT = 'e7f08ea6f551b694fd811f6582f5af1741c4bf13';
 // The ACP version Coda speaks: the SDK's (backend/package.json pins @agentclientprotocol/sdk 1.4.0, as package.json here).
 export const ACP_PROTOCOL_VERSION = PROTOCOL_VERSION;
 
@@ -14,7 +14,7 @@ export const ACP_PROTOCOL_VERSION = PROTOCOL_VERSION;
 export const clientCapabilities = () => ({
   elicitation: { form: {}, url: {} },
   session: { compaction: {}, configOptions: { boolean: {} } },
-  _meta: { coda: { waits: {} } },
+  _meta: { coda: { waits: {}, delegation: { version: 1 } } },
 });
 // Session instructions (AcpSession.takesInstructions, initialize): ACP's unstable `systemPrompt`, sent only to an agent that
 // declares it, the same on `session/new` and `session/load`, in `append` mode, one text block (docs/agent-protocol.md「会话指令」).
@@ -88,7 +88,7 @@ export const PANEL_ID = /^[a-z][a-z0-9-]{0,63}$/;
 export const POINT = /^[a-z][a-z0-9-]{0,39}$/;
 export const SETTING_KEY = /^[a-z][a-z0-9-]*(\.[a-z][A-Za-z0-9]*)+$/;
 export const CAPABILITY = /^[a-z][a-z0-9-]{0,63}$/;
-export const CONTRIBUTES = ['configuration', 'capabilities', 'instructions', 'panels', 'agents', 'extensionPoints', 'extensions', 'groups', 'commands', 'services',
+export const CONTRIBUTES = ['configuration', 'capabilities', 'instructions', 'panels', 'agents', 'extensionPoints', 'extensions', 'groups', 'commands', 'services', 'sessionPolicies',
   'setup'];
 // The bundled services a plugin turns on (`contributes.services`, docs/supervisor.md「独立服务进程」): their IDs.
 export const SERVICE = /^[a-z][a-z0-9-]{0,63}$/;
@@ -115,11 +115,11 @@ export const NPM = ['dependencies', 'optionalDependencies'];
 export const NPM_LOCK = 'package-lock.json';
 // The plugins Coda ships (backend/src/resources/plugins/): one from a repository may not take their names.
 export const BUILTIN_PLUGINS = ['approve-command', 'claude', 'cliproxy', 'codex', 'codex-accounts', 'develop', 'grok', 'host', 'human-check',
-  'kimi', 'machine-stats', 'maintenance', 'opencode', 'review', 'secrets', 'testbed'];
+  'kimi', 'machine-stats', 'maintenance', 'opencode', 'review', 'secrets', 'testbed', 'ultra'];
 // Those whose copies in Coda are taken from `plugins/<id>` of this repository (backend/src/resources/plugins.lock.json): a
 // version from the same repository and directory may be installed over a copy, and only that one may take their names
 // (builtinProblem; GitHub's repository by owner and name in any case, over any transport).
-export const BUILTIN_HERE = ['claude', 'codex', 'codex-accounts', 'grok', 'kimi', 'opencode'];
+export const BUILTIN_HERE = ['claude', 'codex', 'codex-accounts', 'grok', 'kimi', 'opencode', 'ultra'];
 export const BUILTIN_REPOSITORY = /(^|[/:])coda-console\/coda-plugins(\.git)?\/?$/i;
 // An agent, a concurrency group and a command are one plugin's (catalogProblem, claims). Those the built-in plugins declare, by
 // plugin; and `claude`, the agent ID sessions from before #1069 still store (docs/plugins.md「Agent」).

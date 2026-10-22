@@ -269,6 +269,23 @@ export function checkManifest(dir, say) {
   }) ?? {};
   if (Object.keys(settings).length) say.pass('manifest.settings', `设置 ${Object.keys(settings).length} 项`);
 
+  part('manifest.sessionPolicies', () => {
+    const policies = contributes.sessionPolicies ?? [];
+    check(Array.isArray(policies) && policies.length <= 20, 'contributes.sessionPolicies 须为至多 20 项的数组');
+    const ids = new Set();
+    for (const policy of policies) {
+      const where = 'contributes.sessionPolicies';
+      object(policy, where);
+      keys(policy, ['id', 'displayName', 'enabledSetting', 'command'], where);
+      check(typeof policy.id === 'string' && PLUGIN_ID.test(policy.id) && !ids.has(policy.id), `${where} 的 id 无效或重复`);
+      ids.add(policy.id);
+      line(policy.displayName, 40, `${where}.displayName`);
+      line(policy.command, COMMAND_LIMIT, `${where}.command`);
+      check(settings[policy.enabledSetting]?.type === 'boolean', `${where}.enabledSetting 须引用本插件的布尔设置`);
+    }
+    return policies;
+  }, policies => policies.length ? `会话策略 ${policies.map(p => p.displayName).join('、')}` : null);
+
   part('manifest.capabilities', () => {
     const list = sub => existsSync(join(dir, sub)) ? [...new Set(readdirSync(join(dir, sub)).map(f => /^(.+)\.bpmn$/.exec(f)?.[1]).filter(Boolean))].sort() : [];
     const workflows = list('.coda/workflows'), listed = contributes.capabilities ?? [];

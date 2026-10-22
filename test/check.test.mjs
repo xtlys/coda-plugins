@@ -189,6 +189,16 @@ describe('manifests Coda does not take', () => {
   test('a key Coda does not read', () => manifestFails({ agent: { args: ['acp'] } }, 'manifest.agents', /不支持的键：args/));
   test('a built-in plugin name', () => manifestFails({ manifest: { name: 'grok' } }, 'manifest.name', /内置插件同名/));
   test('a built-in agent ID', () => manifestFails({ agent: { id: 'claude-sdk' } }, 'manifest.agent-id', /内置插件 claude/));
+  test('session policies require a declared boolean switch and unique command identities', async () => {
+    const configuration = { properties: { 'liar.enabled': { type: 'boolean', default: false } } };
+    const policy = { id: 'collaboration', displayName: 'Ultra', enabledSetting: 'liar.enabled', command: 'node policy.mjs' };
+    const manifest = sessionPolicies => ({ contributes: { configuration, sessionPolicies } });
+    const { report } = await checkPlugin(plugin({ manifest: manifest([policy]) }), { manifestOnly: true });
+    assertPasses(report, ['manifest.sessionPolicies']);
+    for (const policies of [[{ ...policy, enabledSetting: 'liar.missing' }], [policy, policy],
+      [{ ...policy, command: 'node policy.mjs\nexit 0' }], [{ ...policy, unsupported: true }]])
+      await manifestFails({ manifest: manifest(policies) }, 'manifest.sessionPolicies');
+  });
   test('npm dependencies without a lock file', () => manifestFails({ manifest: { dependencies: { left: '1.0.0' } } }, 'source.npm', /没有 package-lock\.json/));
   test('a lock file that does not match the dependencies', () => manifestFails({ manifest: { dependencies: { left: '1.0.0' } },
     files: { 'package-lock.json': JSON.stringify({ lockfileVersion: 3, packages: { '': { dependencies: { left: '2.0.0' } } } }) } }, 'source.npm', /对不上/));

@@ -1,0 +1,25 @@
+{
+  "name": "ultra",
+  "displayName": "Ultra",
+  "description": "让主 Agent 主动组织 Coda 子会话协作，默认继承实际模型与推理配置，支持候选优先级、推理限制和并发上限。",
+  "version": "1.0.0",
+  "contributes": {
+    "sessionPolicies": [{
+      "id": "collaboration",
+      "displayName": "Ultra",
+      "enabledSetting": "ultra.enabled",
+      "command": "\"$CODA_NODE\" \"$CODA_PLUGIN_PATH/policy.mjs\""
+    }],
+    "configuration": {
+      "title": "Ultra",
+      "properties": {
+        "ultra.enabled": {"type": "boolean", "default": false, "title": "默认开启 Ultra", "description": "会话可单独覆盖；修改在下一轮生效。", "order": 1},
+        "ultra.candidates": {"type": "object", "default": {}, "title": "子 Agent 候选顺序", "description": "用 01、02、03 等两位序号排序。留空时继承主 Agent 的实际模型、推理强度和模型选项。审批模式沿用 Coda 的委派规则。", "additionalProperties": {"type": "object", "format": "coda-agent"}, "order": 2},
+        "ultra.effortLimits": {"type": "object", "default": {}, "title": "各模型的推理限制", "description": "选择 Agent 和模型。值可填 low,medium,high 等允许集合，或 <=high 等上限；上限需要模型明确报告等级顺序。", "propertyNames": {"format": "coda-agent-match"}, "additionalProperties": {"type": "string"}, "order": 3},
+        "ultra.maxChildren": {"type": "integer", "minimum": 1, "maximum": 10, "default": 3, "title": "并发子 Agent 数", "description": "主 Agent 不计入，且不超过 Coda 的总上限。", "order": 4},
+        "ultra.fallbackToParent": {"type": "boolean", "default": false, "title": "候选都不可用时跟随主 Agent", "description": "回退仍须满足该模型的推理限制。", "order": 5},
+        "ultra.allowOtherModels": {"type": "boolean", "default": false, "title": "允许 Agent 选择候选以外的模型", "description": "默认只允许候选中的模型；没有候选时只允许主 Agent 的模型。推理限制始终生效。", "order": 6}
+      }
+    }
+  }
+}

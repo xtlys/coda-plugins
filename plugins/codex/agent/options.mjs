@@ -1,6 +1,16 @@
 // Codex's speed is one ordinary ACP select option. The native model catalog decides which paid tiers are offered;
 // their IDs travel unchanged to turn/start. `fast` is Codex's config alias for the catalog/request ID `priority`.
 export const nativeServiceTier = tier => tier === 'fast' ? 'priority' : tier ?? 'default';
+// Only these Codex effort labels have an established increasing order. Catalog-defined values (including new
+// vendor modes) stay selectable, but do not acquire a numeric rank from the order the server happens to list them.
+const effortOrder = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+export function codexEffortOption(option, model) {
+  const values = option.options.map(choice => choice.value);
+  const knownOrder = values.every(value => effortOrder.includes(value));
+  return { ...option, _meta: { ...option._meta, coda: { ...option._meta?.coda,
+    ...(knownOrder ? { effortOrder: effortOrder.filter(value => values.includes(value)) } : {}),
+    ...(values.includes(model?.defaultReasoningEffort) ? { defaultEffort: model.defaultReasoningEffort } : {}) } } };
+}
 export function codexSpeedOption(model, tier) {
   const tiers = model?.serviceTiers ?? [];
   if (!tiers.length) return null;
@@ -18,6 +28,15 @@ export function codexSpeedOption(model, tier) {
 export function codexOptionsAsShown(source) {
   const patches = [
     ['      createCollaborationModeConfigOption(sessionState.collaborationMode),\n', '', 1],
+    [`        createReasoningEffortConfigOption(
+          sessionState.supportedReasoningEfforts,
+          currentModelId.effort,
+          useRecommendedValue ? currentModel?.defaultReasoningEffort : void 0
+        )`, `        codexEffortOption(createReasoningEffortConfigOption(
+          sessionState.supportedReasoningEfforts,
+          currentModelId.effort,
+          useRecommendedValue ? currentModel?.defaultReasoningEffort : void 0
+        ), currentModel)`, 1],
     ['    const currentModelSupportsFast = modelSupportsFast(currentModel);\n', '', 2],
     ['      fastModeEnabled: sessionMetadata.currentServiceTier === "fast",\n      currentModelSupportsFast,',
       '      serviceTier: nativeServiceTier(sessionMetadata.currentServiceTier),', 2],
@@ -63,5 +82,5 @@ export function codexOptionsAsShown(source) {
     if (source.split(before).length !== count + 1) throw new Error('codex-acp config option patch no longer matches the locked adapter');
     source = source.replaceAll(before, after);
   }
-  return `import { codexSpeedOption, nativeServiceTier } from ${JSON.stringify(import.meta.url)};\n${source.replace(/^#![^\n]*\n/, '')}`;
+  return `import { codexSpeedOption, codexEffortOption, nativeServiceTier } from ${JSON.stringify(import.meta.url)};\n${source.replace(/^#![^\n]*\n/, '')}`;
 }

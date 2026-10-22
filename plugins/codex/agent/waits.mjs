@@ -98,7 +98,7 @@ export class CodexWaits {
     const meta = record(capabilities._meta) ? capabilities._meta : {};
     const sessions = record(capabilities.sessionCapabilities) ? capabilities.sessionCapabilities : {};
     return { ...message, result: { ...message.result, agentCapabilities: { ...capabilities, sessionCapabilities: { ...sessions, systemPrompt: {} },
-      _meta: { ...meta, coda: { waits: {} } } } } };
+      _meta: { ...meta, coda: { ...(record(meta.coda) ? meta.coda : {}), waits: {} } } } } };
   }
 }
 const cut = (value, limit) => typeof value === 'string' ? value.slice(0, limit) : undefined;

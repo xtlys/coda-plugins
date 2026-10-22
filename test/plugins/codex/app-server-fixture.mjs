@@ -16,8 +16,9 @@ const thread = { id: 'fake-thread', turns: [], historyMode: 'paginated' };
 const model = { id: 'fake', model: 'fake', displayName: 'Fake', description: '', isDefault: true, hidden: false,
   defaultReasoningEffort: 'medium', supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: '' }], inputModalities: ['text'] };
 const models = process.env.FAKE_CODEX_MODELS ? JSON.parse(process.env.FAKE_CODEX_MODELS) : [model];
-const session = { thread, model: models[0].model, reasoningEffort: 'medium', modelProvider: 'openai', serviceTier: process.env.FAKE_CODEX_SERVICE_TIER ?? null };
+const session = { thread, model: models[0].model, reasoningEffort: models[0].defaultReasoningEffort, modelProvider: 'openai', serviceTier: process.env.FAKE_CODEX_SERVICE_TIER ?? null };
 const results = {
+  'initialize': { userAgent: process.env.FAKE_CODEX_USER_AGENT ?? 'codex_cli_rs/0.162.1', codexHome: process.env.CODEX_HOME },
   'account/read': { account: { type: 'apiKey' }, requiresOpenaiAuth: false },
   'model/list': { data: models, nextCursor: null },
   'skills/list': { data: [], nextCursor: null },
@@ -32,6 +33,7 @@ process.stdin.on('data', chunk => {
   for (let end; (end = buffer.indexOf('\n')) >= 0;) {
     const message = JSON.parse(buffer.slice(0, end)); buffer = buffer.slice(end + 1);
     if (message.id === undefined || !message.method) continue;
+    appendFileSync(join(process.env.FAKE_CODEX_STATE, 'native.ndjson'), JSON.stringify(message) + '\n');
     if (message.method === 'turn/start') appendFileSync(join(process.env.FAKE_CODEX_STATE, 'prompts.ndjson'), JSON.stringify(message.params) + '\n');
     if (['thread/start', 'thread/resume'].includes(message.method) && !message.params.ephemeral) instructions = message.params.developerInstructions ?? '';
     if (['thread/start', 'thread/resume'].includes(message.method)) appendFileSync(join(process.env.FAKE_CODEX_STATE, 'threads.ndjson'), JSON.stringify({ method: message.method, params: message.params }) + '\n');
@@ -40,6 +42,7 @@ process.stdin.on('data', chunk => {
       send({ id: message.id, error: { code: -32603, message: process.env.FAKE_CODEX_RPC_ERROR } }); continue;
     }
     if (message.method === 'thread/backgroundTerminals/list') { send({ id: message.id, result: { data: terminals, nextCursor: null } }); continue; }
+    if (message.method === 'thread/read') { send({ id: message.id, result: { thread: { ...thread, status: { type: 'idle' } } } }); continue; }
     if (message.method === 'thread/backgroundTerminals/terminate') {
       const terminated = terminals.some(t => t.processId === message.params.processId);
       terminals = terminals.filter(t => t.processId !== message.params.processId);
@@ -48,6 +51,14 @@ process.stdin.on('data', chunk => {
     if (message.method === 'config/read') {
       const configured = join(process.env.FAKE_CODEX_STATE, 'developer_instructions.txt');
       send({ id: message.id, result: { config: { developer_instructions: existsSync(configured) ? readFileSync(configured, 'utf8') : null }, layers: null, origins: {} } }); continue;
+    }
+    if (message.method === 'thread/settings/update' || ['thread/start', 'thread/resume'].includes(message.method)) {
+      const ignored = (process.env.FAKE_CODEX_IGNORE_EXECUTION ?? '').split(',');
+      if (message.params.model && !ignored.includes('model')) session.model = message.params.model;
+      const effort = message.params.effort ?? message.params.config?.model_reasoning_effort;
+      if (effort && !ignored.includes('effort')) session.reasoningEffort = effort;
+      if ('serviceTier' in message.params && !ignored.includes('service-tier')) session.serviceTier = message.params.serviceTier;
+      if (message.method !== 'thread/settings/update') { send({ id: message.id, result: { ...session, turnsBackwardsCursor: null } }); continue; }
     }
     if (message.method !== 'turn/start') { send({ id: message.id, result: results[message.method] ?? {} }); continue; }
     const turn = { id: `turn-${Date.now()}`, items: [], status: 'inProgress', error: null };
