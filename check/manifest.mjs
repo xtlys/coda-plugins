@@ -4,7 +4,7 @@
 // catalogProblem); check/coda.mjs names the
 // commit. Coda stops at the first thing it cannot read; here each part is checked on its own, so one run lists them all.
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, normalize, relative, sep } from 'node:path';
 import { inflateSync } from 'node:zlib';
 import { AGENT_ID, AGENT_LIMITS, BUILTIN_AGENTS, BUILTIN_COMMANDS, BUILTIN_GROUPS, BUILTIN_HERE, BUILTIN_SCOPE, CAPABILITY,
@@ -289,6 +289,48 @@ export function checkManifest(dir, say) {
     }));
   }) ?? {};
   if (Object.keys(settings).length) say.pass('manifest.settings', `设置 ${Object.keys(settings).length} 项`);
+
+  // The fork's conversation modes: prompt/config files, read by the host, never shell commands.
+  part('manifest.sessionModes', () => {
+    const modes = contributes.sessionModes ?? [];
+    check(Array.isArray(modes) && modes.length <= 20, 'sessionModes 须为至多 20 项的数组');
+    const ids = new Set();
+    const read = (name, limit) => {
+      inside(name, '模式文件');
+      check(!name.split(/[\\/]/).includes('..'), '模式文件不能越出插件目录');
+      try {
+        const path = realpathSync(join(dir, name)), rel = relative(realpathSync(dir), path), stat = statSync(path);
+        check(rel && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) && stat.isFile() && stat.size <= limit, '模式文件须在插件目录内，且不超过大小上限');
+        return readFileSync(path, 'utf8');
+      } catch (error) {
+        if (error instanceof Invalid) throw error;
+        throw new Invalid(`无法读取模式文件 ${name}：${error.message}`);
+      }
+    };
+    for (const mode of modes) {
+      object(mode, '会话模式'); keys(mode, ['id', 'displayName', 'instructions', 'subagents'], '会话模式');
+      check(typeof mode.id === 'string' && PLUGIN_ID.test(mode.id) && mode.id !== 'subagent' && !ids.has(mode.id), '模式 id 无效、重复或与 /subagent 冲突');
+      ids.add(mode.id); line(mode.displayName, 40, '模式 displayName');
+      const instructions = read(mode.instructions, 32 * 1024);
+      check(instructions.trim() && !instructions.includes('\0'), '模式提示词不能为空或包含 NUL');
+      if (mode.subagents !== undefined) {
+        const source = read(mode.subagents, 16 * 1024);
+        let config;
+        try { config = JSON.parse(source); } catch (error) { throw new Invalid(`子 Agent 配置须为 JSON：${error.message}`); }
+        object(config, '子 Agent 配置'); keys(config, ['agent', 'model', 'effort', 'options'], '子 Agent 配置');
+        if (config.agent != null) check(typeof config.agent === 'string' && AGENT_ID.test(config.agent), '子 Agent 的 agent 须为程序 ID');
+        for (const key of ['model', 'effort']) if (config[key] != null) text(config[key], 200, key, { line: false });
+        if (config.options != null) {
+          object(config.options, 'options'); check(Object.keys(config.options).length <= 20, 'options 至多 20 项');
+          for (const [key, value] of Object.entries(config.options)) {
+            check(key.length > 0 && key.length <= 100 && !/[\0\n]/.test(key), '模型选项 ID 无效');
+            check(typeof value === 'boolean' || (typeof value === 'string' && value.length > 0 && value.length <= 200 && !value.includes('\0')), '模型选项须为开关或选项 ID');
+          }
+        }
+      }
+    }
+    return modes;
+  }, modes => modes.length ? `会话模式 ${modes.map(mode => `/${mode.id}`).join('、')}（需要支持 sessionModes 的宿主）` : null);
 
   part('manifest.capabilities', () => {
     const list = sub => existsSync(join(dir, sub)) ? [...new Set(readdirSync(join(dir, sub)).map(f => /^(.+)\.bpmn$/.exec(f)?.[1]).filter(Boolean))].sort() : [];

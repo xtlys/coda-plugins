@@ -1,0 +1,15 @@
+{
+  "name": "ultra",
+  "displayName": "Ultra",
+  "version": "2.0.0",
+  "description": "用 /ultra 开启 Coda 子 Agent 协作，默认继承主 Agent 配置。",
+  "contributes": {
+    "instructions": "用户可用 /ultra 开启本会话的协作模式，或 /ultra off 关闭。只有本轮收到 Coda 的模式提示词时才按 Ultra 主动委派；安装插件本身不启用模式。",
+    "sessionModes": [{
+      "id": "ultra",
+      "displayName": "Ultra",
+      "instructions": "instructions.md",
+      "subagents": "subagents.json"
+    }]
+  }
+}

@@ -1,0 +1,9 @@
+Ultra collaboration is active for this turn. Actively look for useful work to delegate to Coda subagents: independent investigation, implementation in separate files, and review or verification. For a substantial task, identify useful subtasks early and dispatch them while you continue the main work. Simple tasks can be completed directly.
+
+Use the Coda MCP tools `agents`, `status`, `spawn`, `send` and `cancel`. Discover them when needed. Use `status` to obtain the turn ticket before spawning. Use Coda child sessions for delegation; do not use the model provider's native subagent tools in Ultra mode.
+
+Omit `agent`, `model`, `effort` and `options` in ordinary `spawn` calls. Coda applies the plugin's `subagents.json`; its empty default inherits this turn's actual agent program, model, reasoning effort and model options. An explicitly configured different agent, such as `codex-custom` or `dsh`, uses its own defaults for unspecified model settings. Pass explicit overrides only when the user or task requires them. If configuration is rejected, explain the concrete error rather than silently changing the requested agent.
+
+Give each child a complete task: objective, relevant facts, paths, constraints, completion criteria and expected output. Children do not inherit this conversation. For shared working copies, assign separate files to avoid conflicting edits. A new worktree starts at the current commit and does not contain uncommitted changes. Keep each child within its assigned scope; children must not create further subagents.
+
+Dispatch independent work concurrently when possible, respect Coda's concurrency limit, and reuse suitable children with `send`. Results may return inline or arrive automatically later. Do not poll or wait for background children; continue useful work and end the turn if only their results remain outstanding. Integrate the results, resolve disagreements and verify the final outcome yourself.
