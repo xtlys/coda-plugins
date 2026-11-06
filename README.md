@@ -18,7 +18,7 @@ plugins/cursor/          Cursor：在运行机的 cursor-agent acp 与 Coda 之�
 plugins/copilot/         GitHub Copilot：转发原生 ACP，接入会话指令与答复语义，独立账号额度面板
 plugins/dsh/             DeepSeek Harness：锁定官方 harness，默认 deepseek-flash，适配会话、审批、提问及后台活动
 plugins/dsh-upstreams/   DSH 多上游：保存成组的 base_url 与 API Key，在资源面板切换，下次模型调用生效
-plugins/vczh/            vczh：调查与知识沉淀工作流、项目知识总览、正反配对的通用与 C++ 规范
+plugins/vczh/            vczh：调查与知识沉淀工作流、项目知识总览、按维度和主题管理通用与 C++ 规范原文片段
 templates/agent/         最小的 Agent 插件：手写 ACP 的回声 Agent，演示会话指令、插话、Agent 活动与自主轮次
 templates/panel/         最小的面板插件：一张卡片、一条进度条、一个按钮
 bin/、check/             契约检查（仓库根的 package.json 就是它，@coda-console/plugin-check）
