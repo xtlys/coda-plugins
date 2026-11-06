@@ -10,6 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: 登记内置插件的上游来源
+        # Fork checkouts only have origin; keep the same upstream metadata as a contributor checkout.
+        run: git config remote.upstream.url https://github.com/coda-console/coda-plugins.git
       - uses: actions/setup-node@v4
         with:
           node-version: 24
