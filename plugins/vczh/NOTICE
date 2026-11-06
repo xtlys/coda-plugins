@@ -1,0 +1,22 @@
+vczh Coda plugin
+
+Derived from shared workflow prompts and selected guideline excerpts in
+vczh-libraries/Tools, Copilot/, by vczh and contributors, at commit
+493f3fe00b4a48831c1cc0612184fde709bafcb2.
+
+Upstream: https://github.com/vczh-libraries/Tools
+Licensing statement: https://github.com/vczh-libraries/License/blob/master/README.md
+
+Modifications: classify guideline excerpts by dimension and topic; retain only
+general and C++ conventions; remove library-specific examples and toolchain
+requirements; remove corresponding prerequisites from shared workflow context;
+replace host entry points. Original and distributed hashes and protocol edits
+are recorded in upstream/manifest.json. Convention excerpts carry source ranges,
+edit markers and hashes in prompts/general.json and prompts/cpp.json.
+
+Chinese navigation labels, project prompt management, the cross-platform archive
+helper, and Coda workflow/panel integration are host features, not upstream ones.
+
+This plugin is not an official vczh project or an endorsement by the authors.
+The reference repositories' product code and project knowledge bodies are not
+distributed with this plugin.

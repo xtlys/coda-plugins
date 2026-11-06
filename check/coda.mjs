@@ -88,7 +88,8 @@ export const PANEL_ID = /^[a-z][a-z0-9-]{0,63}$/;
 export const POINT = /^[a-z][a-z0-9-]{0,39}$/;
 export const SETTING_KEY = /^[a-z][a-z0-9-]*(\.[a-z][A-Za-z0-9]*)+$/;
 export const CAPABILITY = /^[a-z][a-z0-9-]{0,63}$/;
-export const CONTRIBUTES = ['configuration', 'capabilities', 'instructions', 'panels', 'agents', 'extensionPoints', 'extensions', 'groups', 'commands', 'services',
+// Skills supplement the pinned contract below: checked against Coda's 2026-11 plugin-rules.mjs.
+export const CONTRIBUTES = ['configuration', 'capabilities', 'instructions', 'skills', 'panels', 'agents', 'extensionPoints', 'extensions', 'groups', 'commands', 'services',
   'setup'];
 // The bundled services a plugin turns on (`contributes.services`, docs/supervisor.md「独立服务进程」): their IDs.
 export const SERVICE = /^[a-z][a-z0-9-]{0,63}$/;

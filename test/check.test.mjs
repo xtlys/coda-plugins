@@ -39,6 +39,39 @@ function plugin({ mode = 'honest', agent = {}, manifest = {}, files = {} } = {})
 }
 
 describe('this repository', () => {
+  test('skills are plugin-contained directories with distinct names and a document', async () => {
+    const good = plugin({ manifest: { contributes: { skills: ['skills/example'] } }, files: { 'skills/example/SKILL.md': '---\nname: example\ndescription: Example\n---\nInstructions' } });
+    assertPasses((await checkPlugin(good, { manifestOnly: true })).report, ['manifest.skills']);
+    for (const skills of [['missing'], ['../escape'], ['skills/example', 'other/example']]) {
+      const dir = plugin({ manifest: { contributes: { skills } }, files: { 'skills/example/SKILL.md': 'Example', 'other/example/SKILL.md': 'Other' } });
+      assert.ok(failed((await checkPlugin(dir, { manifestOnly: true })).report).includes('manifest.skills'));
+    }
+  });
+  test('skills reject null and forbidden raw path segments before normalization', async () => {
+    const files = { 'skills/example/SKILL.md': 'Example' };
+    for (const skills of [null, ['skills/example/../example'], ['skills/example/.'], ['skills/example/./']]) {
+      const { report } = await checkPlugin(plugin({ manifest: { contributes: { skills } }, files }), { manifestOnly: true });
+      assert.deepEqual(failed(report), ['manifest.skills'], JSON.stringify(skills));
+    }
+    const good = plugin({ manifest: { contributes: { skills: ['skills/example/'] } }, files });
+    assertPasses((await checkPlugin(good, { manifestOnly: true })).report, ['manifest.skills']);
+  });
+  test('skills require a directory containing a regular SKILL.md file', async () => {
+    for (const files of [{ 'skills/example': 'not a directory' }, { 'skills/example/SKILL.md/child': 'not a document' }]) {
+      const dir = plugin({ manifest: { contributes: { skills: ['skills/example'] } }, files });
+      assert.deepEqual(failed((await checkPlugin(dir, { manifestOnly: true })).report), ['manifest.skills']);
+    }
+  });
+  test('skills report cyclic symlinks as structured failures and continue source checks', async () => {
+    const dir = plugin({ manifest: { contributes: { skills: ['skills/example'] } } });
+    mkdirSync(join(dir, 'skills'));
+    symlinkSync('example', join(dir, 'skills/example'));
+    const { report } = await checkPlugin(dir, { manifestOnly: true });
+    assert.deepEqual(failed(report), ['manifest.skills', 'source.symlink']);
+    const item = report.items.find(item => item.rule === 'manifest.skills');
+    assert.match(JSON.stringify(item), /skills\/example/);
+    assert.match(JSON.stringify(item), /ELOOP/);
+  });
   test('templates/agent passes every level', async () => {
     const { report } = await checkPlugin(at('templates/agent'), { live: true, limits });
     assertPasses(report, ['manifest.name', 'manifest.agents', 'source.files', 'handshake.initialize', 'handshake.system-prompt', 'handshake.new',
@@ -112,13 +145,19 @@ describe('a liar fails on the rule it breaks', () => {
   test('an honest one passes', async () => {
     const { report } = await checkPlugin(plugin(), { live: true, limits });
     assertPasses(report, ['handshake.system-prompt', 'live.instructions', 'live.turn', 'live.cancel']);
+    assert.match(report.items.find(item => item.rule === 'live.cancel').message, /stopReason cancelled/);
     assert.ok(rules(report, 'skip').includes('live.steering'), 'steering is optional');
   });
   test('one that steers answers promptRequired once its turn has ended', async () => {
     const { report } = await checkPlugin(plugin({ mode: 'steer' }), { live: true, limits });
     assertPasses(report, ['live.steering']);
-    // Its turns end as soon as they say something: the message under way finds the turn ended too.
-    assert.match(report.items.findLast(item => item.rule === 'live.steering').message, /一轮进行中插话：回 promptRequired/);
+    const steering = report.items.filter(item => item.rule === 'live.steering');
+    assert.equal(steering.length, 2);
+    assert.match(steering[0].message, /一轮已经结束时插话：回 promptRequired/);
+    // Its update and reply are written together: depending on pipe batching, the checker either
+    // sends steering to an already idle agent or sees the reply before it can send steering.
+    assert.equal(steering[1].status, 'info');
+    assert.match(steering[1].message, /一轮进行中插话：回 promptRequired|一轮进行中的插话没机会发/);
   });
   test('the session instructions go with session/load too', async () => {
     const { report } = await checkPlugin(plugin({ mode: 'load-fails' }), { live: true, limits });

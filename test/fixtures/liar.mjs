@@ -1,5 +1,5 @@
 // A fake agent that gets Coda's protocol wrong on purpose, one way per run: `node liar.mjs <mode>`. Without a mode it
-// speaks it right (a plain echo), so each test shows one rule failing and nothing else.
+// speaks it right (echo, then wait for cancellation), so each test shows one rule failing and nothing else.
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 
@@ -84,6 +84,9 @@ async function act(sessionId, me, first) {
   // The second turn, the one the checker stops, never ends.
   if (mode === 'ignore-cancel' && !first) await new Promise(() => {});
   say(sessionId, 'ok');
+  // Keep the honest cancellation turn open until the checker actually cancels it. An immediate
+  // echo can finish before the checker reacts to its update, leaving cancellation untested.
+  if (mode === 'honest' && !first) await new Promise(resolve => { me.onCancel = resolve; });
   // It reads the cancel, and what comes after it: it goes on and says it ended; it waits, and says it ended; or it had done
   // all it had to and says so at once (as Codex does, its reply held back by a title).
   if (['keep-going', 'slow-end-turn', 'late-end-turn'].includes(mode) && !first) {
@@ -102,7 +105,10 @@ createInterface({ input: process.stdin }).on('line', async line => {
   // Something read after the cancel (the checker's barrier): handled before the stopped turn answers.
   if (turn?.cancelled && message.method !== 'session/cancel') setImmediate(() => afterCancel?.());
   if (!('method' in message)) { asked.get(message.id)?.(message); return; }
-  if (!('id' in message)) { if (message.method === 'session/cancel' && turn && mode !== 'ignore-cancel') turn.cancelled = true; return; }
+  if (!('id' in message)) {
+    if (message.method === 'session/cancel' && turn && mode !== 'ignore-cancel') { turn.cancelled = true; turn.onCancel?.(); }
+    return;
+  }
   const method = methods[message.method];
   if (!method) { send({ id: message.id, error: { code: -32601, message: `Method not found: ${message.method}` } }); return; }
   try { send({ id: message.id, result: await method(message.params ?? {}) }); }

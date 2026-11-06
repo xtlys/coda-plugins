@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:coda="https://coda.pub/schema/bpmn/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="vczh-definitions" targetNamespace="https://coda.pub/plugins/vczh">
+  <process id="vczh" name="vczh 原文工作流" isExecutable="true" coda:key='=inputs.root + "/" + inputs.request' coda:title="vczh · {{inputs.request}}">
+    <extensionElements>
+      <coda:input name="root" required="true" description="vczh init 返回的真实工作区根目录" />
+      <coda:input name="request" required="true" description="vczh request start 返回的请求 ID；恢复时不变" />
+    </extensionElements>
+    <startEvent id="start" />
+    <sequenceFlow id="start-workspace" sourceRef="start" targetRef="workspace" />
+    <scriptTask id="workspace" name="读取项目标识" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
+      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:output name="group" /></extensionElements>
+      <script>node "$CODA_PLUGIN_PATH/scripts/workflow.mjs" workspace</script>
+    </scriptTask>
+    <sequenceFlow id="workspace-documents" sourceRef="workspace" targetRef="documents" />
+    <serviceTask id="documents" name="独占项目任务文档" coda:action="hold-group">
+      <extensionElements><coda:param name="group" value="=workspace.group" /><coda:param name="exclusive" value="true" /><coda:param name="borrow" value="no" /></extensionElements>
+    </serviceTask>
+    <sequenceFlow id="documents-route" sourceRef="documents" targetRef="route" />
+    <scriptTask id="route" name="读取原文命令" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
+      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_REQUEST" value="=inputs.request" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:env name="VCZH_GROUP" value="=documents.group" /><coda:output name="mode" /><coda:output name="status" /></extensionElements>
+      <script>node "$CODA_PLUGIN_PATH/scripts/workflow.mjs" route</script>
+    </scriptTask>
+    <sequenceFlow id="route-pick" sourceRef="route" targetRef="pick" />
+    <exclusiveGateway id="pick" name="原文路由" default="invalid" />
+    <sequenceFlow id="invalid" sourceRef="pick" targetRef="invalid-state" />
+    <endEvent id="invalid-state" name="未知命令"><errorEventDefinition /></endEvent>
+    <sequenceFlow id="pick-ask" sourceRef="pick" targetRef="ask"><conditionExpression xsi:type="tFormalExpression">=route.mode = "ask"</conditionExpression></sequenceFlow>
+    <userTask id="ask" name="分析问题" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
+在上述工作区先运行 vczh request show {{inputs.request}} --run-id {{run.id}} 核对请求仍活动且属于本运行，校验失败不得执行旧任务；再运行 vczh protocol ask，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
+完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
+    <sequenceFlow id="ask-finish" sourceRef="ask" targetRef="finish" />
+    <sequenceFlow id="pick-investigate" sourceRef="pick" targetRef="investigate"><conditionExpression xsi:type="tFormalExpression">=route.mode = "investigate"</conditionExpression></sequenceFlow>
+    <userTask id="investigate" name="调查与实现" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
+在上述工作区先运行 vczh request show {{inputs.request}} --run-id {{run.id}} 核对请求仍活动且属于本运行，校验失败不得执行旧任务；再运行 vczh protocol investigate，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在原工作区操作原文规定的 Markdown 文件。严格执行 Repro/Continue/Report 分支；所有待验证提案依次实验、记录、回退，之后重放最佳方案并复验自审。不得自行增加评审轮数上限或强制 refine。
+完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
+    <sequenceFlow id="investigate-finish" sourceRef="investigate" targetRef="finish" />
+    <sequenceFlow id="pick-review" sourceRef="pick" targetRef="review"><conditionExpression xsi:type="tFormalExpression">=route.mode = "review"</conditionExpression></sequenceFlow>
+    <userTask id="review" name="执行前任务审阅" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
+在上述工作区先运行 vczh request show {{inputs.request}} --run-id {{run.id}} 核对请求仍活动且属于本运行，校验失败不得执行旧任务；再运行 vczh protocol review，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
+完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
+    <sequenceFlow id="review-finish" sourceRef="review" targetRef="finish" />
+    <sequenceFlow id="pick-refine" sourceRef="pick" targetRef="refine"><conditionExpression xsi:type="tFormalExpression">=route.mode = "refine"</conditionExpression></sequenceFlow>
+    <userTask id="refine" name="归档学习提炼" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
+在上述工作区先运行 vczh request show {{inputs.request}} --run-id {{run.id}} 核对请求仍活动且属于本运行，校验失败不得执行旧任务；再运行 vczh protocol refine，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
+完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
+    <sequenceFlow id="refine-finish" sourceRef="refine" targetRef="finish" />
+    <sequenceFlow id="pick-kb" sourceRef="pick" targetRef="kb"><conditionExpression xsi:type="tFormalExpression">=route.mode = "kb"</conditionExpression></sequenceFlow>
+    <userTask id="kb" name="知识库编写" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
+在上述工作区先运行 vczh request show {{inputs.request}} --run-id {{run.id}} 核对请求仍活动且属于本运行，校验失败不得执行旧任务；再运行 vczh protocol kb，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
+完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
+    <sequenceFlow id="kb-finish" sourceRef="kb" targetRef="finish" />
+    <sequenceFlow id="pick-kb-refine" sourceRef="pick" targetRef="kb-refine"><conditionExpression xsi:type="tFormalExpression">=route.mode = "kb-refine"</conditionExpression></sequenceFlow>
+    <userTask id="kb-refine" name="更新既有知识" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
+在上述工作区先运行 vczh request show {{inputs.request}} --run-id {{run.id}} 核对请求仍活动且属于本运行，校验失败不得执行旧任务；再运行 vczh protocol kb-refine，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
+完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
+    <sequenceFlow id="kb-refine-finish" sourceRef="kb-refine" targetRef="finish" />
+    <sequenceFlow id="pick-direct" sourceRef="pick" targetRef="direct"><conditionExpression xsi:type="tFormalExpression">=route.mode = "direct"</conditionExpression></sequenceFlow>
+    <userTask id="direct" name="其他非编码工作" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
+在上述工作区先运行 vczh request show {{inputs.request}} --run-id {{run.id}} 核对请求仍活动且属于本运行，校验失败不得执行旧任务；再运行 vczh protocol direct，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
+完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
+    <sequenceFlow id="direct-finish" sourceRef="direct" targetRef="finish" />
+    <scriptTask id="finish" name="记录命令完成" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
+      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_REQUEST" value="=inputs.request" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:env name="VCZH_GROUP" value="=documents.group" /><coda:output name="mode" /><coda:output name="status" /></extensionElements>
+      <script>node "$CODA_PLUGIN_PATH/scripts/workflow.mjs" finish</script>
+    </scriptTask>
+    <sequenceFlow id="finish-done" sourceRef="finish" targetRef="done" />
+    <endEvent id="done" name="命令完成"><extensionElements><coda:output name="request" value="=inputs.request" /><coda:output name="root" value="=inputs.root" /><coda:output name="status" value="done" /></extensionElements></endEvent>
+  </process>
+</definitions>

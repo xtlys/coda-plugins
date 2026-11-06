@@ -1,0 +1,107 @@
+// Developer-only extraction map. Never packaged as plugin instructions.
+// Line numbers refer to Tools/Copilot at the commit in sources.json.
+export const dimensions = {
+  general: { title: '通用', topics: {
+    correctness: '正确性与错误处理', abstraction: 'DRY 与抽象', dependencies: '依赖边界与上游修复',
+    interfaces: '接口、组合与所有权', values: '值语义与有效性', concurrency: '并发与异步',
+    portability: '跨平台设计', verification: '调试、验证与故障处理', mvvm: 'MVVM 与可测试性',
+  } },
+  cpp: { title: 'C++', topics: {
+    declarations: '声明、头文件与命名空间', style: '格式与类型推导', encapsulation: '实现隐藏',
+    lifetime: '所有权与对象生命周期', raii: 'RAII 与异常清理', modern: 'C++20、模板与迭代',
+    values: '指针与有效值', atomic: '原子操作',
+  } },
+  'vczh-libraries': { title: 'vczh-libraries', topics: {
+    types: 'Vlpp 类型、容器与所有权', parsers: '正则表达式与解析器', reflection: '反射与注册',
+    threading: '线程、任务队列与 UI 调度', workflow: 'Workflow Script 语言与 AST',
+    resources: 'GacUI XML 资源', mvvm: 'GacUI 数据绑定', layout: 'GacUI 布局与 EazyLayout',
+    execution: 'GacUI 运行与自动化',
+  } },
+  toolchain: { title: 'toolchain', topics: {
+    source: '目录、源文件清单与合并发布', build: '构建工具与配置', debug: '调试器与内存检测',
+    tests: '测试启动与过滤', cli: 'CLI 交互环境', computer: 'Computer Use 与系统自动化',
+    portability: '平台文件、宏与编译目标', wasm: 'Emscripten、WebAssembly 与浏览器宿主',
+  } },
+};
+export const defaults = {
+  'Coding.md': ['vczh-libraries', 'types'],
+  'Coding_MultiThreading.md': ['vczh-libraries', 'threading'],
+  'GacUIXmlResource.md': ['vczh-libraries', 'resources'],
+  'GacUIMVVM.md': ['vczh-libraries', 'mvvm'],
+  'GacUILayout.md': ['vczh-libraries', 'layout'],
+  'GacUIEazyLayout.md': ['vczh-libraries', 'layout'],
+  'Running-GacUI.md': ['vczh-libraries', 'execution'],
+  'SourceFileManagement.md': ['toolchain', 'source'],
+  'Building.md': ['toolchain', 'build'],
+  'Debugging.md': ['toolchain', 'debug'],
+  'Running-UnitTest.md': ['toolchain', 'tests'],
+  'Running-CLI.md': ['toolchain', 'cli'],
+  'Running-ComputerUse.md': ['toolchain', 'computer'],
+};
+// More specific classifications within mixed source files, before retained excerpts.
+export const overrides = [
+  ['Coding.md', 55, 58, 'toolchain', 'source'],
+  ['Coding.md', 68, 69, 'toolchain', 'source'],
+  ['Coding.md', 76, 76, 'toolchain', 'build'],
+  ['Coding.md', 77, 77, 'toolchain', 'portability'],
+  ['Coding.md', 78, 80, 'toolchain', 'source'],
+  ['Coding.md', 98, 119, 'vczh-libraries', 'parsers'],
+  ['Coding.md', 120, 140, 'vczh-libraries', 'reflection'],
+  ['Coding.md', 132, 132, 'vczh-libraries', 'types'],
+  ['Coding.md', 194, 199, 'toolchain', 'portability'],
+  ['Coding.md', 210, 215, 'toolchain', 'debug'],
+  ['Coding.md', 220, 220, 'toolchain', 'tests'],
+  ['Coding.md', 233, 246, 'vczh-libraries', 'workflow'],
+  ['Coding.md', 247, 267, 'toolchain', 'wasm'],
+  ['Coding.md', 254, 255, 'vczh-libraries', 'types'],
+  ['GacUIMVVM.md', 26, 30, 'toolchain', 'build'],
+  ['GacUIMVVM.md', 29, 29, 'vczh-libraries', 'resources'],
+  ['Building.md', 61, 73, 'toolchain', 'wasm'],
+  ['SourceFileManagement.md', 40, 58, 'toolchain', 'portability'],
+  ['SourceFileManagement.md', 60, 79, 'toolchain', 'build'],
+  ['Running-GacUI.md', 7, 12, 'toolchain', 'computer'],
+  ['Running-GacUI.md', 59, 70, 'toolchain', 'computer'],
+];
+const omit = (text, dimension = 'vczh-libraries', topic = 'types') => ({ text, dimension, topic });
+const source = (path, start, end = start, omissions = []) => ({ path: `Guidelines/${path}`, start, end, omissions });
+const c = (start, end = start, omissions = []) => source('Coding.md', start, end, omissions);
+const m = (start, end = start) => source('Coding_MultiThreading.md', start, end);
+const rule = (dimension, topic, id, title, fragments, context = '') => ({ dimension, topic, id, title, fragments, context });
+export const rules = [
+  rule('general', 'correctness', 'crash-early', '尽早暴露错误', [c(8)]),
+  rule('general', 'correctness', 'correctness-first', '静态检查、失败契约与异常恢复', [c(21, 27)]),
+  rule('general', 'abstraction', 'dry', '避免重复信息，先复用已有实现', [c(9, 14, [omit(' For example, create `json::JsonString` requires filling its field. The way to creat it does not offer any new information. So a three-lines function just to create `json::JsonString` and copy the argument to its field is not needed.', 'vczh-libraries', 'parsers')])], '保留 DRY 原则及 AST 抽取条件；移除依赖具体库的构造示例。'),
+  rule('general', 'abstraction', 'code-generation', '代码生成的维护成本', [c(15)]),
+  rule('general', 'abstraction', 'abstraction', '抽象应带来实际收益', [c(16, 20)]),
+  rule('general', 'dependencies', 'upstream', '修复根因并保持依赖边界', [c(31, 47)], '原文以有单元测试覆盖为前提讨论破坏性变更；不能脱离该上下文。'),
+  rule('general', 'interfaces', 'interfaces', '继承、组合、契约和所有权', [c(156, 163), c(169)], '保留作者对 LSP 的原始表述，不将其改写为教材定义。'),
+  rule('general', 'interfaces', 'ioc', '控制反转与类型分派', [c(134)]),
+  rule('general', 'interfaces', 'combinators', '递归组合与流畅接口', [c(173, 177, [omit(', e.g. `vl::collections::LazyList<T>`, `vl::stream::IStream` or `vl::presentation::controls::GuiControl`')])], '保留组合原则；移除三个原库类型示例。'),
+  rule('general', 'values', 'availability', '值的有效性与额外状态', [c(90, 91), c(95, 96)], '仅保留与语言、库无关的值语义；指针空值规则单列在 C++。'),
+  rule('general', 'concurrency', 'thread-safety', '避免过度线程安全设计', [m(3)]),
+  rule('general', 'concurrency', 'lock-free', '保持无锁逻辑简单', [m(14)]),
+  rule('general', 'concurrency', 'async', '异步调度与轮询', [m(17)]),
+  rule('general', 'portability', 'platform-api', '平台能力与公共实现的取舍', [c(201, 205)]),
+  rule('general', 'portability', 'portable-locks', '同步方法的跨平台取舍', [m(10, 12), m(21)], '原文 other locks 指自旋锁以外的锁；保留平台性能例外，移除原库线程池特例。'),
+  rule('general', 'verification', 'debug-evidence', '崩溃与猜测失败后调试', [c(4, 7)]),
+  rule('general', 'verification', 'debug-observation', '用调试补足信息并约束输出', [source('Debugging.md', 9), source('Debugging.md', 32)]),
+  rule('general', 'verification', 'unstable-bugs', '内存泄漏与不稳定问题', [c(209), c(216, 219), c(221, 223)], '25 次是作者的工程偏好，保留原文适用表述。'),
+  rule('general', 'verification', 'unstable-repeat', '不稳定问题的重复原文段落', [c(227, 231)], '原文重复段落及末尾截断句照录；不据此补造新的规则。'),
+  rule('general', 'verification', 'compiler-output', '以编译器实际输出为准', [source('Building.md', 34)]),
+  rule('general', 'verification', 'test-output', '以测试实际输出为准', [source('Running-UnitTest.md', 58)]),
+  rule('general', 'verification', 'test-wait', '观察异步测试的实际进展', [source('Running-UnitTest.md', 95, 97)]),
+  rule('general', 'verification', 'cli-wait', '观察异步命令的实际进展', [source('Running-CLI.md', 50, 52)]),
+  rule('general', 'mvvm', 'mvvm', '视图职责、逻辑与可测试性', [source('GacUIMVVM.md', 3), source('GacUIMVVM.md', 5, 8), source('GacUIMVVM.md', 10)], '保留独立于 UI 框架的 MVVM 原则；XML、绑定语法和库对象生命周期不在本条内。'),
+  rule('cpp', 'declarations', 'headers', '函数声明与头文件', [c(62, 67)]),
+  rule('cpp', 'declarations', 'namespaces', '实现文件中的命名空间', [c(70, 71)], '适用于 .cpp 实现文件；原库命名空间特例及 Source 目录约束已分出。'),
+  rule('cpp', 'style', 'style', '缩进与类型推导', [c(81, 83)]),
+  rule('cpp', 'encapsulation', 'pimpl', '实现隐藏的使用边界', [c(59, 61, [omit(' like `class Something { class Impl; Ptr<Impl> impl; }`'), omit(', like `vl::Mutex`')])], '保留限制及隐藏平台构造的例外；仅移除依赖原库的示例。'),
+  rule('cpp', 'lifetime', 'globals', '全局对象与显式生命周期', [c(144, 146), c(149, 149, [omit(' All such objects should be destroyed in `main`, `wmain`, `WinMain` or `GuiMain`, before memory leak detector runs.', 'toolchain', 'debug')]), c(150)], '适用于一般 C++ 类型；原库专用类型例外不在本插件中。清理时机由当前项目决定。'),
+  rule('cpp', 'lifetime', 'ownership', '值所有权与非拥有引用', [c(164, 166, [omit('`Ptr<B>` or ')]), c(168)], '保留值成员、继承及非拥有指针；原库智能指针规则不转译为其他智能指针规则。'),
+  rule('cpp', 'raii', 'raii', '成对清理与不可恢复异常', [c(181, 192, [omit(' (`Ptr<T>` is a good example)'), omit(' (`SPIN_LOCK` and other similar macros are good examples)', 'vczh-libraries', 'threading')])], '同时保留 RAII 的使用场景及不可恢复崩溃时的原文例外。'),
+  rule('cpp', 'modern', 'modern', '现代特性与模板', [c(76, 76, [omit('This project uses C++ 20, ', 'toolchain', 'build')]), c(151, 152)], '原文版本范围为 C++20 及以前；移除原项目已经使用 C++20 的环境断言，保留推荐特性的原句。'),
+  rule('cpp', 'modern', 'range-for', '范围循环与临时对象', [c(131), c(133, 133, [omit(' or `for(... : indexed(HERE))`')])], '保留原文 C++20 上下文中的偏好和警告；不把它当作后续标准的最新结论。'),
+  rule('cpp', 'modern', 'dispatch', '静态分派', [c(135)]),
+  rule('cpp', 'values', 'nullptr', '指针的无效值', [c(92, 92, [omit(' or `Ptr<T>`')])]),
+  rule('cpp', 'atomic', 'atomic', '正确而不过量的原子操作', [m(15)]),
+];

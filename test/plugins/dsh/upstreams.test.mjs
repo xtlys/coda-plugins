@@ -48,11 +48,15 @@ test('real DSH uses the selected pair over native credentials and picks up switc
     { label: 'b', path: '/chosen-b/v1/messages', key: 'PAIR-B' },
     { label: 'b', path: '/updated/v1/messages', key: 'PAIR-B-NEW' },
   ]);
-  await agent.request('session/close', { sessionId }); await agent.agent.terminate(1500);
+  assert.deepEqual((await agent.request('session/close', { sessionId })).result, {});
+  assert.notEqual(await agent.agent.terminate(1500), null, 'original process exits before resume');
   const resumed = await a.start(source(state));
   assert.ok((await resumed.request('session/load', { sessionId, cwd: a.dir, mcpServers: [], systemPrompt: instructions('resume') })).result);
   assert.equal((await resumed.prompt(sessionId, 'continue')).result?.stopReason, 'end_turn');
   assert.deepEqual(received.at(-1), { label: 'b', path: '/updated/v1/messages', key: 'PAIR-B-NEW' });
+  // Flush and stop the writer before scanning persisted files: atomic saves rename their .tmp files.
+  assert.deepEqual((await resumed.request('session/close', { sessionId })).result, {});
+  assert.notEqual(await resumed.agent.terminate(1500), null, 'resumed process exits before reading files');
   assert.equal(await readFile(nativePath, 'utf8'), native);
   assert.ok(!/PAIR-A|PAIR-B|NATIVE-PRIVATE|ENV-PRIVATE/.test(JSON.stringify([...agent.messages, ...resumed.messages])));
   const files = async dir => (await readdir(dir, { withFileTypes: true })).flatMap(entry => entry.isDirectory() ? [] : [join(dir, entry.name)])

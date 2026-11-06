@@ -1,0 +1,255 @@
+{
+  "schemaVersion": 2,
+  "id": "cpp",
+  "title": "C++规范",
+  "scope": "cpp",
+  "appliesTo": "C++ 工程；原文以 C++20 为上下文，不含原库及工具链专用要求。",
+  "topics": [
+    {
+      "id": "declarations",
+      "title": "声明、头文件与命名空间"
+    },
+    {
+      "id": "style",
+      "title": "格式与类型推导"
+    },
+    {
+      "id": "encapsulation",
+      "title": "实现隐藏"
+    },
+    {
+      "id": "lifetime",
+      "title": "所有权与对象生命周期"
+    },
+    {
+      "id": "raii",
+      "title": "RAII 与异常清理"
+    },
+    {
+      "id": "modern",
+      "title": "C++20、模板与迭代"
+    },
+    {
+      "id": "values",
+      "title": "指针与有效值"
+    },
+    {
+      "id": "atomic",
+      "title": "原子操作"
+    }
+  ],
+  "sections": [
+    {
+      "id": "headers",
+      "topic": "declarations",
+      "title": "函数声明与头文件",
+      "context": "仅适用于 C++；保留原文偏好及前提。",
+      "body": "- Although C++ does not require this but we want to have `extern` on all function forward declarations.\n  - In general we don't use `inline` in header files unless such function is performance critical, e.g. very simple comparison operators.\n- Rules for C++ header files:\n  - Guard them with macros instead of `#pragma once`.\n  - In a class/struct/union declaration, member names must be aligned in the same column at least in the same public, protected or private section.\n  - Keep the coding style consistent with other header files in the same project.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 62,
+          "end": 67
+        }
+      ],
+      "sha256": "72a6a2aaabff10d4187a17de09b51087e6de5a185d565511324bbed1f7ef78dc"
+    },
+    {
+      "id": "namespaces",
+      "topic": "declarations",
+      "title": "实现文件中的命名空间",
+      "context": "适用于 .cpp 实现文件；原库命名空间特例及 Source 目录约束已分出。",
+      "body": "- Rules for cpp files:\n  - Use `using namespace` statement if necessary to prevent from repeating namespace everywhere.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 70,
+          "end": 71
+        }
+      ],
+      "sha256": "ade78a042a8b437f47c2539348a4b3d2081c63baae606e8b7834613981587a1a"
+    },
+    {
+      "id": "style",
+      "topic": "style",
+      "title": "缩进与类型推导",
+      "context": "仅适用于 C++；保留原文偏好及前提。",
+      "body": "- Use tabs for indentation in C++ source code.\n- Use double spaces for indentation for JSON or XML embedded in C++ source code.\n- Use `auto` to define variables if it is doable. Use `auto&&` when the type is big or when it is a collection type.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 81,
+          "end": 83
+        }
+      ],
+      "sha256": "564614fd008cad8afc651008f12e8de911dfe2a84e5fb634cac7a04c856123e6"
+    },
+    {
+      "id": "pimpl",
+      "topic": "encapsulation",
+      "title": "实现隐藏的使用边界",
+      "context": "保留限制及隐藏平台构造的例外；仅移除依赖原库的示例。",
+      "body": "- Impl classes is not always welcomed:\n  - Hiding information or improve building performance with this pattern is considered incorrect here.\n  - The only exception is forcing to hide platform dependend constructions.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 59,
+          "end": 61,
+          "edited": true
+        }
+      ],
+      "sha256": "bf7f98ed1b7cf09a6ac43169580670505b5f739fccca09248d8802ae32969c24"
+    },
+    {
+      "id": "globals",
+      "topic": "lifetime",
+      "title": "全局对象与显式生命周期",
+      "context": "适用于一般 C++ 类型；原库专用类型例外不在本插件中。清理时机由当前项目决定。",
+      "body": "- DO NOT make helper functions that are only used once, especially if they are only called in one destructor.\n- DO NOT make global variables with types that carry constructors or destructors, even when they are implicit.\n  - This could mess up the order of initialization, finalization or memory leak detector.\n  - If pointers are needed, you could only use `T*` and do initialization or finalization explicitly.\n- DO NOT reset any raw/shared pointer member to nullPTR in destructorS.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 144,
+          "end": 146
+        },
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 149,
+          "end": 149,
+          "edited": true
+        },
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 150,
+          "end": 150
+        }
+      ],
+      "sha256": "812889e9dbc3b2891f8f68a68fcb45807f0b813adda665531e106cab70a1baa2"
+    },
+    {
+      "id": "ownership",
+      "topic": "lifetime",
+      "title": "值所有权与非拥有引用",
+      "context": "保留值成员、继承及非拥有指针；原库智能指针规则不转译为其他智能指针规则。",
+      "body": "- A owns B is usually implemented by `A` inheriting from `B`, `A` having a `B` field, unless further instructed.\n    - Inheriting happens only when it satisfies LSP.\n    - Using `B` is preferred, and exposing `B*`, `B&`, or `const B&` is also easy to do.\n  - Other relationships are usually implemented by A having a `B*` field, with manual lifecycle maintenance.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 164,
+          "end": 166,
+          "edited": true
+        },
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 168,
+          "end": 168
+        }
+      ],
+      "sha256": "88c20b7429162c26e4358ae5069b5bea7ba9ca99648722f11070765ebf9e04e9"
+    },
+    {
+      "id": "raii",
+      "topic": "raii",
+      "title": "成对清理与不可恢复异常",
+      "context": "同时保留 RAII 的使用场景及不可恢复崩溃时的原文例外。",
+      "body": "- RAII is preferred in:\n  - Building a value type.\n  - Ensure initialization/finalization to happen in pair.\n  - Exception handling.\n- Especially in exception handling, if a finalization should happen, write it in a destructor, instead of running the same piece of code everywhere in `catch` and before `return`.\n  - Such finalization includes but not limited to:\n    - Free an object or memory.\n    - Release a lock.\n- If an exception is surely going to crash the app and nothing will recover from it:\n  - It usually means that under the situation, ensuring finalization to execute might bring no benefits.\n  - In this case, just call finalization as if there will be no exception, no RAII or try-catch is needed here.\n  - Such scenario is very usual in test apps. In shared library it is less likely to happen.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 181,
+          "end": 192,
+          "edited": true
+        }
+      ],
+      "sha256": "11304a8375f0a43e531b2bc378c1b1f78aeb1ccabfc44082f67fd6fa2bfb78b7"
+    },
+    {
+      "id": "modern",
+      "topic": "modern",
+      "title": "现代特性与模板",
+      "context": "原文版本范围为 C++20 及以前；移除原项目已经使用 C++20 的环境断言，保留推荐特性的原句。",
+      "body": "- you are recommended to use new C++ 20 features aggressively.\n- Prefer the latest C++ features (up to C++ 20).\n- Prefer template variadic arguments, over hard-coded-counting solutions.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 76,
+          "end": 76,
+          "edited": true
+        },
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 151,
+          "end": 152
+        }
+      ],
+      "sha256": "575821e70608cbbca8ce4ab583a1fce1c7de4ed4549174f8a1f418f06ee1c571"
+    },
+    {
+      "id": "range-for",
+      "topic": "modern",
+      "title": "范围循环与临时对象",
+      "context": "保留原文 C++20 上下文中的偏好和警告；不把它当作后续标准的最新结论。",
+      "body": "- Container types and some other types support range-based for loop. Always prefer range-based for loop over other loops.\n  - Avoid using an expression that creates temporary objects in `for(... : HERE)`. The current C++ destroys the temporary object too early; therefore this becomes UB.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 131,
+          "end": 131
+        },
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 133,
+          "end": 133,
+          "edited": true
+        }
+      ],
+      "sha256": "34fb87d7d025ee9f90519f70ffe777758594bc3cce1cbb3a2ab03b8c4992d358"
+    },
+    {
+      "id": "dispatch",
+      "topic": "modern",
+      "title": "静态分派",
+      "context": "仅适用于 C++；保留原文偏好及前提。",
+      "body": "- Prefer static dispatching over dynamic dispatching when possible and reasonable.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 135,
+          "end": 135
+        }
+      ],
+      "sha256": "a6e700588f921bf866bc2f5d0a54ce5693ae9cda37449105eb2c7ab463980133"
+    },
+    {
+      "id": "nullptr",
+      "topic": "values",
+      "title": "指针的无效值",
+      "context": "仅适用于 C++；保留原文偏好及前提。",
+      "body": "- If an object is expected to be valid only when non-null, you could use `nullptr` on `T*` to represent invalid value.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 92,
+          "end": 92,
+          "edited": true
+        }
+      ],
+      "sha256": "f4cb6dac94bc41e727b6dfd988332a4c3924ae416fd9f3796c2b8db415f1e93b"
+    },
+    {
+      "id": "atomic",
+      "topic": "atomic",
+      "title": "正确而不过量的原子操作",
+      "context": "仅适用于 C++；保留原文偏好及前提。",
+      "body": "- `std::atomic<T>` should be considered and use it precisely. The code should be correct when running parallelly while I don't want unnecessary `std::atomic<T>`.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding_MultiThreading.md",
+          "start": 15,
+          "end": 15
+        }
+      ],
+      "sha256": "33273a132eb0602c8ef63533881aeaaa990f08a509e5281217e7e0c38b3708a5"
+    }
+  ]
+}
