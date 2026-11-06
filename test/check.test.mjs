@@ -39,6 +39,14 @@ function plugin({ mode = 'honest', agent = {}, manifest = {}, files = {} } = {})
 }
 
 describe('this repository', () => {
+  test('skills are plugin-contained directories with distinct names and a document', async () => {
+    const good = plugin({ manifest: { contributes: { skills: ['skills/example'] } }, files: { 'skills/example/SKILL.md': '---\nname: example\ndescription: Example\n---\nInstructions' } });
+    assertPasses((await checkPlugin(good, { manifestOnly: true })).report, ['manifest.skills']);
+    for (const skills of [['missing'], ['../escape'], ['skills/example', 'other/example']]) {
+      const dir = plugin({ manifest: { contributes: { skills } }, files: { 'skills/example/SKILL.md': 'Example', 'other/example/SKILL.md': 'Other' } });
+      assert.ok(failed((await checkPlugin(dir, { manifestOnly: true })).report).includes('manifest.skills'));
+    }
+  });
   test('templates/agent passes every level', async () => {
     const { report } = await checkPlugin(at('templates/agent'), { live: true, limits });
     assertPasses(report, ['manifest.name', 'manifest.agents', 'source.files', 'handshake.initialize', 'handshake.system-prompt', 'handshake.new',

@@ -285,6 +285,20 @@ export function checkManifest(dir, say) {
     const value = contributes.instructions;
     check(value === undefined || (typeof value === 'string' && value.trim() && [...value].length <= INSTRUCTIONS_LIMIT), `contributes.instructions 须为不超过 ${INSTRUCTIONS_LIMIT} 字的说明`);
   });
+  part('manifest.skills', () => {
+    const declared = contributes.skills ?? [];
+    check(Array.isArray(declared) && declared.length <= 100, 'contributes.skills 须为最多 100 个插件内目录的数组');
+    const names = declared.map((value, i) => {
+      const path = inside(value, `contributes.skills[${i}]`).replace(/\/+$/, ''), name = path.split(sep).at(-1);
+      check(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name), `Skill 目录名无效：${name}`);
+      check(existsSync(join(dir, path, 'SKILL.md')), `Skill 缺少 SKILL.md：${path}`);
+      const target = realpathSync(join(dir, path, 'SKILL.md'));
+      check(target.startsWith(`${realpathSync(dir)}${sep}`), `Skill 超出插件目录：${path}`);
+      return name;
+    });
+    check(new Set(names).size === names.length, 'contributes.skills 不能声明同名 Skill');
+    return names;
+  }, names => names.length ? `Skills：${names.join('、')}` : null);
   // A group and a command are one plugin's, as an agent is (plugin-sources.mjs catalogProblem): those of the built-in plugins
   // are taken.
   const taken = (what, value, builtin) => builtin[value] && builtin[value] !== name ? `${what} ${value} 已由内置插件 ${builtin[value]} 声明，换一个名字` : null;
