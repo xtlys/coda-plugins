@@ -99,6 +99,30 @@ test('runtime migration does not discard an index-only version of a legacy reque
   assert.equal(readFileSync(join(f.repo, path), 'utf8'), 'working');
 });
 
+test('legacy runtime outside a sparse checkout is removed from the index without blocking new requests', t => {
+  const f = fixture(t), paths = ['.github/vczh/requests/old.json', '.github/vczh/active-request.json', '.github/vczh/.request.lock/owner'];
+  for (const path of paths) write(f.repo, path, 'legacy runtime snapshot');
+  git(f.repo, 'add', '-A'); git(f.repo, 'add', '-f', '--', ...paths); commit(f.repo, 'legacy runtime for sparse checkout');
+  for (const entry of ['init', 'start']) {
+    const repo = join(f.dir, entry); git(f.dir, 'clone', '-q', '--shared', f.repo, repo);
+    git(repo, 'sparse-checkout', 'set', '--no-cone', '/.github/vczh/project.json', '/source.js');
+    for (const path of paths) {
+      assert.equal(git(repo, 'ls-files', '-v', '--', path), `S ${path}`);
+      assert.equal(existsSync(join(repo, path)), false);
+    }
+    if (entry === 'init') init(repo);
+    const request = startRequest(repo, 'ask new work');
+    assert.equal(bindRequest(repo, request.id, entry).status, 'running');
+    assert.equal(git(repo, 'ls-files', '--', ...paths), '');
+    for (const path of paths) {
+      assert.equal(git(repo, 'show', `HEAD:${path}`), 'legacy runtime snapshot');
+      assert.equal(existsSync(join(repo, path)), false, 'migration must not materialize sparse history');
+    }
+    init(repo);
+    assert.equal(getRequest(repo, request.id, entry).status, 'running');
+  }
+});
+
 test('only general and C++ topic packs are distributed, with checked bodies and source provenance', () => {
   for (const file of manifest.files) assert.equal(hash(readFileSync(join(plugin, 'upstream', file.path))), file.sha256);
   const packs = builtinPrompts();

@@ -56,7 +56,7 @@ export function prepareRuntime(root) {
   // Without -f, an index-only edit conflicting with the working copy fails instead of losing data.
   const tracked = git(root, 'ls-files', '-z', '--', `${base}/requests/`, `${base}/active-request.json`,
     `:(glob)${base}/.*.lock`, `:(glob)${base}/.*.lock/**`).split('\0').filter(Boolean);
-  if (tracked.length) git(root, '--literal-pathspecs', 'rm', '-r', '--cached', '--', ...tracked);
+  if (tracked.length) git(root, '--literal-pathspecs', 'rm', '-r', '--cached', '--sparse', '--', ...tracked);
   mkdirSync(runtime(root, 'requests'), { recursive: true });
 }
 export function config(root) {

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Reproduce the two distributable packs and the four-dimension audit from pinned sources.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { lstatSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -201,19 +201,35 @@ for (const path of [...directories].sort((a, b) => a.split('/').length - b.split
   const entry = lstatSync(join(root, path), { throwIfNoEntry: false });
   if (entry && !entry.isDirectory()) blocked.push(path);
 }
-const obsolete = [...blocked,
-  ...(obstructed('plugins/vczh/upstream') ? [] : obsoleteIn('plugins/vczh/upstream')),
-  ...['plugins/vczh/prompts/workflow.json', 'plugins/vczh/prompts/vczh-project.json'].filter(path => !obstructed(path))];
-// Finish all validation before mutating outputs.
-// Remove obsolete files first: one may occupy a directory required by a new output.
-for (const path of obsolete) {
-  const file = join(root, path), entry = lstatSync(file, { throwIfNoEntry: false });
-  if (values.check) assert.ok(!entry, `Obsolete generated file is still distributed: ${path}`);
-  else if (entry) unlinkSync(file);
+// Validate every output before scanning or removing obsolete files. In particular, neither
+// --check nor a rebuild may follow an output symlink or descend into an unexpected directory.
+for (const path of outputs.keys()) {
+  if (obstructed(path)) continue;
+  const entry = lstatSync(join(root, path), { throwIfNoEntry: false });
+  assert.ok(!entry || entry.isFile(), `Expected a regular generated file: ${path}`);
 }
+const obsolete = new Set([...blocked,
+  ...(obstructed('plugins/vczh/upstream') ? [] : obsoleteIn('plugins/vczh/upstream')),
+  ...['plugins/vczh/prompts/workflow.json', 'plugins/vczh/prompts/vczh-project.json'].filter(path => !obstructed(path))]);
+const removals = [];
+for (const path of obsolete) {
+  const entry = lstatSync(join(root, path), { throwIfNoEntry: false });
+  assert.ok(!entry || entry.isFile() || entry.isSymbolicLink(), `Expected a removable obsolete file: ${path}`);
+  if (entry) removals.push(path);
+}
+// Remove obsolete files only after the whole preflight; one may occupy a required directory.
+if (values.check) assert.ok(!removals.length, `Obsolete generated file is still distributed: ${removals.join(', ')}`);
+else for (const path of removals) unlinkSync(join(root, path));
 for (const [path, body] of outputs) {
   const file = join(root, path);
   if (values.check) assert.equal(readFileSync(file, 'utf8'), body, `Generated file differs: ${path}`);
-  else { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, body); }
+  else {
+    mkdirSync(dirname(file), { recursive: true });
+    const temporary = `${file}.${randomUUID()}.tmp`, fd = openSync(temporary, 'wx');
+    try {
+      try { writeFileSync(fd, body); } finally { closeSync(fd); }
+      renameSync(temporary, file);
+    } finally { rmSync(temporary, { force: true }); }
+  }
 }
 console.log(`${values.check ? 'Verified' : 'Generated'} 13 source classifications; ${packs.map(p => `${p.id}: ${p.topics.length} topics / ${p.sections.length} rules`).join('; ')}; ${retained.length} scoped protocol files.`);

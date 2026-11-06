@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { hash } from '../../plugins/vczh/scripts/store.mjs';
 
-test('rebuild removes retired source outputs and check detects files outside the generated set', t => {
-  const root = mkdtempSync(join(tmpdir(), 'vczh-rebuild-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+function fixture(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'vczh-rebuild-')), root = join(dir, 'repo');
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const write = (path, text) => { const file = join(root, path); mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, text); };
   // A small pinned source set exercises the real generator without a network clone or repository mutation.
   write('scripts/vczh/spec.mjs', 'export const defaults = {}, overrides = [], rules = []; export const dimensions = { general: { title: "General", topics: {} }, cpp: { title: "C++", topics: {} } };');
@@ -18,7 +18,19 @@ test('rebuild removes retired source outputs and check detects files outside the
   for (const file of sources.files) write(`source/${file.path}`, text);
   const pin = () => write('scripts/vczh/sources.json', JSON.stringify(sources));
   const rebuild = (...args) => spawnSync(process.execPath, [join(root, 'scripts/vczh/rebuild.mjs'), '--source', join(root, 'source'), ...args], { encoding: 'utf8' });
-  const passes = result => assert.equal(result.status, 0, result.stderr);
+  pin();
+  return { dir, root, write, text, sources, pin, rebuild };
+}
+const passes = result => assert.equal(result.status, 0, result.stderr);
+function snapshot(root) {
+  return readdirSync(root).sort().map(name => {
+    const path = join(root, name), stat = lstatSync(path);
+    return [name, stat.isSymbolicLink() ? ['link', readlinkSync(path)] : stat.isDirectory() ? ['directory', snapshot(path)] : ['file', hash(readFileSync(path))]];
+  });
+}
+
+test('rebuild removes retired source outputs and check detects files outside the generated set', t => {
+  const { root, write, text, sources, pin, rebuild } = fixture(t);
   const retired = join(root, 'plugins/vczh/upstream/prompts/retired.prompt.md');
   pin(); passes(rebuild()); passes(rebuild('--check')); assert.ok(existsSync(retired));
   sources.files.pop(); pin();
@@ -52,5 +64,55 @@ test('rebuild removes retired source outputs and check detects files outside the
     assert.equal(readFileSync(file, 'utf8'), 'stale ancestor', path);
     passes(rebuild()); passes(rebuild('--check'));
     assert.ok(lstatSync(file).isDirectory(), path);
+  }
+});
+
+test('rebuild and check reject symlink outputs without changing external targets', t => {
+  const { dir, root, rebuild } = fixture(t);
+  passes(rebuild());
+  for (const path of ['plugins/vczh/prompts/general.json', 'plugins/vczh/upstream/prompts/keep.prompt.md']) {
+    const file = join(root, path), expected = readFileSync(file, 'utf8'), outside = join(dir, 'outside.txt');
+    for (const body of [expected, 'unrelated external content']) {
+      rmSync(file); writeFileSync(outside, body); symlinkSync(outside, file);
+      const before = snapshot(dir);
+      for (const args of [['--check'], []]) {
+        const result = rebuild(...args);
+        assert.notEqual(result.status, 0, `must reject ${path}`);
+        assert.match(result.stderr, /Expected a regular generated file/);
+        assert.ok(result.stderr.includes(path));
+        assert.deepEqual(snapshot(dir), before, 'neither the generated tree nor the link target may change');
+      }
+      rmSync(file); writeFileSync(file, expected);
+    }
+  }
+});
+
+test('rebuild replaces files without overwriting hard-linked external data', t => {
+  const { dir, root, rebuild } = fixture(t);
+  passes(rebuild());
+  const file = join(root, 'plugins/vczh/prompts/general.json'), expected = readFileSync(file, 'utf8'), outside = join(dir, 'outside.txt');
+  rmSync(file); writeFileSync(outside, 'unrelated external content'); linkSync(outside, file);
+  passes(rebuild()); passes(rebuild('--check'));
+  assert.equal(readFileSync(outside, 'utf8'), 'unrelated external content');
+  assert.equal(readFileSync(file, 'utf8'), expected);
+});
+
+test('rebuild rejects directories at output or retired file paths before any mutation', t => {
+  const { root, write, rebuild } = fixture(t);
+  passes(rebuild());
+  for (const path of ['plugins/vczh/prompts/cpp.json', 'plugins/vczh/upstream/prompts/keep.prompt.md', 'plugins/vczh/prompts/workflow.json', 'plugins/vczh/prompts/vczh-project.json']) {
+    const file = join(root, path);
+    rmSync(file, { force: true }); write(`${path}/keep.txt`, 'directory content must survive');
+    write('plugins/vczh/prompts/general.json', 'stale generated content');
+    write('plugins/vczh/upstream/obsolete.txt', 'must not be removed before validation');
+    const before = snapshot(root);
+    for (const args of [[], ['--check']]) {
+      const result = rebuild(...args);
+      assert.notEqual(result.status, 0, path);
+      assert.deepEqual(snapshot(root), before, 'all generated and obsolete files must remain unchanged');
+      assert.match(result.stderr, /Expected a (?:regular generated file|removable obsolete file)/);
+      assert.ok(result.stderr.includes(path));
+    }
+    rmSync(file, { recursive: true }); passes(rebuild());
   }
 });
