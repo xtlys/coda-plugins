@@ -1,15 +1,18 @@
 vczh Coda plugin
 
-The prompt packs and workflow instructions adapt and generalize material from
-vczh-libraries/Tools, Copilot/, by vczh and contributors, at commit
-493f3fe00b4a48831c1cc0612184fde709bafcb2.
+The upstream/ directory reproduces shared workflow prompts, guidelines,
+scripts and templates from vczh-libraries/Tools, Copilot/, by vczh and
+contributors, at commit 493f3fe00b4a48831c1cc0612184fde709bafcb2.
+The original file contents are unchanged; upstream/manifest.json lists hashes.
 
 Upstream: https://github.com/vczh-libraries/Tools
 Licensing statement: https://github.com/vczh-libraries/License/blob/master/README.md
 
-Changes include Chinese paraphrasing, removal of project-specific constraints,
-explicit applicability and exceptions, and adaptation to Coda's workflows,
-project-local knowledge storage, and paired prompt management.
+Changes outside upstream/ include classification by language and applicability,
+Chinese navigation labels, project prompt management, a cross-platform archive
+helper, and Coda workflow and panel integration. These host integration features
+are not represented as original upstream features.
 
-This plugin is not an official vczh project or an endorsement by the upstream authors.
-The reference repository source code and assets are not distributed with this plugin.
+This plugin is not an official vczh project or an endorsement by the authors.
+The three reference repositories' product code and project knowledge bodies
+are not distributed with this plugin.

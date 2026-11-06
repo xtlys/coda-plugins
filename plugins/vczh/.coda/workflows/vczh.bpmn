@@ -1,142 +1,67 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:coda="https://coda.pub/schema/bpmn/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="vczh-definitions" targetNamespace="https://coda.pub/plugins/vczh">
-  <process id="vczh" name="vczh 工作流" isExecutable="true" coda:key='=inputs.root + "/" + inputs.task' coda:title="vczh · {{inputs.task}}">
+  <process id="vczh" name="vczh 原文工作流" isExecutable="true" coda:key='=inputs.root + "/" + inputs.request' coda:title="vczh · {{inputs.request}}">
     <extensionElements>
       <coda:input name="root" required="true" description="vczh init 返回的真实工作区根目录" />
-      <coda:input name="task" required="true" description="vczh task start 返回的任务 ID；恢复时保持不变" />
+      <coda:input name="request" required="true" description="vczh request start 返回的请求 ID；恢复时不变" />
     </extensionElements>
     <startEvent id="start" />
     <sequenceFlow id="start-route" sourceRef="start" targetRef="route" />
-    <scriptTask id="route" name="核对持久化状态" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
-      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_TASK" value="=inputs.task" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:output name="phase" /><coda:output name="revision" /></extensionElements>
+    <scriptTask id="route" name="读取原文命令" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
+      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_REQUEST" value="=inputs.request" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:output name="mode" /><coda:output name="status" /></extensionElements>
       <script>node "$CODA_PLUGIN_PATH/scripts/workflow.mjs" route</script>
     </scriptTask>
     <sequenceFlow id="route-pick" sourceRef="route" targetRef="pick" />
-    <exclusiveGateway id="pick" name="当前阶段" default="invalid" />
+    <exclusiveGateway id="pick" name="原文路由" default="invalid" />
     <sequenceFlow id="invalid" sourceRef="pick" targetRef="invalid-state" />
-    <endEvent id="invalid-state" name="未知阶段"><errorEventDefinition /></endEvent>
-    <sequenceFlow id="pick-repro" sourceRef="pick" targetRef="repro"><conditionExpression xsi:type="tFormalExpression">=route.phase = "repro"</conditionExpression></sequenceFlow>
-    <subProcess id="repro" name="复现与验收标准">
-      <startEvent id="repro-start" />
-      <sequenceFlow id="repro-begin" sourceRef="repro-start" targetRef="repro-work" />
-      <userTask id="repro-work" name="复现与验收标准" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。任务 ID：{{inputs.task}}。这是 vczh 的“复现与验收标准”阶段。
-在该工作区运行 vczh protocol repro，并用 vczh task show 查看当前证据与历史；遵循该阶段协议。
-完成后用 vczh task record --file 保存证据，再用 workflow_task completed 答复本任务。核验脚本会检查证据并推进。
-代码必须在上述原工作区修改，不在自动步骤的临时检出中操作。不要另起同名任务、不要修改 task.json 来跳过检查。
-如发现代码在评审后变化，按协议 task revise，再答复以退回实现。确实受阻则 rejected 并说明原因；修复后恢复原运行。
-这是项目内流程，不额外授权推送、合并、发布或联系他人。</documentation></userTask>
-      <sequenceFlow id="repro-check" sourceRef="repro-work" targetRef="repro-gate" />
-    <scriptTask id="repro-gate" name="核对持久化状态" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
-      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_TASK" value="=inputs.task" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:env name="VCZH_PHASE" value="repro" /><coda:env name="VCZH_REVISION" value="=route.revision" /><coda:output name="phase" /><coda:output name="revision" /></extensionElements>
-      <script>node "$CODA_PLUGIN_PATH/scripts/workflow.mjs" advance</script>
+    <endEvent id="invalid-state" name="未知命令"><errorEventDefinition /></endEvent>
+    <sequenceFlow id="pick-ask" sourceRef="pick" targetRef="ask"><conditionExpression xsi:type="tFormalExpression">=route.mode = "ask"</conditionExpression></sequenceFlow>
+    <userTask id="ask" name="分析问题" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
+在上述工作区先运行 vczh request show {{inputs.request}}，再运行 vczh protocol ask，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
+完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
+    <sequenceFlow id="ask-finish" sourceRef="ask" targetRef="finish" />
+    <sequenceFlow id="pick-investigate" sourceRef="pick" targetRef="investigate"><conditionExpression xsi:type="tFormalExpression">=route.mode = "investigate"</conditionExpression></sequenceFlow>
+    <userTask id="investigate" name="调查与实现" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
+在上述工作区先运行 vczh request show {{inputs.request}}，再运行 vczh protocol investigate，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在原工作区操作原文规定的 Markdown 文件。严格执行 Repro/Continue/Report 分支；所有待验证提案依次实验、记录、回退，之后重放最佳方案并复验自审。不得自行增加评审轮数上限或强制 refine。
+完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
+    <sequenceFlow id="investigate-finish" sourceRef="investigate" targetRef="finish" />
+    <sequenceFlow id="pick-review" sourceRef="pick" targetRef="review"><conditionExpression xsi:type="tFormalExpression">=route.mode = "review"</conditionExpression></sequenceFlow>
+    <userTask id="review" name="执行前任务审阅" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
+在上述工作区先运行 vczh request show {{inputs.request}}，再运行 vczh protocol review，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
+完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
+    <sequenceFlow id="review-finish" sourceRef="review" targetRef="finish" />
+    <sequenceFlow id="pick-refine" sourceRef="pick" targetRef="refine"><conditionExpression xsi:type="tFormalExpression">=route.mode = "refine"</conditionExpression></sequenceFlow>
+    <userTask id="refine" name="归档学习提炼" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
+在上述工作区先运行 vczh request show {{inputs.request}}，再运行 vczh protocol refine，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
+完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
+    <sequenceFlow id="refine-finish" sourceRef="refine" targetRef="finish" />
+    <sequenceFlow id="pick-kb" sourceRef="pick" targetRef="kb"><conditionExpression xsi:type="tFormalExpression">=route.mode = "kb"</conditionExpression></sequenceFlow>
+    <userTask id="kb" name="知识库编写" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
+在上述工作区先运行 vczh request show {{inputs.request}}，再运行 vczh protocol kb，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
+完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
+    <sequenceFlow id="kb-finish" sourceRef="kb" targetRef="finish" />
+    <sequenceFlow id="pick-kb-refine" sourceRef="pick" targetRef="kb-refine"><conditionExpression xsi:type="tFormalExpression">=route.mode = "kb-refine"</conditionExpression></sequenceFlow>
+    <userTask id="kb-refine" name="更新既有知识" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
+在上述工作区先运行 vczh request show {{inputs.request}}，再运行 vczh protocol kb-refine，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
+完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
+    <sequenceFlow id="kb-refine-finish" sourceRef="kb-refine" targetRef="finish" />
+    <sequenceFlow id="pick-direct" sourceRef="pick" targetRef="direct"><conditionExpression xsi:type="tFormalExpression">=route.mode = "direct"</conditionExpression></sequenceFlow>
+    <userTask id="direct" name="其他非编码工作" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
+在上述工作区先运行 vczh request show {{inputs.request}}，再运行 vczh protocol direct，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
+完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
+    <sequenceFlow id="direct-finish" sourceRef="direct" targetRef="finish" />
+    <scriptTask id="finish" name="记录命令完成" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
+      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_REQUEST" value="=inputs.request" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:output name="mode" /><coda:output name="status" /></extensionElements>
+      <script>node "$CODA_PLUGIN_PATH/scripts/workflow.mjs" finish</script>
     </scriptTask>
-      <sequenceFlow id="repro-finish" sourceRef="repro-gate" targetRef="repro-end" />
-      <endEvent id="repro-end" />
-    </subProcess>
-    <sequenceFlow id="repro-route" sourceRef="repro" targetRef="route" />
-    <sequenceFlow id="pick-proposal" sourceRef="pick" targetRef="proposal"><conditionExpression xsi:type="tFormalExpression">=route.phase = "proposal"</conditionExpression></sequenceFlow>
-    <subProcess id="proposal" name="提案与反证">
-      <startEvent id="proposal-start" />
-      <sequenceFlow id="proposal-begin" sourceRef="proposal-start" targetRef="proposal-work" />
-      <userTask id="proposal-work" name="提案与反证" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。任务 ID：{{inputs.task}}。这是 vczh 的“提案与反证”阶段。
-在该工作区运行 vczh protocol proposal，并用 vczh task show 查看当前证据与历史；遵循该阶段协议。
-完成后用 vczh task record --file 保存证据，再用 workflow_task completed 答复本任务。核验脚本会检查证据并推进。
-代码必须在上述原工作区修改，不在自动步骤的临时检出中操作。不要另起同名任务、不要修改 task.json 来跳过检查。
-如发现代码在评审后变化，按协议 task revise，再答复以退回实现。确实受阻则 rejected 并说明原因；修复后恢复原运行。
-这是项目内流程，不额外授权推送、合并、发布或联系他人。</documentation></userTask>
-      <sequenceFlow id="proposal-check" sourceRef="proposal-work" targetRef="proposal-gate" />
-    <scriptTask id="proposal-gate" name="核对持久化状态" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
-      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_TASK" value="=inputs.task" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:env name="VCZH_PHASE" value="proposal" /><coda:env name="VCZH_REVISION" value="=route.revision" /><coda:output name="phase" /><coda:output name="revision" /></extensionElements>
-      <script>node "$CODA_PLUGIN_PATH/scripts/workflow.mjs" advance</script>
-    </scriptTask>
-      <sequenceFlow id="proposal-finish" sourceRef="proposal-gate" targetRef="proposal-end" />
-      <endEvent id="proposal-end" />
-    </subProcess>
-    <sequenceFlow id="proposal-route" sourceRef="proposal" targetRef="route" />
-    <sequenceFlow id="pick-implementation" sourceRef="pick" targetRef="implementation"><conditionExpression xsi:type="tFormalExpression">=route.phase = "implementation"</conditionExpression></sequenceFlow>
-    <subProcess id="implementation" name="实现与验证">
-      <startEvent id="implementation-start" />
-      <sequenceFlow id="implementation-begin" sourceRef="implementation-start" targetRef="implementation-work" />
-      <userTask id="implementation-work" name="实现与验证" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。任务 ID：{{inputs.task}}。这是 vczh 的“实现与验证”阶段。
-在该工作区运行 vczh protocol implementation，并用 vczh task show 查看当前证据与历史；遵循该阶段协议。
-完成后用 vczh task record --file 保存证据，再用 workflow_task completed 答复本任务。核验脚本会检查证据并推进。
-代码必须在上述原工作区修改，不在自动步骤的临时检出中操作。不要另起同名任务、不要修改 task.json 来跳过检查。
-如发现代码在评审后变化，按协议 task revise，再答复以退回实现。确实受阻则 rejected 并说明原因；修复后恢复原运行。
-这是项目内流程，不额外授权推送、合并、发布或联系他人。</documentation></userTask>
-      <sequenceFlow id="implementation-check" sourceRef="implementation-work" targetRef="implementation-gate" />
-    <scriptTask id="implementation-gate" name="核对持久化状态" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
-      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_TASK" value="=inputs.task" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:env name="VCZH_PHASE" value="implementation" /><coda:env name="VCZH_REVISION" value="=route.revision" /><coda:output name="phase" /><coda:output name="revision" /></extensionElements>
-      <script>node "$CODA_PLUGIN_PATH/scripts/workflow.mjs" advance</script>
-    </scriptTask>
-      <sequenceFlow id="implementation-finish" sourceRef="implementation-gate" targetRef="implementation-end" />
-      <endEvent id="implementation-end" />
-    </subProcess>
-    <sequenceFlow id="implementation-route" sourceRef="implementation" targetRef="route" />
-    <sequenceFlow id="pick-review" sourceRef="pick" targetRef="review"><conditionExpression xsi:type="tFormalExpression">=route.phase = "review"</conditionExpression></sequenceFlow>
-    <subProcess id="review" name="评审与纠偏">
-      <startEvent id="review-start" />
-      <sequenceFlow id="review-begin" sourceRef="review-start" targetRef="review-work" />
-      <userTask id="review-work" name="评审与纠偏" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。任务 ID：{{inputs.task}}。这是 vczh 的“评审与纠偏”阶段。
-在该工作区运行 vczh protocol review，并用 vczh task show 查看当前证据与历史；遵循该阶段协议。
-完成后用 vczh task record --file 保存证据，再用 workflow_task completed 答复本任务。核验脚本会检查证据并推进。
-代码必须在上述原工作区修改，不在自动步骤的临时检出中操作。不要另起同名任务、不要修改 task.json 来跳过检查。
-如发现代码在评审后变化，按协议 task revise，再答复以退回实现。确实受阻则 rejected 并说明原因；修复后恢复原运行。
-这是项目内流程，不额外授权推送、合并、发布或联系他人。</documentation></userTask>
-      <sequenceFlow id="review-check" sourceRef="review-work" targetRef="review-gate" />
-    <scriptTask id="review-gate" name="核对持久化状态" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
-      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_TASK" value="=inputs.task" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:env name="VCZH_PHASE" value="review" /><coda:env name="VCZH_REVISION" value="=route.revision" /><coda:output name="phase" /><coda:output name="revision" /></extensionElements>
-      <script>node "$CODA_PLUGIN_PATH/scripts/workflow.mjs" advance</script>
-    </scriptTask>
-      <sequenceFlow id="review-finish" sourceRef="review-gate" targetRef="review-end" />
-      <endEvent id="review-end" />
-    </subProcess>
-    <sequenceFlow id="review-route" sourceRef="review" targetRef="route" />
-    <sequenceFlow id="pick-refine" sourceRef="pick" targetRef="refine"><conditionExpression xsi:type="tFormalExpression">=route.phase = "refine"</conditionExpression></sequenceFlow>
-    <subProcess id="refine" name="知识与经验沉淀">
-      <startEvent id="refine-start" />
-      <sequenceFlow id="refine-begin" sourceRef="refine-start" targetRef="refine-work" />
-      <userTask id="refine-work" name="知识与经验沉淀" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。任务 ID：{{inputs.task}}。这是 vczh 的“知识与经验沉淀”阶段。
-在该工作区运行 vczh protocol refine，并用 vczh task show 查看当前证据与历史；遵循该阶段协议。
-完成后用 vczh task record --file 保存证据，再用 workflow_task completed 答复本任务。核验脚本会检查证据并推进。
-代码必须在上述原工作区修改，不在自动步骤的临时检出中操作。不要另起同名任务、不要修改 task.json 来跳过检查。
-如发现代码在评审后变化，按协议 task revise，再答复以退回实现。确实受阻则 rejected 并说明原因；修复后恢复原运行。
-这是项目内流程，不额外授权推送、合并、发布或联系他人。</documentation></userTask>
-      <sequenceFlow id="refine-check" sourceRef="refine-work" targetRef="refine-gate" />
-    <scriptTask id="refine-gate" name="核对持久化状态" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
-      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_TASK" value="=inputs.task" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:env name="VCZH_PHASE" value="refine" /><coda:env name="VCZH_REVISION" value="=route.revision" /><coda:output name="phase" /><coda:output name="revision" /></extensionElements>
-      <script>node "$CODA_PLUGIN_PATH/scripts/workflow.mjs" advance</script>
-    </scriptTask>
-      <sequenceFlow id="refine-finish" sourceRef="refine-gate" targetRef="refine-end" />
-      <endEvent id="refine-end" />
-    </subProcess>
-    <sequenceFlow id="refine-route" sourceRef="refine" targetRef="route" />
-    <sequenceFlow id="pick-delivery" sourceRef="pick" targetRef="delivery"><conditionExpression xsi:type="tFormalExpression">=route.phase = "delivery"</conditionExpression></sequenceFlow>
-    <subProcess id="delivery" name="交付与 PR 接续">
-      <startEvent id="delivery-start" />
-      <sequenceFlow id="delivery-begin" sourceRef="delivery-start" targetRef="delivery-work" />
-      <userTask id="delivery-work" name="交付与 PR 接续" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。任务 ID：{{inputs.task}}。这是 vczh 的“交付与 PR 接续”阶段。
-在该工作区运行 vczh protocol delivery，并用 vczh task show 查看当前证据与历史；遵循该阶段协议。
-完成后用 vczh task record --file 保存证据，再用 workflow_task completed 答复本任务。核验脚本会检查证据并推进。
-代码必须在上述原工作区修改，不在自动步骤的临时检出中操作。不要另起同名任务、不要修改 task.json 来跳过检查。
-如发现代码在评审后变化，按协议 task revise，再答复以退回实现。确实受阻则 rejected 并说明原因；修复后恢复原运行。
-这是项目内流程，不额外授权推送、合并、发布或联系他人。</documentation></userTask>
-      <sequenceFlow id="delivery-check" sourceRef="delivery-work" targetRef="delivery-gate" />
-    <scriptTask id="delivery-gate" name="核对持久化状态" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
-      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_TASK" value="=inputs.task" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:env name="VCZH_PHASE" value="delivery" /><coda:env name="VCZH_REVISION" value="=route.revision" /><coda:output name="phase" /><coda:output name="revision" /></extensionElements>
-      <script>node "$CODA_PLUGIN_PATH/scripts/workflow.mjs" advance</script>
-    </scriptTask>
-      <sequenceFlow id="delivery-finish" sourceRef="delivery-gate" targetRef="delivery-end" />
-      <endEvent id="delivery-end" />
-    </subProcess>
-    <sequenceFlow id="delivery-route" sourceRef="delivery" targetRef="route" />
-    <sequenceFlow id="pick-done" sourceRef="pick" targetRef="archive"><conditionExpression xsi:type="tFormalExpression">=route.phase = "done"</conditionExpression></sequenceFlow>
-    <userTask id="archive" name="保存最终任务记录" coda:assignee="agent"><documentation>工作区 {{inputs.root}}，任务 {{inputs.task}} 的最终状态已写回 .github/vczh。用 vczh task show 检查。若交付模式为 pull-request，把最终任务记录、知识和规范一同提交并推送到已创建的 PR 分支，检查该 PR 仍由原生生命周期跟进；不要另开 PR。若是本地交付，按原有授权保存，汇报尚未提交的文件。全部完成后 workflow_task completed。这里不再修改协议状态文件，所以最终提交能包含完整历史。</documentation></userTask>
-    <sequenceFlow id="archive-check" sourceRef="archive" targetRef="archive-gate" />
-    <scriptTask id="archive-gate" name="核对最终归档" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
-      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_TASK" value="=inputs.task" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:output name="phase" /><coda:output name="revision" /></extensionElements>
-      <script>node "$CODA_PLUGIN_PATH/scripts/workflow.mjs" archive</script>
-    </scriptTask>
-    <sequenceFlow id="archive-done" sourceRef="archive-gate" targetRef="done" />
-    <endEvent id="done" name="完成并留档"><extensionElements><coda:output name="task" value="=inputs.task" /><coda:output name="root" value="=inputs.root" /><coda:output name="status" value="done" /></extensionElements></endEvent>
+    <sequenceFlow id="finish-done" sourceRef="finish" targetRef="done" />
+    <endEvent id="done" name="命令完成"><extensionElements><coda:output name="request" value="=inputs.request" /><coda:output name="root" value="=inputs.root" /><coda:output name="status" value="done" /></extensionElements></endEvent>
   </process>
 </definitions>

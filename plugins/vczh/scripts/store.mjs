@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -46,7 +46,6 @@ export function managed(root, name) { return inside(root, `${base}/${name}`); }
 export function config(root) {
   const value = json(managed(root, 'project.json'));
   requireValue(value.schemaVersion === 1 && typeof value.projectId === 'string', '不支持的项目数据版本');
-  requireValue(Number.isInteger(value.maxReviewRounds) && value.maxReviewRounds >= 1 && value.maxReviewRounds <= 20, 'maxReviewRounds 必须为 1–20');
   return value;
 }
 export function lock(root, name, work) {
@@ -64,37 +63,28 @@ export function init(root) {
   mkdirSync(dirname(file), { recursive: true });
   if (!existsSync(file)) {
     const commonDir = realpathSync(resolve(root, git(root, 'rev-parse', '--git-common-dir')));
-    const cfg = { schemaVersion: 1, projectId: hash(commonDir), name: root.split(sep).at(-1), maxReviewRounds: 3, enabledPrompts: ['general'] };
+    const cfg = { schemaVersion: 1, projectId: hash(commonDir), name: root.split(sep).at(-1), enabledPrompts: ['general'] };
     try { writeFileSync(file, `${JSON.stringify(cfg, null, 2)}\n`, { flag: 'wx' }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
   }
-  for (const dir of ['KnowledgeBase', 'Learning', 'TaskLogs', 'prompts']) mkdirSync(managed(root, dir), { recursive: true });
-  const project = managed(root, 'Project.md');
-  if (!existsSync(project)) writeFileSync(project, '# 项目约定\n\n记录本仓库的构建与验证入口、模块边界、生成物目录和变更触发规则。先阅读现有 AGENTS.md / Project.md，再补充有证据的项目事实。\n', { flag: 'wx' });
+  for (const dir of ['requests', 'prompts']) mkdirSync(managed(root, dir), { recursive: true });
+  const learning = '# !!!LEARNING!!!\n\n# Orders\n\n# Refinements\n';
+  const defaults = {
+    '.github/TaskLogs/Copilot_Investigate.md': '# !!!INVESTIGATE!!!\n',
+    '.github/TaskLogs/Copilot_KB.md': '# !!!KNOWLEDGE BASE!!!\n',
+    '.github/KnowledgeBase/Learning.md': learning,
+    '.github/Learning/Learning_Coding.md': learning,
+    '.github/Learning/Learning_Testing.md': learning,
+    '.github/KnowledgeBase/Index.md': '# Knowledge Base\n\n## Guidance\n\n## Experiences and Learnings\n\n- [Learning](./Learning.md)\n\n# Copy of Online Manual\n',
+    'Project.md': '# Project\n\n## Solution to Work On\n\n## Files not Allowed to Modify\n\n## Projects for Verification\n\n### Code Generation Tools\n\n### Code Generation Projects\n',
+  };
+  for (const [name, content] of Object.entries(defaults)) {
+    const target = inside(root, name); mkdirSync(dirname(target), { recursive: true });
+    if (!existsSync(target)) writeFileSync(target, content, { flag: 'wx' });
+  }
   register(root); return config(root);
 }
 export function listFiles(root, folder, suffix) {
   const path = managed(root, folder);
   if (!existsSync(path)) return [];
   return readdirSync(path).filter(name => name.endsWith(suffix)).sort().map(name => managed(root, `${folder}/${name}`));
-}
-
-// Include tracked and untracked, non-ignored inputs. Task evidence is excluded to avoid self-invalidating receipts.
-export function fingerprint(root) {
-  const names = execFileSync('git', ['-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).split('\0').filter(Boolean);
-  const digest = createHash('sha256');
-  for (const name of [...new Set(names)].sort()) {
-    if (['TaskLogs', 'KnowledgeBase', 'Learning'].some(dir => name.startsWith(`${base}/${dir}/`))) continue;
-    digest.update(name).update('\0');
-    const path = join(root, name);
-    let stat;
-    try { stat = lstatSync(path); } catch (e) { if (e.code !== 'ENOENT') throw e; digest.update('deleted'); continue; }
-    if (stat.isSymbolicLink()) digest.update(readlinkSync(path));
-    else if (name === `${base}/project.json`) digest.update(JSON.stringify(json(path).enabledPrompts));
-    else if (stat.isDirectory()) {
-      if (repo(path) !== realpathSync(path)) digest.update('uninitialized-submodule');
-      else { digest.update(git(path, 'rev-parse', 'HEAD')); digest.update(fingerprint(path)); }
-    }
-    else { digest.update(String(stat.mode & 0o111)); digest.update(readFileSync(path)); }
-  }
-  return digest.digest('hex');
 }

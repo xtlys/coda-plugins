@@ -1,51 +1,229 @@
 {
-  "schemaVersion": 1,
-  "id": "cpp",
-  "title": "C++ · 生命周期、类型与平台边界",
+  "title": "C++ 规范",
   "scope": "cpp",
-  "appliesTo": "C++ 项目显式启用后使用。保留 vczh 的 C++ 工程偏好，移除 Vlpp/GacUI API 和发布布局要求；不自动更改项目语言标准或格式。",
-  "prefer": [
-    "使用项目已选择的现代 C++ 标准及类型系统；推导清晰时使用 auto，处理大对象或容器时明确值、引用和生命周期。",
-    "用 RAII 配对资源获取与释放，在析构或作用域守卫中完成异常路径也必须执行的清理。",
-    "头文件保持类型和命名空间来源清晰，沿用项目的 include guard 与排版约定；实现文件可适度局部引入命名空间。",
-    "把缺失值语义建模为清晰的一种状态；指针、optional 或带状态的结果类型按真实契约选择。",
-    "迭代前确认 range 与中间对象的生命周期；可读性相当时使用范围 for。",
-    "按测量过的需求决定静态或动态分派；组合接口应遵循替换原则和清晰所有权。",
-    "将平台依赖限制在小而明确的实现边界，用正向、互斥的平台条件表达受支持平台。",
-    "精确定义同步变量、保护范围和内存可见性；缩小锁内工作，只有确需共享时才使用 atomic。",
-    "跨 C++/JavaScript 或其他 ABI 边界时明确编码、长度、所有权和异常转换；在边界把异常转为约定的错误结果。",
-    "用项目可用的调试器、内存检查与针对性测试调查悬空引用、泄漏及偶现故障。"
-  ],
-  "avoid": [
-    "不要为了迎合类型推导掩盖复制或悬空引用；不要认为 auto&& 会延长所有中间临时对象的生命周期。",
-    "不要在每个 return 和 catch 处手工复制释放逻辑，也不要吞掉异常来假装资源操作成功。",
-    "不要在公共头文件全局 using namespace；不要无条件把全部函数改成 inline。",
-    "不要叠加 optional<optional<T>> 或 optional<T*> 表达同一种缺失，导致状态含义不明确。",
-    "不要默认采用 Pimpl 或新增抽象层；先说明 ABI、平台隐藏、编译边界或所有权收益。",
-    "不要把非 Windows 自动当成某个特定平台；不要用无声 fallback 掩盖不支持的编译目标。",
-    "不要引入复杂无锁算法证明未经需求支持的性能收益，不要无差别给每个字段加 atomic。",
-    "不要让异常穿越未约定的语言边界，不要在借用缓冲区失效后保留其裸指针或视图。",
-    "不要把作者的 vint、WString、Ptr、Nullable、自定义正则和反射宏强加给普通 C++ 项目。"
-  ],
-  "examples": [
-    { "good": "用 lock_guard 或项目已有的作用域锁保护短临界区，耗时计算在锁外进行。", "bad": "多个返回分支分别调用 unlock，其中一个异常分支遗漏。", "why": "配对清理应由生命周期保证。" },
-    { "good": "optional<Value> 表示没有值；若空指针也是有效值，先说明它与缺失值的不同含义。", "bad": "无法说明 nullopt 和 nullptr 差别时仍使用 optional<Value*>。", "why": "避免无意义的双重缺失状态，同时保留真实的多状态需求。" },
-    { "good": "在语言绑定层捕获异常、复制借用数据并转换编码，核心 C++ 接口保持其契约。", "bad": "让绑定临时缓冲区裸指针进入异步核心逻辑，等回调时再读取。", "why": "边界必须承担表示与生命周期转换。" }
-  ],
-  "exceptions": [
-    "原文偏好 C++20、tab、宏式 include guard 与 extern 声明；这里只建议遵循目标项目已选风格，不批量改写。",
-    "原文禁匿名 namespace 的理由是合并源码发布；仅在目标项目也采用该发布模型时适用，普通独立编译单元不禁用。",
-    "Pimpl 在需要稳定 ABI 或隐藏平台类型时可合理使用。不要把作者对 Pimpl 的偏好描述为 C++ 语言规则。",
-    "原文依赖 Vlpp 容器的移动语义和框架专属线程模型不具可移植性，目标项目应按自己的类型契约判断。",
-    "固定平台调试配置、25 次验证阈值、GacUI 反射注册和 Wasm 入口命名不纳入本模板。"
-  ],
-  "checks": [
-    "资源、引用与缓冲区的有效期能沿调用链说明吗？",
-    "每个同步和平台分支是否有实际契约及对应验证？",
-    "是否误把作者框架的类型、编译方式或格式偏好当成通用 C++ 要求？"
-  ],
-  "sources": [
-    "https://github.com/vczh-libraries/Tools/blob/493f3fe00b4a48831c1cc0612184fde709bafcb2/Copilot/Guidelines/Coding.md",
-    "https://github.com/vczh-libraries/Tools/blob/493f3fe00b4a48831c1cc0612184fde709bafcb2/Copilot/Guidelines/Coding_MultiThreading.md"
+  "appliesTo": "C++。条目标记 vczh-libraries 时，仅在使用该库、发布布局或工具链时适用。",
+  "schemaVersion": 2,
+  "id": "cpp",
+  "sections": [
+    {
+      "id": "coding-multithreading-4",
+      "title": "锁的范围和命名",
+      "context": "C++；涉及 Vlpp 类型、VCZH 宏、合并发布或 MSBuild 时保留原项目条件。",
+      "source": {
+        "path": "Guidelines/Coding_MultiThreading.md",
+        "start": 4,
+        "end": 13
+      }
+    },
+    {
+      "id": "coding-multithreading-15",
+      "title": "原子变量",
+      "context": "C++；涉及 Vlpp 类型、VCZH 宏、合并发布或 MSBuild 时保留原项目条件。",
+      "source": {
+        "path": "Guidelines/Coding_MultiThreading.md",
+        "start": 15,
+        "end": 16
+      }
+    },
+    {
+      "id": "coding-multithreading-19",
+      "title": "线程、队列与 UI 线程",
+      "context": "C++；涉及 Vlpp 类型、VCZH 宏、合并发布或 MSBuild 时保留原项目条件。",
+      "source": {
+        "path": "Guidelines/Coding_MultiThreading.md",
+        "start": 19,
+        "end": 58
+      }
+    },
+    {
+      "id": "coding-49",
+      "title": "C++ 规范与同步入口",
+      "context": "C++。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 49,
+        "end": 54
+      }
+    },
+    {
+      "id": "coding-55",
+      "title": "匿名 namespace",
+      "context": "vczh-libraries：源文件会合并发布。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 55,
+        "end": 58
+      }
+    },
+    {
+      "id": "coding-59",
+      "title": "Pimpl 的边界",
+      "context": "C++；原作者的偏好及平台隐藏例外。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 59,
+        "end": 61
+      }
+    },
+    {
+      "id": "coding-62",
+      "title": "声明与头文件",
+      "context": "C++；其中 Source 是原仓库头文件目录。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 62,
+        "end": 69
+      }
+    },
+    {
+      "id": "coding-70",
+      "title": "实现文件命名空间",
+      "context": "C++；stream 命名空间的特例适用于 Vlpp。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 70,
+        "end": 73
+      }
+    },
+    {
+      "id": "coding-74",
+      "title": "C++20 与跨平台实现",
+      "context": "C++20。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 74,
+        "end": 77
+      }
+    },
+    {
+      "id": "coding-81",
+      "title": "缩进与类型推导",
+      "context": "C++；包括嵌入的 JSON/XML。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 81,
+        "end": 83
+      }
+    },
+    {
+      "id": "coding-84",
+      "title": "基础库类型与可用值",
+      "context": "vczh-libraries：vint、WString、FilePath、collections、Ptr、Nullable。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 84,
+        "end": 97
+      }
+    },
+    {
+      "id": "coding-98",
+      "title": "正则表达式",
+      "context": "vczh-libraries：vl::regex::Regex，语法不等于标准正则。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 98,
+        "end": 105
+      }
+    },
+    {
+      "id": "coding-106",
+      "title": "解析器复用与生成接口",
+      "context": "vczh-libraries：VlppParser2 可用时。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 106,
+        "end": 119
+      }
+    },
+    {
+      "id": "coding-120",
+      "title": "可反射类型",
+      "context": "vczh-libraries：VlppReflection，含反射宏限制。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 120,
+        "end": 140
+      }
+    },
+    {
+      "id": "coding-141",
+      "title": "全局对象与高级 C++ 规则",
+      "context": "C++；WString、Pair、Nullable、Variant、Tuple 例外适用于 Vlpp。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 141,
+        "end": 153
+      }
+    },
+    {
+      "id": "coding-163",
+      "title": "所有权与生命周期",
+      "context": "C++；Ptr 指 Vlpp 智能指针。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 163,
+        "end": 170
+      }
+    },
+    {
+      "id": "coding-179",
+      "title": "RAII 与不可恢复异常",
+      "context": "C++；保留测试应用会直接退出时的原文例外。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 179,
+        "end": 193
+      }
+    },
+    {
+      "id": "coding-194",
+      "title": "平台源文件与路径",
+      "context": "vczh-libraries：平台命名、VCZH 宏和 FilePath。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 194,
+        "end": 200
+      }
+    },
+    {
+      "id": "coding-210",
+      "title": "内存泄漏检测",
+      "context": "vczh-libraries：MSVC Debug 及 Linux/macOS 例外。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 210,
+        "end": 215
+      }
+    },
+    {
+      "id": "coding-220",
+      "title": "缩小不稳定问题的测试范围",
+      "context": "vczh-libraries：/F:FileName.cpp 过滤器。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 220,
+        "end": 220
+      }
+    },
+    {
+      "id": "coding-247",
+      "title": "WebAssembly 与 JavaScript 交界",
+      "context": "vczh-libraries：Emscripten、VCZH 宏、字符串及测试入口。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 247,
+        "end": 267
+      }
+    },
+    {
+      "id": "sourcefilemanagement-1",
+      "title": "MSBuild 项目与跨平台源文件管理",
+      "context": "C++；涉及 Vlpp 类型、VCZH 宏、合并发布或 MSBuild 时保留原项目条件。",
+      "source": {
+        "path": "Guidelines/SourceFileManagement.md",
+        "start": 1,
+        "end": 79
+      }
+    }
   ]
 }

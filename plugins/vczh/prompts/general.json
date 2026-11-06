@@ -1,60 +1,169 @@
 {
-  "schemaVersion": 1,
-  "id": "general",
-  "title": "通用 · 正确性、根因与工程边界",
+  "title": "通用工程规范",
   "scope": "general",
-  "appliesTo": "语言无关的实现、调试与评审。以下是从 vczh 共享指令改写的偏好；项目契约和用户明确指令优先。",
-  "prefer": [
-    "先阅读项目约定和知识索引，查找已有实现，再决定新增、复用或重构。",
-    "对内部不变量优先用类型、静态分析和明确断言表达；不变量被破坏时尽早暴露。预期会发生的失败应成为接口契约的一部分。",
-    "在能恢复且恢复有意义的边界处理异常；保留错误原因和诊断信息。",
-    "DRY 的对象是知识与规则：复杂转换、业务判断、协议规则应有一个权威实现。",
-    "抽象应改善实际的所有权、依赖或扩展需求。大段重复或同一逻辑重复三次是提取信号，仍应审视整体可读性。",
-    "沿调用链寻找根因；上游契约有问题时提出上游修复，保持通用接口不携带下游私有策略。",
-    "接口无法表达需求时允许提出不兼容调整，同时列出调用者影响、迁移路径和验证证据。",
-    "程序崩溃或一次猜测修复失败后，优先用调试器、日志和最小复现收集事实，再继续尝试。",
-    "先记录提案、预期现象与否定条件，再实验。明确区分证实、否定、用户否定和仍不确定。",
-    "沿项目规定的入口构建和验证；变更触发生成流程时，从输入或生成器修复，再重生成产物。",
-    "复用成熟的解析器、序列化器与结构化表示；需要生成程序时优先操作语法结构。",
-    "把可复用操作说明与本次执行结果分开。执行结果记录版本、环境、命令、实际结果及未验证项。",
-    "验证中只修已观察到且属于授权范围的问题。偶现故障记录复现频率并按项目约定重复验证。",
-    "以实际共享状态决定同步方式，尽量缩小临界区；异步工作优先事件通知和调度。",
-    "从完成任务和用户纠偏中提炼有适用边界的经验；保留来源、反例和独立任务计数，下次按需读取。"
-  ],
-  "avoid": [
-    "不要用静默 catch、默认值或空值分支遮住本应成立的内部条件；也不要把不可信输入直接当成内部不变量。",
-    "不要只为减少几行赋值就制造包装函数，或把连贯算法拆成大量只用一次的小跳转。",
-    "不要在没找现有实现之前复制另一份规则，也不要因碰巧相似就合并语义不同的逻辑。",
-    "不要为了当前任务在错误接口外堆补丁、克隆上游 API，或把下游产品判断塞进基础库。",
-    "不要把作者项目的充分测试覆盖当成所有项目都有的事实，直接忽略兼容性成本。",
-    "不要反复猜测、盲目重跑全部测试，或把一次成功当成偶现问题已解决。",
-    "不要擅自引入专用代码生成器、绕过项目构建入口、手改生成物或供应商代码。",
-    "不要把测试矩阵的本次结果填回 SOP 样例，也不要把假设写成已验证的知识。",
-    "不要为不存在的并发需求加锁、引入复杂无锁技巧，或用高频轮询代替已有事件机制。",
-    "不要把某次用户选择升级成无条件全局规则；不要删除尚未完成提炼或仍作为证据的任务记录。"
-  ],
-  "examples": [
-    { "good": "两个入口共用同一份名称编码规则；规则变更时只改一处。", "bad": "两个入口各复制一份复杂编码函数，再要求它们人工保持一致。", "why": "消除的是规则的多份来源，而非机械追求更少的行数。" },
-    { "good": "内部索引不可能缺失时断言并保留现场；用户传入不存在的 ID 时返回声明过的错误。", "bad": "对内部损坏统一返回空数组；或者因用户输错 ID 就终止服务。", "why": "内部错误与预期输入失败属于不同契约。" },
-    { "good": "缺陷根因在通用解析器；修复解析器，增加可复现该缺陷的回归用例。", "bad": "给每个调用者加独立字符串替换，维持错误的解析结果。", "why": "修复规则的权威来源，避免修补扩散。" },
-    { "good": "日志写明实验 B 否定了时序假说及观测依据，经验只保留仍被证据支持的部分。", "bad": "删掉失败实验，只留下最终成功命令，把猜测发布为知识。", "why": "失败证据能帮助下一次调查缩小搜索空间。" }
-  ],
-  "exceptions": [
-    "用户明确要求及项目已有契约优先；冲突时写明适用条件，不静默替换项目规范。",
-    "Crash early 限于内部不变量；输入校验、安全边界、可预期网络错误及可恢复业务错误仍须按契约处理。",
-    "跨仓修改、破坏性迁移、提交、推送和发布遵循当前任务授权；这份偏好不构成额外授权。",
-    "原文的固定重试次数和每任务 commit/push 属于作者工作环境，本通用模板不设此类硬性要求。"
-  ],
-  "checks": [
-    "能指出规则的权威实现、根因位置和新增抽象的实际收益吗？",
-    "证据是否对应当前代码？失败、不适用和未验证项是否明确？",
-    "生成物、项目知识、任务日志与共享规范的所有权是否清晰？",
-    "正向做法与禁止做法是否约束同一决策边界，并留有合理例外？"
-  ],
-  "sources": [
-    "https://github.com/vczh-libraries/Tools/blob/493f3fe00b4a48831c1cc0612184fde709bafcb2/Copilot/Guidelines/Coding.md",
-    "https://github.com/vczh-libraries/Tools/blob/493f3fe00b4a48831c1cc0612184fde709bafcb2/Copilot/Guidelines/Coding_MultiThreading.md",
-    "https://github.com/vczh-libraries/Tools/blob/493f3fe00b4a48831c1cc0612184fde709bafcb2/Copilot/prompts/investigate.prompt.md",
-    "https://github.com/vczh-libraries/Tools/blob/493f3fe00b4a48831c1cc0612184fde709bafcb2/Copilot/prompts/refine.prompt.md"
+  "appliesTo": "与语言无关的工程判断。原文中的例子、适用前提和例外一并保留。",
+  "schemaVersion": 2,
+  "id": "general",
+  "sections": [
+    {
+      "id": "building-34",
+      "title": "构建结果的事实来源",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Building.md",
+        "start": 34,
+        "end": 34
+      }
+    },
+    {
+      "id": "coding-multithreading-1",
+      "title": "线程安全的范围",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Coding_MultiThreading.md",
+        "start": 1,
+        "end": 3
+      }
+    },
+    {
+      "id": "coding-multithreading-14",
+      "title": "无锁方案的复杂度",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Coding_MultiThreading.md",
+        "start": 14,
+        "end": 14
+      }
+    },
+    {
+      "id": "coding-multithreading-17",
+      "title": "异步调度与轮询",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Coding_MultiThreading.md",
+        "start": 17,
+        "end": 18
+      }
+    },
+    {
+      "id": "coding-1",
+      "title": "基本工程偏好",
+      "context": "任何语言；保留原文中的具体示例。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 1,
+        "end": 28
+      }
+    },
+    {
+      "id": "coding-29",
+      "title": "修复上游与破坏性变更",
+      "context": "保留原文的测试覆盖假设及跨仓所有权边界。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 29,
+        "end": 48
+      }
+    },
+    {
+      "id": "coding-154",
+      "title": "继承、组合与接口契约",
+      "context": "任何语言；LSP 的表述按上游原文保留。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 154,
+        "end": 162
+      }
+    },
+    {
+      "id": "coding-171",
+      "title": "组合子设计",
+      "context": "语言无关的设计原则；原文用 Vlpp 和 GacUI 作例子。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 171,
+        "end": 178
+      }
+    },
+    {
+      "id": "coding-201",
+      "title": "平台 API 与共享实现取舍",
+      "context": "跨平台工程。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 201,
+        "end": 206
+      }
+    },
+    {
+      "id": "coding-207",
+      "title": "泄漏与不稳定问题优先级",
+      "context": "保留原文的最高优先级要求。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 207,
+        "end": 209
+      }
+    },
+    {
+      "id": "coding-216",
+      "title": "连续 25 次成功的验证标准",
+      "context": "不稳定问题；原文以悬垂指针作例子。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 216,
+        "end": 219
+      }
+    },
+    {
+      "id": "coding-221",
+      "title": "已观察问题的修复与提交",
+      "context": "当前任务发现的新增或既有泄漏、不稳定问题。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 221,
+        "end": 224
+      }
+    },
+    {
+      "id": "coding-225",
+      "title": "不稳定问题：原文重复段落",
+      "context": "上游本段末句截断；保持原样，不推测补写。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 225,
+        "end": 232
+      }
+    },
+    {
+      "id": "running-cli-50",
+      "title": "观察运行中与阻塞的 CLI",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Running-CLI.md",
+        "start": 50,
+        "end": 52
+      }
+    },
+    {
+      "id": "running-unittest-58",
+      "title": "测试结果的事实来源",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Running-UnitTest.md",
+        "start": 58,
+        "end": 58
+      }
+    },
+    {
+      "id": "running-unittest-95",
+      "title": "观察运行中与阻塞的测试",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Running-UnitTest.md",
+        "start": 95,
+        "end": 97
+      }
+    }
   ]
 }

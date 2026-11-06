@@ -1,0 +1,169 @@
+{
+  "title": "vczh 项目与工具规范",
+  "scope": "project",
+  "appliesTo": "vczh-libraries 的目录、GacUI、构建测试包装器及其运行环境；按条目原文条件使用。",
+  "schemaVersion": 2,
+  "id": "vczh-project",
+  "sections": [
+    {
+      "id": "quality-control",
+      "title": "Quality Control",
+      "context": "原文限定的库、测试应用与同机多进程环境。",
+      "source": {
+        "path": "copilot-instructions.md",
+        "start": 12,
+        "end": 29
+      }
+    },
+    {
+      "id": "building-1",
+      "title": "Building a Solution",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Building.md",
+        "start": 1,
+        "end": 33
+      }
+    },
+    {
+      "id": "building-35",
+      "title": "Linux/macOS Specific",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Building.md",
+        "start": 35,
+        "end": 73
+      }
+    },
+    {
+      "id": "coding-78",
+      "title": "可修改与禁改目录",
+      "context": "vczh-libraries 的 Import、Release、Source、Test 布局。",
+      "source": {
+        "path": "Guidelines/Coding.md",
+        "start": 78,
+        "end": 80
+      }
+    },
+    {
+      "id": "debugging-1",
+      "title": "Debugging a Project",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Debugging.md",
+        "start": 1,
+        "end": 102
+      }
+    },
+    {
+      "id": "gacuieazylayout-1",
+      "title": "Eazy Layout",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/GacUIEazyLayout.md",
+        "start": 1,
+        "end": 221
+      }
+    },
+    {
+      "id": "gacuilayout-1",
+      "title": "GacUI Layout Best Practice",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/GacUILayout.md",
+        "start": 1,
+        "end": 115
+      }
+    },
+    {
+      "id": "gacuimvvm-1",
+      "title": "Coding Convention (GacUI and MVVM)",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/GacUIMVVM.md",
+        "start": 1,
+        "end": 30
+      }
+    },
+    {
+      "id": "gacuixmlresource-1",
+      "title": "Mapping XML Entity to C++ Entity",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/GacUIXmlResource.md",
+        "start": 1,
+        "end": 255
+      }
+    },
+    {
+      "id": "running-cli-1",
+      "title": "Running a CLI Application Project",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Running-CLI.md",
+        "start": 1,
+        "end": 49
+      }
+    },
+    {
+      "id": "running-cli-53",
+      "title": "Running-CLI.md · 53–54",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Running-CLI.md",
+        "start": 53,
+        "end": 54
+      }
+    },
+    {
+      "id": "running-computeruse-1",
+      "title": "Basic Computer Use",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Running-ComputerUse.md",
+        "start": 1,
+        "end": 493
+      }
+    },
+    {
+      "id": "running-gacui-1",
+      "title": "Automation Service via HTTP",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Running-GacUI.md",
+        "start": 1,
+        "end": 82
+      }
+    },
+    {
+      "id": "running-unittest-1",
+      "title": "Running a Unit Test Project",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Running-UnitTest.md",
+        "start": 1,
+        "end": 57
+      }
+    },
+    {
+      "id": "running-unittest-59",
+      "title": "Linux/macOS Specific",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Running-UnitTest.md",
+        "start": 59,
+        "end": 94
+      }
+    },
+    {
+      "id": "running-unittest-98",
+      "title": "Running-UnitTest.md · 98–100",
+      "context": "保留原文适用条件。",
+      "source": {
+        "path": "Guidelines/Running-UnitTest.md",
+        "start": 98,
+        "end": 100
+      }
+    }
+  ]
+}

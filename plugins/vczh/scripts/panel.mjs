@@ -3,9 +3,9 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { config, hash, json, managed, requireValue, save } from './store.mjs';
 import { builtinPrompts, prompts, renderPrompt } from './prompts.mjs';
-import { documents, freshness } from './knowledge.mjs';
+import { documents, freshness, legacyDocuments } from './knowledge.mjs';
 
-const names = { knowledge: '知识库', learning: '经验', prompts: '项目规范' };
+const names = { knowledge: '知识库', learning: '学习与偏好', archives: '调查归档', prompts: '项目规范', legacy: '旧版资料' };
 const short = (s, n = 75) => [...String(s).replace(/[\r\n]/g, ' ')].slice(0, n).join('');
 const stat = (label, value) => ({ type: 'stat', label, value: short(value) });
 const button = (label, args) => ({ type: 'button', action: 'browse', label: short(label), args });
@@ -32,9 +32,10 @@ function registered(state) {
       const cfg = config(entry.root); requireValue(cfg.projectId === entry.projectId, '目录已被其他项目替换');
       entry.name = cfg.name;
       entry.knowledge = documents(entry.root, 'knowledge'); entry.learning = documents(entry.root, 'learning');
+      entry.archives = documents(entry.root, 'archives'); entry.legacy = legacyDocuments(entry.root);
       entry.prompts = prompts(entry.root).filter(p => p.origin === 'project');
-      const tasksDir = managed(entry.root, 'TaskLogs');
-      entry.tasks = readdirSync(tasksDir, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => json(managed(entry.root, `TaskLogs/${e.name}/task.json`)));
+      const tasksDir = managed(entry.root, 'requests');
+      entry.tasks = existsSync(tasksDir) ? readdirSync(tasksDir).filter(name => name.endsWith('.json')).map(name => json(managed(entry.root, `requests/${name}`))) : [];
       entry.stale = [...entry.knowledge, ...entry.learning].filter(d => freshness(entry.root, d) === 'stale').length;
     } catch (e) { entry = { ...entry, key: file.slice(0, -5), error: e.message, name: entry?.name ?? '无效登记' }; }
     const group = groups.get(entry.projectId ?? entry.key) ?? []; group.push(entry); groups.set(entry.projectId ?? entry.key, group);
@@ -53,7 +54,7 @@ function pages(items, list, view, size = 5) {
 }
 export function panel(state, view = { view: 'overview' }) {
   validateView(view);
-  const items = [card('vczh', [button('项目总览', { view: 'overview' }), button('通用规范', { view: 'builtin', id: 'general' }), button('C++ 规范', { view: 'builtin', id: 'cpp' })])];
+  const items = [card('vczh', [button('项目总览', { view: 'overview' }), ...builtinPrompts().map(p => button(p.title, { view: 'builtin', id: p.id }))])];
   if (view.view === 'builtin') {
     const p = builtinPrompts().find(p => p.id === view.id); requireValue(p, '内置规范不存在');
     const chunks = renderPrompt(p).match(/[\s\S]{1,2200}/gu) ?? [];
@@ -64,10 +65,10 @@ export function panel(state, view = { view: 'overview' }) {
   if (view.view === 'overview') {
     const good = projects.filter(p => !p.error), sum = field => good.reduce((n, p) => n + p[field].length, 0);
     items.push(card('项目知识总览', [stat('已登记项目', projects.length), stat('暂不可读取', projects.length - good.length), stat('知识 / 经验 / 项目规范', `${sum('knowledge')} / ${sum('learning')} / ${sum('prompts')}`), stat('来源已变化', good.reduce((n, p) => n + p.stale, 0)),
-      markdown('在项目对话中说“使用 vczh 工作流”，或运行 `vczh init` 登记已有项目。每个项目统计最近登记且仍可读的工作区；不重复累计分支副本。') ]));
+      markdown('知识直接读取 .github/KnowledgeBase；学习读取原文 Learning 文件。使用 vczh init 登记。每个项目统计最近登记且仍可读的工作区，不重复累计分支副本。') ]));
     for (const p of pages(items, projects, view)) {
       if (p.error) { items.push(card(p.name, [markdown(`无法读取：${short(p.error, 450)}`)])); continue; }
-      items.push(card(p.name, [stat('知识 / 经验 / 规范', `${p.knowledge.length} / ${p.learning.length} / ${p.prompts.length}`), stat('进行中 / 已完成', `${p.tasks.filter(t => t.phase !== 'done').length} / ${p.tasks.filter(t => t.phase === 'done').length}`), stat('待复核来源', p.stale), ...Object.entries(names).map(([kind, label]) => button(label, { view: 'project', key: p.key, kind }))], p.root));
+      items.push(card(p.name, [stat('知识 / 学习文件 / 规范', `${p.knowledge.length} / ${p.learning.length} / ${p.prompts.length}`), stat('进行中 / 已完成', `${p.tasks.filter(t => t.status !== 'done').length} / ${p.tasks.filter(t => t.status === 'done').length}`), stat('学习条目 / 归档', `${p.learning.reduce((n, d) => n + d.learningCount, 0)} / ${p.archives.length}`), ...Object.entries(names).map(([kind, label]) => button(label, { view: 'project', key: p.key, kind }))], p.root));
     }
   } else {
     const p = projects.find(p => p.key === view.key); requireValue(p && !p.error, '工作区不可读或已切换，请返回项目总览');
@@ -78,7 +79,7 @@ export function panel(state, view = { view: 'overview' }) {
       for (const entry of pages(items, list, view)) items.push(card(entry.title, [markdown(short(entry.summary ?? entry.appliesTo, 400)), stat('状态', kind === 'prompts' ? (entry.enabled ? '已启用' : '未启用') : freshness(p.root, entry)), button('查看全文', { view: 'detail', key: p.key, kind, id: entry.id })]));
     } else {
       const entry = list.find(d => d.id === view.id); requireValue(entry, '条目不存在');
-      const content = kind === 'prompts' ? renderPrompt(entry) : `${entry.body}\n\n来源：\n${entry.sources.map(s => `- ${s.path}`).join('\n')}\n\n独立任务：${entry.taskIds.length}；核对时间：${entry.updatedAt}`;
+      const content = kind === 'prompts' ? renderPrompt(entry) : `${entry.body}\n\n文档：${entry.path}`;
       const chunks = content.match(/[\s\S]{1,2200}/gu) ?? [];
       items.push(card(entry.title, pages(items, chunks, view, 1).map(markdown)));
     }

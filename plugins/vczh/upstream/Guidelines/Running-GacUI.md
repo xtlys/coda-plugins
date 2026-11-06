@@ -1,0 +1,82 @@
+﻿# Running a GacUI Application Project
+
+- Go to `Windows Specific` section if you are on Windows.
+- Go to `Linux Specific` section if you are on Linux.
+- Go to `macOS Specific` section if you are on macOS.
+
+When the model `gpt-5.6-luna` is available:
+- If multiple steps need to be done to operate the GUI:
+  - Summarize what to look for and what to do.
+  - Start a sub agent with this model to perform all GUI operations.
+  - If the target application has bugs, it is normal that steps can't be performed to the end. The sub agent should summarize what is going wrong to prevent steps to be done.
+  - This model is fast, it significantly improves the performance of operating the GUI.
+
+- GacUI applications could end up in dead loop or dead locks, so DO NOT JUST wait for the process to exit.
+  - When it is crashed, sometimes (but not always) a native dialog would show and block the process.
+  - Native dialogs could be proactivately called from a GacUI application, even when `FakeDialogService` is not used.
+  - If you believe the processing is blocked or is running too long, you are going to check out `Running-ComputerUse.md` and deal with it.
+
+## Automation Service via HTTP
+
+Prefer automation Controls/Dom geometry and IO state when debugging layout. Use screenshots as a last resort when those observations cannot explain the issue. Screenshots are useful for native renderer output and for applications without an automation endpoint, such as CppTest_Tui; follow their documented interaction workflow.
+
+Automation is composed explicitly by each application:
+- Construct the concrete automation service that matches the active controller: `WindowsAutomationService` for an ordinary Windows app, `WindowsAutomationServiceHosted` for hosted mode, `WindowsAutomationServiceRenderer` for a Windows remote renderer, `RemoteProtocolAutomationService` for a remote core, or the platform renderer service on Linux/macOS.
+- Substitute that service with `GetNativeServiceSubstitution()->Substitute` before starting an endpoint.
+- Start either the Windows HTTP endpoint or the MiniHTTP endpoint, run the application, then stop the endpoint, call `Stop` on the service, and unsubstitute it in that order.
+- Endpoint selection changes the transport only. Windows HTTP and MiniHTTP expose the same `Controls`, `Dom`, and `IO` contract described below.
+
+When `StartWindowsHttpAutomationService` is used during startup up a GacUI application:
+- It listens to `http://localhost:<port>/Automation/<applicationName>/...`.
+- GET `.../Controls`, for GacUI applications, exposing all visible windows and popups.
+  - Read comment for `DumpWindowClientArea` for the schema.
+- GET `.../Dom`, for remote protocol renderer, exposing the DOM tree.
+  - Read comment for DumpRemoteProtocolRenderingDom` for the schema.
+- POST `.../IO` or `IO/<WINDOW-ID>`
+  - Set `Content-Type` to exactly `application/json; charset=utf8`. The Windows HTTP implementation validates this value before reading the UTF-8 command body.
+  - IRead comment for `RunIOCommandOnNativeWindow` for the schema.
+  - `<WINDOW-ID>` is the window id returning from `.../Controls`.
+  - The window ID can be comitted for the main window.
+  - The window ID must be omitted for GacUI applications with hosted mode or remote protocol core side.
+    - In this case all sub windows or popups behaves like controls in the main window.
+
+When remote protocol is in use:
+- Core side exposes UI in window-control tree concept.
+- Renderer side exposes UI in DOM tree concept.
+- Both supports IO operations:
+  - When performing IO via renderer, remote protocol events are used to pass IO operations to core.
+  - When performing IO via core, renderer only receives UI updates and redraw.
+  - Core and renderer should sync in the same UI state afterwards.
+  - Performaning IO via no matter renderer or core should result in the same UI state.
+- If GacJS connects to the core side, automation service only works on core.
+
+## Windows Specific
+
+### Verifying GacUI application
+
+The automation service is the best way to check rendering and perform operations because it maps directly to GacUI compositions, elements, and IO operations. Use the HTTP automation surface described above to inspect the UI, exercise the target test operations, and verify the resulting rendering and state.
+
+Always try Windows UI Automation afterwards to verify that the same target test operations can also be performed through UIA. Record any missing properties, patterns, tree relationships, or operations that prevent completion, even when the automation-service checks pass.
+
+- While polling automation endpoints or waiting for application processes, repeatedly inspect the target processes for a top-level window titled exactly `Microsoft Visual C++ Runtime Library`.
+  - Treat this window as a blocking crash signal immediately. Do not keep retrying the application-level endpoint, because the modal dialog can block the UI thread and make a crash look like an ordinary timeout.
+  - Capture the dialog text and buttons with the Win32 procedure in `Running-ComputerUse.md`, dismiss it deliberately, and record the process exit code.
+  - Check again after every automation timeout and before declaring a run successful.
+
+### UI Automation
+
+UI Automation is Windows-specific. Local Windows applications expose native UI Automation providers in ordinary and hosted GDI/Direct2D modes. Hosted logical windows share the actual host HWND. Remote renderers do not expose a transported semantic tree; use a local Windows application to verify the corresponding GacUI controls through UIA.
+
+Use a windowless MTA client and identify the application's owned HWND with `EnumWindows`; `Process.MainWindowHandle` can be zero in a locked session. UIA provider calls can work while locked, so verify the actual connection instead of assuming failure. Record any session or provider limitation that prevents the required UIA verification.
+
+## Linux Specific
+
+When maintaining the `vczh-libraries` github organization:
+- Only `wGac` repo runs actual GacUI application on Linux.
+- `GacUI` test apps only work when they are unit test, CLI or GacUI remote protocol core application (which is also CLI but with automation service enabled).
+
+## macOS Specific
+
+When maintaining the `vczh-libraries` github organization:
+- Only `iGac` repo runs actual GacUI application on macOS.
+- `GacUI` test apps only work when they are unit test, CLI or GacUI remote protocol core application (which is also CLI but with automation service enabled).

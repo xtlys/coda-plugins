@@ -1,35 +1,34 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { config, id, init, json, lock, plugin, register, repo, requireValue } from './store.mjs';
-import { builtinPrompts, enablePrompt, prompts, putPrompt, renderPrompt } from './prompts.mjs';
-import { documents, freshness, putDocument } from './knowledge.mjs';
-import { check, record, revise, start, task } from './tasks.mjs';
+import { config, init, json, lock, register, repo, requireValue } from './store.mjs';
+import { enablePrompt, prompts, putPrompt, renderPrompt, promptTemplate, sourceText, manifest } from './prompts.mjs';
+import { documents, legacyDocuments, backups, remember } from './knowledge.mjs';
+import { getRequest, route, startRequest } from './requests.mjs';
+import { protocol } from './protocol.mjs';
 
-const help = `vczh protocol [repro|proposal|implementation|review|refine|delivery|knowledge|prompts]
+const help = `vczh protocol [ask|investigate|review|refine|kb|kb-refine|direct|adapter|prompts]
+vczh source list|<上游相对路径>
 vczh init [--root <工作目录>]
+vczh route --file <最新请求> [--intent coding|research|maintenance] [--task-file <相对路径>]
+vczh request start --file <最新请求> [--intent ...] [--task-file ...]
+vczh request show <id>
+vczh remember [--earliest <数量>]
 vczh prompt list|show <id>|put --file <json>|enable <id>|disable <id>|template <新id>
-vczh kb list|show <id>|put --kind knowledge|learning --file <json>
-vczh task start --title <标题> --file <需求文本> [--delivery local|pull-request]
-vczh task show <id> | record <id> --file <证据json> | revise <id> --reason <理由>
-vczh check <task-id> -- <命令> <参数...>
-所有项目命令支持 --root；完成阶段由 BPMN 核验并推进。先 init；无需覆盖 AGENTS.md。`;
+vczh kb list|show <id> [--kind knowledge|learning|archives|legacy]
+所有项目命令支持 --root。知识和学习文件使用原生 Markdown，由对应原文 prompt 编辑。`;
 try {
-  const argv = process.argv.slice(2), split = argv.indexOf('--');
-  const command = split < 0 ? [] : argv.slice(split + 1);
-  const { positionals: p, values: v } = parseArgs({ args: split < 0 ? argv : argv.slice(0, split), allowPositionals: true,
-    options: Object.fromEntries(['root', 'file', 'title', 'delivery', 'kind', 'reason'].map(k => [k, { type: 'string' }])) });
+  const { positionals: p, values: v } = parseArgs({ allowPositionals: true,
+    options: Object.fromEntries(['root', 'file', 'kind', 'intent', 'task-file', 'earliest'].map(k => [k, { type: 'string' }])) });
   let output;
   if (!p.length || p[0] === 'help') output = help;
-  else if (p[0] === 'protocol') {
-    const name = p[1] ?? 'SKILL'; requireValue(['SKILL', 'repro', 'proposal', 'implementation', 'review', 'refine', 'delivery', 'knowledge', 'prompts'].includes(name), '未知协议章节');
-    output = readFileSync(join(plugin, 'skills/vczh', name === 'SKILL' ? 'SKILL.md' : `references/${name}.md`), 'utf8');
-  } else if (p[0] === 'prompt' && p[1] === 'template') {
-    output = { ...builtinPrompts()[0], id: id(p[2]), title: '项目规范标题', scope: 'project', appliesTo: '填写适用模块与触发场景', prefer: ['填写应该采用的做法与理由'], avoid: ['填写同一决策边界内应避免的做法'], examples: [{ good: '可执行的正例', bad: '相对应的反例', why: '两者的差别和判断依据' }], exceptions: ['用户明确要求与项目契约优先'], checks: ['可以观察或验证的完成标准'], sources: [] };
-  } else {
+  else if (p[0] === 'protocol') output = protocol(p[1]);
+  else if (p[0] === 'source') output = p[1] === 'list' ? manifest : sourceText(p[1]);
+  else if (p[0] === 'prompt' && p[1] === 'template') output = promptTemplate(p[2]);
+  else {
     const root = repo(v.root);
-    if (p[0] === 'init') output = { root, ...init(root) };
+    if (p[0] === 'route') output = route(root, readFileSync(v.file, 'utf8'), { intent: v.intent, taskFile: v['task-file'] });
+    else if (p[0] === 'init') output = { root, ...init(root) };
     else {
       config(root); register(root);
       if (p[0] === 'prompt') {
@@ -38,16 +37,13 @@ try {
         else if (p[1] === 'put') output = lock(root, 'prompts', () => putPrompt(root, json(v.file)));
         else if (['enable', 'disable'].includes(p[1])) output = lock(root, 'prompts', () => enablePrompt(root, p[2], p[1] === 'enable'));
       } else if (p[0] === 'kb') {
-        const kind = v.kind ?? 'knowledge';
-        if (p[1] === 'list') output = documents(root, kind).map(({ body, ...d }) => ({ ...d, freshness: freshness(root, d) }));
-        if (p[1] === 'show') { const found = documents(root, kind).find(d => d.id === p[2]); requireValue(found, '知识条目不存在'); output = found; }
-        if (p[1] === 'put') output = putDocument(root, kind, json(v.file));
-      } else if (p[0] === 'task') {
-        if (p[1] === 'start') output = start(root, v.title, readFileSync(v.file, 'utf8'), v.delivery);
-        if (p[1] === 'show') output = task(root, p[2]);
-        if (p[1] === 'record') output = record(root, p[2], json(v.file));
-        if (p[1] === 'revise') output = revise(root, p[2], v.reason);
-      } else if (p[0] === 'check') { output = check(root, p[1], command); process.exitCode = output.exitCode === 0 && !output.error ? 0 : 1; }
+        const list = v.kind === 'legacy' ? legacyDocuments(root) : documents(root, v.kind ?? 'knowledge');
+        if (p[1] === 'list') output = list.map(({ body, ...d }) => d);
+        if (p[1] === 'show') { const found = list.find(d => d.id === p[2] || d.path === p[2]); requireValue(found, '文档不存在'); output = found.body; }
+      } else if (p[0] === 'request') {
+        if (p[1] === 'start') output = startRequest(root, readFileSync(v.file, 'utf8'), { intent: v.intent, taskFile: v['task-file'] });
+        if (p[1] === 'show') output = getRequest(root, p[2]);
+      } else if (p[0] === 'remember') output = v.earliest ? backups(root, Number(v.earliest)) : remember(root);
       requireValue(output !== undefined, help);
     }
   }

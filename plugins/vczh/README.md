@@ -1,122 +1,99 @@
 # vczh
 
-把 vczh 的调查、证据交接和经验提炼方法用于普通项目的 Coda 插件。自带工作流、Skill、命令与知识/规范面板，不依赖第三方 npm 包。
+在 Coda 中执行 vczh 的原文工作流，并分类管理工程规范。此版本纠正第一版的概括与改写：六份工作 prompt 直接读取上游完整原文；规范正文逐行引用原文，只拆分类别。
+
+[本次忠实性 review](REVIEW.md) · [来源与对应关系](SOURCES.md)
 
 ## 使用
 
-在 Coda「从仓库添加」中读取本仓库（HTTPS 仓库地址或本机仓库路径），选择 `plugins/vczh`。读取的是已提交版本。安装并在项目中启用后，新打开的项目会话能发现 `vczh` Skill 和会话指令。
+在项目对话中说「使用 vczh 工作流……」。插件 Skill 先读取当前项目约定，再按最新请求路由。可用 `vczh protocol` 阅读入口。
 
-在项目里说：
+| 命令 | 原文行为 |
+| --- | --- |
+| `ask` | 研究分析，不改源码 |
+| `investigate repro` | 归档旧调查、逐字保存需求、构造并确认复现、提出方案、逐个实验和回退、选择并重放最佳方案、复验与自审 |
+| `investigate continue` | 追加 UPDATE；用户否定已确认方案时标记 DENIED BY USER；从 Step 5 继续 |
+| `investigate report` | 追加 REPORT，比较已确认方案；停止后续执行 |
+| `review` | 执行前审阅任务文件，保留用户原话，补 DETAILS / VERIFICATION / REVIEW COMMENTS |
+| `refine` | 整理最早一组归档，提炼偏好，更新排序计数，删除已消费的归档；一次一组 |
+| `kb topic/ask/draft/improve/execute` | 分开研究、追问、起草、改稿、落入索引及正文 |
+| `kb refine` | 对照近期学习和代码，更新本项目既有知识页 |
 
-- 「使用 vczh 工作流，实现这个功能……」
-- 「按 vczh 方法整理这个项目的知识库。」
-- 「仿照 vczh 内置格式，写一份本项目的错误处理规范并启用。」
-- 「这个 C++ 项目启用 vczh 的 C++ 规范。」
+没有首词时，研究问题按 ask、编码按 investigate repro、其他非编码工作直接执行。规划、文档维护、构建/CI 脚本修正属于上游明确列出的非编码例外。空 repro 读取 `TODO_TASK.md`，空 review 标记同一文件。
 
-解释工作流、只读问答和审查材料不会自行启动修改任务。普通不涉及本协议的对话不强制载入整个规范库。
+Coda BPMN 负责路由、交接和恢复；实际步骤按完整原文在发起会话中执行。没有另加证据 JSON 闸门、固定评审轮数、强制 refine 或强制 PR。原文的提交推送检查点、逐 Task 提交、rebase 后重测均保留。PR 只在用户要求时接续 Coda 原生生命周期。
 
-安装前可用 `node plugins/vczh/scripts/cli.mjs protocol` 阅读协议。安装后命令名为 `vczh`，`vczh help` 列出所有入口。
+手动入口：
 
-## 工作流
-
-```mermaid
-flowchart TD
-  A["对话采用协议 / 恢复原任务"] --> B["复现与验收标准"]
-  B --> C["提案、预期和反证条件"]
-  C --> D["实现与实际命令验证"]
-  D --> E["评审"]
-  E -->|"要求修改，未达上限"| D
-  E -->|"通过"| F["提炼知识与经验"]
-  F --> G["交付并保存最终记录"]
-  G --> H["本地交付"]
-  G -->|"已要求创建 PR"| I["现有 Coda PR 生命周期"]
+```sh
+vczh init
+vczh route --file /tmp/latest-request.txt --intent coding
+vczh request start --file /tmp/latest-request.txt --intent coding
 ```
 
-启动时先 `vczh init`，再 `vczh task start --title … --file …`，最后由会话调用 `workflow_run`，workflow 为 `vczh`，参数为 `root` 和 `task`。采用工作流不另外授权推送、合并、发布或联系他人。
+再由会话调用 `workflow_run`，workflow 为 `vczh`，inputs 为 `root` 与 `request`。同一工作区的固定任务文档串行使用。失败或中断恢复原运行，不重新清空调查。请求内的子步骤以 Markdown 为准，Coda 的请求状态只表示本条命令是否完成。
 
-工作流把每个阶段交给发起会话，自动步骤核对证据再推进。每个阶段的具体协议、JSON 格式由 `vczh protocol <阶段>` 提供。自审是默认路径，外部评审必须注明出处；需要独立评审时使用已有授权或 Coda PR 评审机制。
+## 原文与分类
 
-- **命令证据**：`vczh check <task-id> -- <命令> <参数>` 保存实际退出码、输出尾部和运行前后的文件指纹。引用检查 ID，不能只写“测试通过”。单次检查限 10 分钟、输出缓冲限 2 MiB。
-- **代码变化**：指纹涵盖非忽略的跟踪/未跟踪文件、可执行位、链接目标、子模块内容和生效规范。TaskLogs 与知识正文不在代码指纹中，防止写证据使其自身失效。
-- **顺序与恢复**：任务有阶段和递增版本；阶段推进可重试，另一条 run 不能接管原 task。`coda:key` 阻止同工作区/任务重复启动。失败或取消恢复原运行，根据落盘阶段继续。
-- **修订**：在评审、沉淀或交付阶段发现代码变化，用 `task revise` 退回实现。评审修改上限默认 3，项目可在 project.json 调整。
-- **最终保存**：delivery 后再交给会话保存最终状态。PR 模式要求工作区输入及最终知识、记录已经提交，并通过 `gh pr view` 核对 PR 头提交与本地 HEAD 一致。已有其他未提交工作时先用独立工作树开始任务。Vczh 完成表示交付已接续，不表示 PR 已合并或发布。
+内置正文保留英文原句、示例、否定项、例外、重复段落和截断句。中文只用于目录标题及适用上下文。
 
-自动脚本只核对证据、推进状态，不修改产品源码、不强制提交，也不执行来自知识文件的命令。所有源码修改和验证在发起会话的原工作区发生。该实现使用同机工作区路径，暂不支持阶段迁移到另一台机器。
+| 分类 | 内容 |
+| --- | --- |
+| `general` | 语言无关的工程偏好、DRY、抽象、上游修复、接口、测试与并发判断 |
+| `cpp` | C++20、声明、namespace、Pimpl、RAII、生命周期、多线程、跨平台、Wasm；库或工具专用条目标明上下文 |
+| `workflow` | Workflow Script 语言及其 C++ AST 生成接口 |
+| `vczh-project` | 原作者的目录约束、测试应用策略、构建/运行/调试工具与 GacUI 规范 |
 
-## 项目数据与总览
+通用包默认启用；工作涉及相应语言或 vczh 库时，Skill 启用并读取对应包。原库规则没有删除，也不会被伪装成所有项目都通用的规则。`vczh source list` 列出原文，`vczh source <路径>` 输出全文。
+
+`vczh prompt template <id>` 创建原文风格的项目规范模板，按主题保存 Markdown 中的 Prefer / DO NOT / 原因 / 例外，不强迫每一条原规则补出虚构的正反例。`prompt put --file …`、`prompt enable/disable <id>` 管理项目版本。旧 schemaVersion 1 自定义规范仍可用。项目接口不能覆盖内置规范；内置由开发者维护源快照、分类和清单后随插件发布。
+
+## 项目文件与面板
 
 ```text
-.github/vczh/
-  project.json           项目标识、启用规范、评审上限
-  Project.md             项目构建入口、模块边界、生成物规则
+Project.md
+.github/
+  TaskLogs/
+    Copilot_Investigate.md
+    Copilot_KB.md
   KnowledgeBase/
-    Index.md             生成的按需阅读索引
-    <id>.md              知识正文、来源指纹、状态和任务引用
-  Learning/
     Index.md
-    <id>.md              带适用边界的经验，按独立任务累计来源
-  prompts/<id>.json      项目自定义规范
-  TaskLogs/<task-id>/    原始需求、状态、检查结果、各阶段证据
+    Index_<PROJECT>.md
+    KB_<PROJECT>_<Category>.md
+    KB_<PROJECT>_Design_<Topic>.md
+    Learning.md
+  Learning/
+    Learning_Coding.md
+    Learning_Testing.md
+    YYYY-MM-DD-HH-mm-ss/Copilot_Investigate.md
+  vczh/
+    project.json
+    prompts/<id>.json
+    requests/<id>.json
 ```
 
-所有知识正文均为 Markdown，头部 HTML 注释含机器元数据。用 `kb put` 写入、更新索引和校验来源。知识不是插件全局数据库：Git 中的项目文件是权威来源。旧项目的 `.github/KnowledgeBase` 不会被覆盖或自动迁移。
+`init` 仅补缺失文件，不覆盖已有文档；初建的 `Project.md` 需要 Agent 根据项目事实填写构建与测试入口。`vczh remember` 是上游归档脚本的跨平台等价操作，保留全文后重置当前标记；`--earliest N` 列出最早归档。
 
-面板显示已登记项目数、知识/经验/规范数、任务状态、来源已变化的条目，能分页浏览全文和两套内置规范。项目使用 `init` 或项目命令后登记。只读扫描本后端登记过的工作区，不私自遍历磁盘或 Coda 数据库。
+面板直接读取原生 Markdown，展示知识、学习计数、归档、规范和命令状态。只统计本后端登记过的工作区；同一 Git 项目的多工作树取最近登记且可读的一份，不累加分支副本。
 
-同一项目的多个 Git 工作树共享 projectId；总览选最近登记且仍可读的一份，不把多个分支副本累加。界面标出实际路径。工作树已回收时会尝试该项目其他已登记副本；全部失效则显示无法读取，不能当作零知识。此版本不是跨机器、跨分支合并的统计系统。
-
-条目状态：
-
-| 状态 | 含义 |
-| --- | --- |
-| current | 标为 confirmed，且来源文件内容仍与核对时一致 |
-| stale | 来源文件变更、删除或无法读取，需要复核 |
-| hypothesis | 尚未证实的假说，不作为强制规范 |
-| deprecated | 已废弃，保留来源及替代说明 |
-
-current 不是自动真理验证。来源指纹只能发现文本变化，不能证明推理正确或运行环境没有变化。知识更新要核对实际来源，不能机械刷新指纹。
-
-## 规范与维护权
-
-通用包 `general` 初始启用；C++ 包 `cpp` 内置但需按项目启用。两套规则均包含：适用范围、应该做、不要做、配对示例、例外、检查问题和固定提交来源。它们是改写与抽象，不是原文的逐字复制，原文与适配边界见 [SOURCES.md](SOURCES.md)。
-
-`vczh prompt template <新id>` 输出同样格式，`prompt put --file …` 保存项目版本，`prompt enable/disable <id>` 管理启用状态。项目 API 拒绝覆盖 general、cpp；如需局部替代，建新 ID，写明覆盖范围，再决定是否停用旧包。
-
-内置维护在此插件的 `prompts/*.json`，由插件开发者修改并随版本发布。项目的学习不会自动进入全局默认。提炼新规则时须检查：是否独立于原项目、正反例是否切中同一边界、例外是否充分、来源是否可追溯。
+第一版 `.github/vczh/KnowledgeBase` 和 `Learning` 仍在「旧版资料」中可读。升级不自动转换旧文档或任务；旧六阶段流程的运行应在升级前结束。原生 Markdown 不要求原版没有的来源指纹或状态字段。
 
 ## 验证
 
 ```sh
 node --test test/plugins/vczh.test.mjs
-node --test --test-name-pattern='skills are|plugins/vczh' test/check.test.mjs test/plugins/plugins.test.mjs
 node bin/check.mjs plugins/vczh
 ```
 
-还应使用 Coda `workflow_check` 检查 `.coda/workflows/vczh.bpmn`。根检查器补充了原生 `contributes.skills` 的目录、同名和越界检查；没有改动 ACP 协议版本。
+存在本地 Coda 运行时，可指定其目录执行真实引擎测试：
 
-这些检查覆盖数据持久化、幂等推进、证据过期、评审退回、重试上限、知识去重、路径边界、原生面板格式与分页、CLI 和工作流脚本。它们不冒充真实 Agent 的行为评估或 GitHub 端到端合并验收。
+```sh
+VCZH_CODA_RUNTIME=<运行时目录> \
+  node --test test/plugins/vczh-bpmn.test.mjs
+```
 
-本次还以运行中的 Coda 所用 `bpmn-engine`、FEEL 表达式求值器和 moddle 定义执行了实际 BPMN，调用真实阶段脚本，在临时 Git 工作区跑通复现、提案、一次评审退回、重新实现、通过、沉淀、交付和最终归档。人工任务由测试驱动答复，不调用真实 Agent 或远端服务。
+测试包括原文指纹、13 份 Guidelines 的逐行覆盖、六份完整 prompt、命令路由、归档、原生知识浏览、项目规范与面板；真实引擎覆盖七个命令分支和等待中的恢复。`workflow_check` 另用 Coda 当前读取器校验 BPMN。
 
-## 优缺点与后续方向
+这些测试验证协议装载与运行接线，不等于证明任意模型会完美遵循每条自然语言指令。原文可能存在不适用于某项目的偏好，按原文适用条件和用户显式覆盖处理。
 
-| 设计 | 收益 | 代价或边界 |
-| --- | --- | --- |
-| 阶段证据与文件交接 | 可恢复、可审计，减少聊天记忆丢失 | 小改动也有流程开销；模板不能判断证据是否充分 |
-| 知识与代码同仓 | 可评审、可回滚，项目所有权清晰 | 多分支编辑可能冲突，工作区回收前要保存 |
-| 正反配对的偏好 | 明确判断边界，比口号可执行 | 例外不足会把个人偏好变成错误禁令 |
-| 内置与项目规范分开 | 开发者控制公共默认，项目可独立演进 | 版本升级后的冲突仍需人工判断 |
-| 按来源指纹提示过期 | 不会无条件长期信任旧结论 | 文件级检测较粗，语义变化和环境漂移识别不足 |
-| 复用 PR 生命周期 | 保留现有评审、检查、批准和发布政策 | Vczh 阶段完成与 PR 最终完成是两个状态 |
-
-优先完善方向：
-
-1. 用小型真实任务集评估协议：缺陷、纯文档、生成物、跨仓依赖各一类，统计时间、返工和知识复用，形成轻量/完整两种节奏。
-2. 加入可选的独立审查、需求到测试的关联与可信 CI 结果；现有 JSON 证据是协作记录，不是防篡改安全边界。
-3. 将来源细化为符号、代码范围及构建环境；增加“复核/替代”流程，分开记录观察次数、适用范围和可信度。
-4. 接入 Coda 正式项目资源接口，按默认分支快照统计；提供多机汇总、失效登记清理与分支差异查看。
-5. 给规范增加逐条 ID、版本与升级差异预览；将项目经验提升为内置规范时由开发者评审，禁止自动污染公共默认。
-6. 增加查询、历史版本比较和冲突提示；用真实复用频率决定是否需要全文索引或检索系统，不先引入复杂服务。
-
-插件许可证为 Apache-2.0，归因见 [NOTICE](NOTICE)；三个参考仓库本身不随插件分发。
+插件为 Apache-2.0，保留 [NOTICE](NOTICE)。插件内带共享工作流和规范原文快照，不分发三个参考仓库的源码或具体项目知识正文。

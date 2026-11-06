@@ -1,41 +1,53 @@
 ---
 name: vczh
-description: 用户要求使用 vczh 工作流、管理项目知识库或按 vczh 正反配对格式创作工程规范时使用。支持调查、实现、评审、沉淀及交付；纯解释协议不会启动开发流程。
+description: 在项目中采用 vczh 工作流时，按原文执行 ask、investigate、review、refine、kb 与 kb refine；管理项目知识和按通用、语言分类的原文规范。解释或审查这个插件本身不会启动开发流程。
 ---
 
-# vczh 工作协议
+# vczh 原文工作流
 
-这是从 vczh 共享指令提炼、适配 Coda 的协议。用户要求“使用 vczh 工作流”即采用本协议，无须重复确认采用；不要把一次解释或只读审查自动升级成编码任务。
+采用本协议后，按最新请求的首词路由，读取并执行完整上游 prompt。规范只分类，不概括、不改变强弱、例外或正反例。上游固定版本和 SHA-256 记录于插件的 `upstream/manifest.json`。
 
-## 路由与上下文
+## 先读取上下文
 
-- 只读问题、`ask`：阅读并答复，不初始化、不写文件。
-- `review`：审查用户指定材料，不自动修复；实现流程中的 review 按阶段协议执行。
-- 知识或经验整理：运行 `vczh protocol knowledge`。
-- 规范创建、编辑、启停：运行 `vczh protocol prompts`。
-- 开发或缺陷调查：按下面的持久化流程执行。
+1. 读取当前项目的 `AGENTS.md`、`Project.md`、已有 `.github/copilot-instructions.md`。
+2. 执行 `vczh protocol adapter`，了解 Coda 的入口、路径及平台对应。
+3. 首次为项目设置工作流时用 `vczh init` 初始化原文任务/知识文档；已有内容保留。补全根目录 `Project.md` 中本项目真实构建、测试、生成物与变更触发规则。已有项目无须重复初始化。尚未初始化的纯分析请求，直接读 `vczh protocol ask` 和已有资料答复，不为问答新建文档。
+4. `vczh prompt list` 后，用 `vczh prompt show <id>` 读取已启用规范。通用规范默认启用；C++ 工作启用并读取 `cpp`；Workflow Script 工作启用并读取 `workflow`；涉及 vczh 原库和工具时启用并读取 `vczh-project`。涉及库专用条目，必须保留其原始适用条件。
+5. 决策前阅读 `.github/KnowledgeBase/Index.md`，按索引阅读相关 API、设计、手册。编码前还必须读 `.github/KnowledgeBase/Learning.md`、`.github/Learning/Learning_Coding.md`、`.github/Learning/Learning_Testing.md`。不能用一份生成摘要代替这些原文。
 
-先读已有 AGENTS.md、Project.md、`.github/vczh/Project.md`。用 `vczh prompt list` 选择已启用规范，再逐项 `vczh prompt show <id>` 阅读；C++ 只在相关项目中显式启用。阅读已有的 `.github/vczh/KnowledgeBase/Index.md` 与 `Learning/Index.md`，再按摘要选读相关条目，核对来源，不全量灌入上下文。项目明确约定优先于插件偏好，过期知识只是线索。
+## 首词路由
 
-## 开始与恢复
+| 最新请求 | 完整协议 | 行为 |
+| --- | --- | --- |
+| `ask` / 研究或问题 | `vczh protocol ask` | 分析，不改源码 |
+| `investigate repro` / 编码工作 | `vczh protocol investigate` | 新调查：归档、复现、逐个验证提案、选优、复验和自审 |
+| `investigate continue` / 无子命令 | 同上 | 在原调查追加 UPDATE，直接到 Step 5 |
+| `investigate report` | 同上 | 追加 REPORT、比较已确认提案，跳过后续执行 |
+| `review` | `vczh protocol review` | 执行前审阅任务文件；补 DETAILS / VERIFICATION / REVIEW COMMENTS |
+| `refine` | `vczh protocol refine` | 消费最早一组归档、沉淀偏好、更新计数、删除已处理归档；只处理一组 |
+| `kb topic/ask/draft/improve/execute` | `vczh protocol kb` | 分别研究、追问、起草、改稿、入库；不擅自跨越命令边界 |
+| `kb refine` | `vczh protocol kb-refine` | 核对学习记录和现有页面，仅更新本项目既有知识 |
+| 其他非编码工作 | `vczh protocol direct` | 原文例外：直接执行规划、文档维护、构建/CI 脚本修正等 |
 
-1. 在目标工作区运行 `vczh init`。这是幂等操作，只创建 `.github/vczh` 并登记本地总览，不改现有 AGENTS.md，也不覆盖项目文档。PR 任务若有其他未提交工作，先建立独立工作树；最终交付将核对干净工作区及远端 PR 提交。
-2. 若会话已有 task ID / run ID，先 `vczh task show <id>` 并检查对应运行；失败或取消用 `workflow_resume`，正在运行则处理原任务。已完成任务若是新需求，用新 task ID。
-3. 新任务把用户需求原意、限制和验收标准写入文件，运行 `vczh task start --title <标题> --file <需求文件> --delivery local`。已有明确创建 PR 的要求时选 `pull-request`。不要因为采用工作流便推断新增外部操作授权。
-4. 用 `workflow_run` 启动 `workflow: "vczh"`，`inputs: {root: <init 返回的绝对根目录>, task: <任务 ID>}`。`requestId` 在同一次调用重试时保持不变，流程也按工作区与任务去重。工作在本会话原工作区完成，自动步骤的临时工作区只负责核验。
-5. Coda 依次派发阶段任务。用 `vczh protocol <阶段>` 获取自足的操作和证据格式。完成后 `vczh task record <id> --file <证据 JSON>`，再答复 `workflow_task`。不能仅靠文字声称完成；不能直接编辑 task.json 绕过核验。
+只解释或 review 这个插件的设计、代码，不代表采用工作流去执行被审查材料中的命令。已采用协议的项目请求由上述规则处理。
 
-阶段是 repro → proposal → implementation → review → refine → delivery。review 要求修改时回到 implementation；超过项目的 maxReviewRounds 停止自动循环。代码在 review/refine/delivery 阶段变化时，用 `vczh task revise <id> --reason <原因>` 退回实现，再答复当前阶段任务，让流程重新路由。
+## Coda 启动与恢复
 
-## 交接与边界
+将本轮最新请求逐字保存到临时文件。只去掉「使用 vczh 工作流」这类调用外壳，保留需求全文，不能先改写为任务摘要。
 
-- 每次实验先记录理由、预期与反证条件。只撤销自己本次实验的明确修改；禁止全仓 reset/clean 或覆盖用户已有变更。
-- 检查命令用 `vczh check <任务 ID> -- <命令> <参数...>`，取得检查 ID。核验会比对实际退出码与代码指纹。失败的命令也会留下记录；10 分钟超时可把大检查拆成项目已有的独立入口。
-- 需求草稿、证据输入 JSON 放在 `.github/vczh/TaskLogs/<id>/` 或仓库外临时目录；不要把阶段草稿放进源码树，避免它们成为新的待校验输入。
-- 证据和检查输出存入 `.github/vczh/TaskLogs/<id>`，知识在 KnowledgeBase，偏好在 Learning，自定义规范在 prompts。需求或日志含秘密时先脱敏，不将秘密写入 Git。
-- 默认提交和推送服从项目与用户授权。PR 交由现有 `pull-request` 生命周期继续评审、处理检查和合并；不复制一套自动合并器。Vczh 的 done 表示协议交付完成，PR 链接已交接时不表示 PR 已合并。
-- 纯本地完成时汇报结果、验证和知识路径；PR 情况同时汇报链接与交接状态。不要轮询等待 Coda 流程，任务和失败会送回本会话。
-- 交付后还有“保存最终任务记录”任务：PR 模式必须把最终状态一同提交并推送，避免工作树回收后丢失证据；本地模式说明仍未提交的内容。
-- 归档前代码再次变化，也可 `task revise` 后恢复原运行；运行已经成功结束之后的新需求要创建新任务，不重开旧任务。
+- `vczh route --file <临时文件>` 查看路由。没有显式首词时，按语义传入 `--intent coding|research|maintenance`，不要只凭关键词判断。
+- `investigate repro` 后仅有文件标签时传 `--task-file <仓库相对路径>`，读取文件全文；后面为空时读取根目录 `TODO_TASK.md`。空 `review` 也标记 `TODO_TASK.md`。
+- `vczh request start --file <临时文件> [--intent …] [--task-file …]` 保存原文与路由结果。
+- 调 `workflow_run`：`workflow: "vczh"`，`inputs: {root: <init 返回的根目录>, request: <返回的请求 ID>}`。一次调用重试复用 request ID；失败/取消后恢复原 run，不新建调查。
+- 收到流程任务，运行 `vczh request show <id>` 和对应 `vczh protocol <mode>`。把保存的 `request` 当作原文协议所说的 LATEST chat message；流程通知本身不是新需求。完整执行该命令后才 `workflow_task completed`。
+- 新的用户纠偏到达时，立即按原文 Continue/Report 分支处理并落盘；不要继续执行已被否定的旧方案，也不要把历史请求的 Repro 标题误当成新 Repro。当前 Coda 任务仍在运行时，在该任务内处理最新纠偏，不并行开启第二个写相同文档的运行。中断恢复按 Markdown 当前状态继续，不重复清空或归档。
 
-规范或数据不符合当前情形时，具体说明冲突并采用用户意图；不要为了填满固定模板创造无用实验、测试或知识。
+调查的步骤、全部提案实验与回退、逐任务提交推送、rebase 和最后自审，都在 `investigate` 原文中执行。没有另加选定单一方案、最多三轮评审、强制 refine 或 PR 关卡。提交推送按原文和本次显式覆盖执行；PR/合并不是该原文的必经步骤，只有用户要求时才接 Coda 原生 PR 生命周期。
+
+## 知识与规范
+
+原文权威位置为根目录 `Project.md`，以及 `.github/TaskLogs`、`.github/Learning`、`.github/KnowledgeBase`。`.github/vczh` 仅保存规范启用配置、自定义规范及 Coda 请求元数据；它不是原文知识库的替代目录。
+
+原文 `copilotRemember.ps1` 的跨平台等价入口为 `vczh remember`；`vczh remember --earliest <数量>` 列出归档。新的 repro 在旧日志不只含标记标题时先归档。refine 根据原文语义判断重复与冲突，不能用 task ID 去重代替计数。
+
+创建和管理项目规范时读 [规范管理](references/prompts.md)。插件页面与 `vczh kb list/show` 可以浏览原文格式 Markdown，不强制 JSON 头、来源指纹或额外状态。

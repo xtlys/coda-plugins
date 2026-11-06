@@ -1,41 +1,43 @@
-# 来源与提炼边界
+# 来源与对应关系
 
-依据用户提供的 `vczh/vczh-libraries-Agent工作流与代码规范分析.md` 定位来源，于 2026-11-07 实际克隆三个仓库并读取。使用 HTTPS、`--depth 1 --filter=blob:none`，未启用 sparse-checkout，得到当前完整工作树；未递归克隆子模块。参考克隆保留在本仓库的 `vczh/repos/`，通过本地 Git exclude 排除，不分发第三方源码。
+依据本地 `vczh/vczh-libraries-Agent工作流与代码规范分析.md` 定位并核对三仓。此次修正仍以第一次交付时实际克隆的固定提交为准，未把不同时间版本混用。
 
-| 仓库 | 本次 HEAD | 作用 |
+| 仓库 | 固定提交 | 用途 |
 | --- | --- | --- |
-| [Tools](https://github.com/vczh-libraries/Tools/tree/493f3fe00b4a48831c1cc0612184fde709bafcb2) | `493f3fe00b4a48831c1cc0612184fde709bafcb2` | Copilot 共享协议和规范的权威来源 |
-| [Release](https://github.com/vczh-libraries/Release/tree/4b8b30d32706caf229e736e8e49109590ba1e897) | `4b8b30d32706caf229e736e8e49109590ba1e897` | 共享材料的消费与发布样本 |
-| [GacUI](https://github.com/vczh-libraries/GacUI/tree/af56a5be836c10779ea910e9cfa2b0459a12dd07) | `af56a5be836c10779ea910e9cfa2b0459a12dd07` | 项目约定、知识与 Jobs 的实际组织样本，仅用于研究 |
+| [Tools](https://github.com/vczh-libraries/Tools/tree/493f3fe00b4a48831c1cc0612184fde709bafcb2) | `493f3fe00b4a48831c1cc0612184fde709bafcb2` | Copilot 共享协议和规范的权威源 |
+| [Release](https://github.com/vczh-libraries/Release/tree/4b8b30d32706caf229e736e8e49109590ba1e897) | `4b8b30d32706caf229e736e8e49109590ba1e897` | 消费共享材料的样本 |
+| [GacUI](https://github.com/vczh-libraries/GacUI/tree/af56a5be836c10779ea910e9cfa2b0459a12dd07) | `af56a5be836c10779ea910e9cfa2b0459a12dd07` | 项目约定、学习和 Jobs 的实例 |
 
-这些提交比原分析文档新。本次核对三份 AGENTS.md 的 SHA-256 均为 `95463c5df7d4dcb2fb9ea8e91b729ec51fa66a0fbd0f5b400376f1567b23b3e7`；Tools 与 Release 的 Guidelines 目录无差异。GacUI 的 Project.md 为 484 行，不能把它的工程路径、生成流程或测试矩阵当作通用约束。
+## 原文保存
 
-## 原始设计
+[upstream/manifest.json](upstream/manifest.json) 记录 34 个源文件的路径和 SHA-256。副本与 Tools/Copilot 对应文件逐字节相同：
 
-- [Tools/Copilot/AGENTS.md](https://github.com/vczh-libraries/Tools/blob/493f3fe00b4a48831c1cc0612184fde709bafcb2/Copilot/AGENTS.md)：关键词路由，先读项目与规范；编码调查使用固定文档交接。
-- [copilotInit.ps1](https://github.com/vczh-libraries/Tools/blob/493f3fe00b4a48831c1cc0612184fde709bafcb2/Copilot/copilotInit.ps1)：共享源同步到各仓，项目配置保留本地所有权。
-- [investigate.prompt.md](https://github.com/vczh-libraries/Tools/blob/493f3fe00b4a48831c1cc0612184fde709bafcb2/Copilot/prompts/investigate.prompt.md)：需求、复现、提案、确认/否定和用户纠偏落盘。
-- [kb.prompt.md](https://github.com/vczh-libraries/Tools/blob/493f3fe00b4a48831c1cc0612184fde709bafcb2/Copilot/prompts/kb.prompt.md)、[kb-refine.prompt.md](https://github.com/vczh-libraries/Tools/blob/493f3fe00b4a48831c1cc0612184fde709bafcb2/Copilot/prompts/kb-refine.prompt.md)：总索引、项目索引、API 选择与设计解释分层；知识更新限定范围。
-- [refine.prompt.md](https://github.com/vczh-libraries/Tools/blob/493f3fe00b4a48831c1cc0612184fde709bafcb2/Copilot/prompts/refine.prompt.md)：完成调查转为带计数的用户偏好与项目经验。
-- [Coding.md](https://github.com/vczh-libraries/Tools/blob/493f3fe00b4a48831c1cc0612184fde709bafcb2/Copilot/Guidelines/Coding.md)、[Coding_MultiThreading.md](https://github.com/vczh-libraries/Tools/blob/493f3fe00b4a48831c1cc0612184fde709bafcb2/Copilot/Guidelines/Coding_MultiThreading.md)：通过排序偏好、正反边界和明确例外塑造工程判断。
+- `AGENTS.md`、`copilot-instructions.md`、`Project.md`。
+- 全部 6 份 `prompts/*.prompt.md`。
+- 全部 13 份 `Guidelines/*.md`。
+- `Scripts`、`TaskLogs`、`Learning` 的共享脚本与模板，以及两个初始化脚本。
 
-## 采用与改写
+`vczh protocol <mode>` 直接输出完整 AGENTS、共享上下文及所选原文 prompt。工作目标、分支条件、Markdown 结构、提交与回退策略均在原文中维护，不再另写一份缩水版阶段协议。
 
-| 来源概念 | 本插件采用 | 有意调整 |
-| --- | --- | --- |
-| ask / investigate / review / refine / kb | Skill 路由与分阶段协议 | 只读请求不创建开发任务 |
-| 固定 Copilot_Investigate.md | 每任务独立目录、JSON 状态和证据 | 不覆盖上个任务，不依赖单个共享日志 |
-| 先写提案再试验 | proposal 先于 implementation，否定结论留历史 | 不强制试完所有方案，也不自动全仓回滚 |
-| 每任务 commit/push | 按已授权交付方式保存最终记录 | 不把采用方法当成推送、合并、发布授权 |
-| crash early、正确性优先 | 暴露内部不变量错误、预期失败进入契约 | 对不可信输入和可恢复失败不套用崩溃偏好 |
-| DRY、保守抽象、上游根因 | 通用包中的信息唯一性与所有权边界 | 接口破坏性变更须评估真实项目测试与迁移条件 |
-| C++ 生命周期、RAII、平台与同步 | 独立 C++ 包 | 不带入 Vlpp 类型、反射、正则、源码合并发布规则 |
-| Learning 计数 | 不同来源 task ID 去重计数 | 不把重复运行次数当可信度，不删除原始证据 |
-| 项目索引与知识维护 | Markdown 正文、生成索引、来源指纹与状态 | 加入过期提示；当前不复制庞大多仓框架知识树 |
-| 共享源覆盖同步 | 内置规范随插件发布，项目自定义独立保存 | 不覆盖 AGENTS.md，不把项目学习自动回灌全局 |
+具体项目知识、项目源码、Jobs 的具体任务、平台运行环境不会拷贝成其他项目的内容；三个参考仓库仍在本地 `vczh/repos`。这些不属于共享协议正文。
 
-`prompts/general.json`、`prompts/cpp.json` 与 Skill 是基于 Tools 共享材料的中文改写和通用化。代码指纹、命令收据、任务去重、BPMN 核验、工作区总览及来源过期检测是本插件新增的适配机制，不声称来自原作者。
+## 规范分类
 
-GacUI 仅帮助理解项目化组织，没有复制其源码、Jobs、知识正文、截图或测试资产。实际派生材料以 Tools/Copilot 为源。上游 [许可证说明](https://github.com/vczh-libraries/License/blob/master/README.md) 将 Tools 源文件及 Release/.github 文件列为 Apache-2.0；本插件附带对应许可证和归因。
+`prompts/*.json` 只存目录元数据和原文行范围，正文由 `sourceText`/`excerpt` 校验指纹后读取。全部 Guidelines 每行在分类中恰好出现一次，没有靠摘要替换，也没有删除原库条件。`copilot-instructions.md` 的 Quality Control 另外列在项目上下文包，执行时共享上下文依然全文可读。
 
-Coda 侧参考了本机原生 PR 生命周期、当前 `workflow-guide.md` 与运行时插件 Skill 读取契约：保持 BPMN 编排、任务回交、失败恢复和 PR 生命周期分工。未复制 PR 评审与合并实现，亦未把本机路径写进可执行协议。
+通用、C++、Workflow Script、原项目/工具四类不代表修改原规则。C++ 规范保留 Vlpp 类型、匿名 namespace、Pimpl、所有权、反射、Wasm 的原文；条目目录标明其库、发布布局或工具链前提。正反例及 Unless explicitly instructed 和原条目一起引用。
+
+## Coda 对应层
+
+[adapter.md](skills/vczh/references/adapter.md) 明示仅与宿主接线相关的对应关系：
+
+- Skill/贡献机制替代把共享入口覆盖到其他 Agent 文件；原初始化脚本仍完整保留供核对。
+- Coda 按六个原文命令及非编码例外分发；调查内部照原 prompt 连续执行。
+- 原知识路径恢复到 `.github/KnowledgeBase`、`.github/Learning`、`.github/TaskLogs`，根目录 `Project.md`。
+- `vczh remember` 对应归档脚本，可在无 PowerShell 的平台执行；同秒归档不覆盖旧文件。
+- 当前项目的工具及语言从自己的 `Project.md` 读取。原文特指 vczh 库或工具的段落保留原文及适用条件，不杜撰不存在的环境。
+- 原文回退前隔离用户并行改动，原文的“其余改动”对应本次实验；用户显式覆盖与宿主权限仍优先，不把“默认不推送”重写成作者的流程。
+
+上游的拼写错误、重复不稳定测试段落、截断句、LSP 的原文表述均保留。本次没有借复刻之名修正作者观点；将来若要调整，应作为另一个明确标记的版本评审。
+
+许可证依据与第一次交付一致：上游 [License](https://github.com/vczh-libraries/License/blob/master/README.md) 将 Tools 源文件与 Release/.github 文件列入 Apache-2.0。许可证与归因保留在插件中。

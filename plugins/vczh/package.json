@@ -1,19 +1,33 @@
 {
   "name": "vczh",
   "displayName": "vczh",
-  "description": "从复现、提案到验证与知识沉淀；在 .github/vczh 管理项目知识和正反配对的工程规范。",
-  "version": "1.0.0",
+  "description": "按 vczh 原文运行调查、任务审阅与知识工作流，分类管理通用和语言规范。",
+  "version": "2.0.0",
   "type": "module",
   "license": "Apache-2.0",
   "contributes": {
-    "skills": ["skills/vczh"],
-    "instructions": "用户要求使用 vczh 工作流、管理 vczh 知识库或创作规范时，先运行 vczh protocol，按协议执行。工作流用 workflow_run 发起 vczh；状态与知识保存在 .github/vczh。收到流程任务先读 vczh protocol，完成证据后再答复；恢复时沿用原任务与运行。内置规范由插件开发者维护，项目规范用 vczh prompt 管理。",
-    "commands": [{ "name": "vczh", "command": "\"$CODA_NODE\" \"$CODA_PLUGIN_PATH/scripts/cli.mjs\"" }],
-    "panels": [{
-      "id": "vczh", "title": "vczh · 知识与规范",
-      "command": "node \"$CODA_PLUGIN_PATH/scripts/panel.mjs\"",
-      "maxAge": "PT1M",
-      "actions": { "browse": { "command": "node \"$CODA_PLUGIN_PATH/scripts/panel.mjs\" --browse" } }
-    }]
+    "skills": [
+      "skills/vczh"
+    ],
+    "instructions": "项目采用 vczh 工作流时先运行 vczh protocol，按最新请求首词执行完整原文。review 是执行前任务审阅。workflow_run 发起 vczh，传 root 与 request。知识在 .github 的 KnowledgeBase、Learning、TaskLogs；vczh prompt 管理通用、语言及项目规范。",
+    "commands": [
+      {
+        "name": "vczh",
+        "command": "\"$CODA_NODE\" \"$CODA_PLUGIN_PATH/scripts/cli.mjs\""
+      }
+    ],
+    "panels": [
+      {
+        "id": "vczh",
+        "title": "vczh · 知识与规范",
+        "command": "node \"$CODA_PLUGIN_PATH/scripts/panel.mjs\"",
+        "maxAge": "PT1M",
+        "actions": {
+          "browse": {
+            "command": "node \"$CODA_PLUGIN_PATH/scripts/panel.mjs\" --browse"
+          }
+        }
+      }
+    ]
   }
 }
