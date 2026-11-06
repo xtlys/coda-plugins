@@ -203,10 +203,22 @@ test('final archive refuses changed code and uncommitted PR records', t => {
   finish(f.repo, job.id, { summary: '重复已知内容', documents: [], noKnowledgeReason: '本次无新增知识' });
   assert.throws(() => record(f.repo, job.id, { summary: 'PR', mode: 'pull-request', pr: '123' }), /完整 PR 地址/);
   finish(f.repo, job.id, { summary: 'PR', mode: 'pull-request', pr: 'https://github.com/example/repo/pull/1' });
+  const bin = join(f.dir, 'bin'), response = join(f.dir, 'gh-response.json'); mkdirSync(bin);
+  writeFileSync(join(bin, 'gh'), `#!${process.execPath}\nprocess.stdout.write(require('node:fs').readFileSync(${JSON.stringify(response)}));\n`, { mode: 0o755 });
   const run = () => spawnSync(process.execPath, [join(plugin, 'scripts/workflow.mjs'), 'archive'], { encoding: 'utf8', env: {
-    ...process.env, VCZH_ROOT: f.repo, VCZH_TASK: job.id, VCZH_RUN: 'archive-run', GITHUB_OUTPUT: join(f.dir, 'out')
+    ...process.env, PATH: `${bin}:${process.env.PATH}`, VCZH_ROOT: f.repo, VCZH_TASK: job.id, VCZH_RUN: 'archive-run', GITHUB_OUTPUT: join(f.dir, 'out')
   } });
   let result = run(); assert.equal(result.status, 1); assert.match(result.stderr, /最终知识与任务记录/);
+  // A clean fixture commit, retaining the original commit's identity; never set the user's Git identity for a test.
+  execFileSync('git', ['-C', f.repo, 'add', '-A']);
+  const tree = execFileSync('git', ['-C', f.repo, 'write-tree'], { encoding: 'utf8' }).trim();
+  const original = execFileSync('git', ['-C', f.repo, 'cat-file', 'commit', 'HEAD'], { encoding: 'utf8' });
+  const head = execFileSync('git', ['-C', f.repo, 'hash-object', '-w', '-t', 'commit', '--stdin'], { input: original.replace(/^tree [^\n]+/, `tree ${tree}`), encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', f.repo, 'update-ref', 'HEAD', head]);
+  save(response, { url: 'https://github.com/example/repo/pull/1', headRefOid: 'old-head' });
+  result = run(); assert.equal(result.status, 1); assert.match(result.stderr, /PR 头提交/);
+  save(response, { url: 'https://github.com/example/repo/pull/1', headRefOid: head });
+  result = run(); assert.equal(result.status, 0, result.stderr);
   writeFileSync(join(f.repo, 'source.js'), 'post-delivery change');
   result = run(); assert.equal(result.status, 1); assert.match(result.stderr, /归档前代码变化/);
   assert.equal(revise(f.repo, job.id, '归档前变化').phase, 'implementation');

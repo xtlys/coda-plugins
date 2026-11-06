@@ -157,7 +157,8 @@ Dependabot（`.github/dependabot.yml`）每周为它们各开一个 PR，连同 
 
 - `name` 是插件 ID：小写字母、数字和 `-`，以字母开头，至多 40 个字符；不能与 Coda 内置插件同名（`claude`、`codex`、`grok`、`kimi`、`opencode`、`review` 等，完整列表见 `check/coda.mjs`）。
 - `displayName`、`description`、`version` 显示在安装确认与插件页。
-- `contributes` 只能有 Coda 认识的贡献：`agents`、`panels`、`configuration`、`capabilities`、`instructions`、`extensionPoints`、`extensions`、`groups`、`commands`、`services`、`setup`；读不懂的键一律报错，不会被悄悄忽略。
+- `contributes` 只能有 Coda 认识的贡献：`agents`、`panels`、`configuration`、`capabilities`、`instructions`、`skills`、`extensionPoints`、`extensions`、`groups`、`commands`、`services`、`setup`；读不懂的键一律报错，不会被悄悄忽略。
+- `contributes.skills` 是插件内 Skill 目录的数组，例如 `["skills/vczh"]`；每个目录须有 `SKILL.md`，目录名不能重复。当前 Coda 将它们提供给启用了该插件的项目会话。
 - `setup` 是插件的设置动作：`{ "command": "…" }`，一行、不超过 4000 字（与面板命令同样的规则），没有别的键。
 
 **从仓库安装的限制**：带 npm 依赖（`dependencies`、`optionalDependencies`）就要把 `package-lock.json` 一起提交，Coda 在插件的版本目录里

@@ -19,7 +19,7 @@ description: 用户要求使用 vczh 工作流、管理项目知识库或按 vcz
 
 ## 开始与恢复
 
-1. 在目标工作区运行 `vczh init`。这是幂等操作，只创建 `.github/vczh` 并登记本地总览，不改现有 AGENTS.md，也不覆盖项目文档。
+1. 在目标工作区运行 `vczh init`。这是幂等操作，只创建 `.github/vczh` 并登记本地总览，不改现有 AGENTS.md，也不覆盖项目文档。PR 任务若有其他未提交工作，先建立独立工作树；最终交付将核对干净工作区及远端 PR 提交。
 2. 若会话已有 task ID / run ID，先 `vczh task show <id>` 并检查对应运行；失败或取消用 `workflow_resume`，正在运行则处理原任务。已完成任务若是新需求，用新 task ID。
 3. 新任务把用户需求原意、限制和验收标准写入文件，运行 `vczh task start --title <标题> --file <需求文件> --delivery local`。已有明确创建 PR 的要求时选 `pull-request`。不要因为采用工作流便推断新增外部操作授权。
 4. 用 `workflow_run` 启动 `workflow: "vczh"`，`inputs: {root: <init 返回的绝对根目录>, task: <任务 ID>}`。`requestId` 在同一次调用重试时保持不变，流程也按工作区与任务去重。工作在本会话原工作区完成，自动步骤的临时工作区只负责核验。

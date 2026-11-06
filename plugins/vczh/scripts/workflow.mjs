@@ -1,4 +1,5 @@
 import { appendFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { advance, bind } from './tasks.mjs';
 import { base, fingerprint, git, register, repo, requireValue } from './store.mjs';
 
@@ -11,7 +12,13 @@ try {
   if (action === 'archive') {
     requireValue(result.phase === 'done', '任务尚未完成');
     requireValue(result.history.findLast(h => h.phase === 'review')?.fingerprint === fingerprint(root), '归档前代码变化，请 task revise 后恢复原运行');
-    if (result.delivery === 'pull-request') requireValue(!git(root, 'status', '--porcelain', '--', base), 'PR 交付前须把最终知识与任务记录一同提交并推送');
+    if (result.delivery === 'pull-request') {
+      requireValue(!git(root, 'status', '--porcelain', '--', base), 'PR 交付前须把最终知识与任务记录一同提交并推送');
+      requireValue(!git(root, 'status', '--porcelain'), 'PR 工作区还有未提交的输入；保存本任务改动，已有其他工作应在开始任务前隔离');
+      const delivery = result.history.findLast(h => h.phase === 'delivery');
+      const remote = JSON.parse(execFileSync('gh', ['pr', 'view', delivery.pr, '--json', 'url,headRefOid'], { cwd: root, encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] }));
+      requireValue(remote.headRefOid === git(root, 'rev-parse', 'HEAD'), 'PR 头提交与已验证的本地提交不同，请推送最终记录并核对 PR');
+    }
   }
   register(root);
   appendFileSync(process.env.GITHUB_OUTPUT, `phase=${result.phase}\nrevision=${result.revision}\n`);
