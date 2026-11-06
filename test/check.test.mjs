@@ -135,6 +135,7 @@ describe('a liar fails on the rule it breaks', () => {
   test('an honest one passes', async () => {
     const { report } = await checkPlugin(plugin(), { live: true, limits });
     assertPasses(report, ['handshake.system-prompt', 'live.instructions', 'live.turn', 'live.cancel']);
+    assert.match(report.items.find(item => item.rule === 'live.cancel').message, /stopReason cancelled/);
     assert.ok(rules(report, 'skip').includes('live.steering'), 'steering is optional');
   });
   test('one that steers answers promptRequired once its turn has ended', async () => {

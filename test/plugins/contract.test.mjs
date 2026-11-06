@@ -32,7 +32,7 @@ async function check(id, agent, env) {
   try { return (await checkPlugin(pluginDir(id), { agent, live: true, limits })).report; }
   finally { for (const [key, value] of Object.entries(before)) if (value === undefined) delete process.env[key]; else process.env[key] = value; }
 }
-// The fakes answer at once: whether the second turn is still going when the checker stops it is theirs to say, and either
+// Some fakes answer at once: whether the second turn is still going when the checker stops it is theirs to say, and either
 // way it is judged (live.cancel).
 function assertPasses(report, expected) {
   assert.deepEqual(report.failures, []);
