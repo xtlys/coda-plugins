@@ -2,7 +2,7 @@
 // Reproduce the two distributable packs and the four-dimension audit from pinned sources.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -183,10 +183,17 @@ report.push('## 重建与校验', '', '```sh', 'node scripts/vczh/rebuild.mjs --
   '脚本先核对全部固定源文件指纹，再生成两包规范、四维审计和过滤后的共享工作流。上游变化会失败，不能静默重用旧行号。执行协议的每处改动记录在插件的 upstream/manifest.json；未列出的工作流行保留。', '');
 outputs.set('docs/vczh-classification.md', report.join('\n'));
 
-const obsolete = [
-  ...pinned.files.filter(f => !retained.includes(f)).map(f => `plugins/vczh/upstream/${f.path}`),
-  'plugins/vczh/prompts/workflow.json', 'plugins/vczh/prompts/vczh-project.json',
-];
+// upstream is entirely generated. Compare the tree with this build's outputs, including files
+// removed from sources.json; the current source list cannot enumerate those obsolete files.
+function obsoleteIn(path) {
+  if (!existsSync(join(root, path))) return [];
+  return readdirSync(join(root, path), { withFileTypes: true }).flatMap(entry => {
+    const child = `${path}/${entry.name}`;
+    return entry.isDirectory() ? obsoleteIn(child) : outputs.has(child) ? [] : [child];
+  });
+}
+const obsolete = [...obsoleteIn('plugins/vczh/upstream'),
+  'plugins/vczh/prompts/workflow.json', 'plugins/vczh/prompts/vczh-project.json'];
 // Finish all validation before mutating outputs.
 for (const [path, body] of outputs) {
   const file = join(root, path);
@@ -194,7 +201,8 @@ for (const [path, body] of outputs) {
   else { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, body); }
 }
 for (const path of obsolete) {
-  if (values.check) assert.ok(!existsSync(join(root, path)), `Excluded source is still distributed: ${path}`);
-  else rmSync(join(root, path), { force: true });
+  const file = join(root, path), entry = lstatSync(file, { throwIfNoEntry: false });
+  if (values.check) assert.ok(!entry, `Obsolete generated file is still distributed: ${path}`);
+  else if (entry) unlinkSync(file);
 }
 console.log(`${values.check ? 'Verified' : 'Generated'} 13 source classifications; ${packs.map(p => `${p.id}: ${p.topics.length} topics / ${p.sections.length} rules`).join('; ')}; ${retained.length} scoped protocol files.`);

@@ -1,70 +1,106 @@
-// Optional integration against a locally installed Coda runtime, without vendoring its dependencies.
+// Optional integration with an installed Coda host. The test acts as the user-task agent;
+// the real workflow engine, scheduler, cancellation, resumption and script runner do the rest.
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { init } from '../../plugins/vczh/scripts/store.mjs';
-import { getRequest, startRequest } from '../../plugins/vczh/scripts/requests.mjs';
+import { abandonRequest, getRequest, requestGroup, startRequest } from '../../plugins/vczh/scripts/requests.mjs';
 
 const runtime = process.env.VCZH_CODA_RUNTIME;
-test('actual Coda BPMN engine runs all original command branches and resumes a waiting investigation', { skip: !runtime }, async t => {
-  const require = createRequire(join(runtime, 'package.json'));
-  const { Engine } = require('bpmn-engine');
-  const workflowSource = existsSync(join(runtime, 'src/components/workflows/bpmn.mjs')) ? 'src/components/workflows' : 'src/domain';
-  const { CODA_MODDLE, parseBpmn } = await import(pathToFileURL(join(runtime, workflowSource, 'bpmn.mjs')));
-  const { read, isExpression, isTemplate } = await import(pathToFileURL(join(runtime, workflowSource, 'expressions.mjs')));
-  const root = fileURLToPath(new URL('../..', import.meta.url)), plugin = join(root, 'plugins/vczh');
-  const path = join(plugin, '.coda/workflows/vczh.bpmn'), source = readFileSync(path, 'utf8');
-  await parseBpmn(path, source);
-  const folder = realpathSync(mkdtempSync(join(tmpdir(), 'vczh-bpmn-')));
-  t.after(() => rmSync(folder, { recursive: true, force: true }));
-  const repo = join(folder, 'repo');
+const root = fileURLToPath(new URL('../..', import.meta.url)), plugin = join(root, 'plugins/vczh');
+async function fixture(t) {
+  const load = name => import(pathToFileURL(join(runtime, 'src', name)));
+  const { ProductStore } = await load('storage/product-store.mjs');
+  const { ProductService } = await load('application/service.mjs');
+  const { readPlugin, builtinPlugins } = await load('components/plugins/plugin-rules.mjs');
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'vczh-host-'))), repo = join(dir, 'repo'), state = join(dir, 'state');
+  mkdirSync(state); mkdirSync(join(state, 'hosts'));
   execFileSync('git', ['clone', '-q', '--shared', '--no-checkout', root, repo]);
   execFileSync('git', ['-C', repo, 'read-tree', '--empty']); init(repo);
+  const store = new ProductStore(':memory:');
+  const service = new ProductService(store, { root: state, hostsDir: join(state, 'hosts'), workflows: { systemTempRoot: join(dir, 'work') },
+    plugins: { catalog: new Map([...builtinPlugins(), ['vczh', readPlugin(plugin, { kind: 'builtin' })]]) } });
+  service.deliver = () => {}; // Tasks are answered below; never launch a language model.
+  function wait(read) {
+    return new Promise((resolve, reject) => {
+      const finish = (error, value) => { off(); clearTimeout(timer); if (error) reject(error); else resolve(value); };
+      const check = () => { try { const value = read(); if (value) finish(null, value); } catch (error) { finish(error); } };
+      const off = service.kernel.watch('runRecords', check);
+      const timer = setTimeout(() => finish(new Error('Coda did not reach the expected state')), 15000);
+      check();
+    });
+  }
+  const live = () => store.all("SELECT id FROM workflow_runs WHERE state IN ('waiting', 'running', 'cancelling')");
+  t.after(async () => {
+    try {
+      for (const row of live()) await service.workflows.calls.stop(service.workflows.get(row.id));
+      await wait(() => !live().length);
+    } finally {
+      await service.close({ stopSessions: true }); await store.close(); rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  service.plugins.install('vczh');
+  const project = store.createProject({ name: 'Test', rootPath: repo }), thread = randomUUID(), checkout = randomUUID(), now = Date.now();
+  store.run("INSERT INTO checkouts(id, project_id, kind, path, state, created_at) VALUES (?, ?, 'original', ?, 'ready', ?)", checkout, project.id, repo, now);
+  store.run("INSERT INTO threads(id, project_id, checkout_id, agent, title, settings_json, created_at, updated_at) VALUES (?, ?, ?, 'codex', 'Test', '{}', ?, ?)", thread, project.id, checkout, now, now);
+  const call = async (name, args) => JSON.parse(await service.workflows.tool(thread, name, args, { cause: () => null }));
+  const tasks = id => service.workflowTasks.pending(id), run = id => service.workflows.get(id);
+  return { repo, store, wait, call, tasks, run,
+    start: async request => (await call('workflow_run', { workflow: 'vczh', requestId: request.id, inputs: { root: repo, request: request.id } })).runId,
+    task: id => wait(() => {
+      assert.ok(!['succeeded', 'failed', 'cancelled'].includes(run(id).state), JSON.stringify(run(id).error));
+      return tasks(id)[0];
+    }),
+    stop: async id => { await call('workflow_cancel', { runId: id }); await wait(() => run(id).state === 'cancelled'); },
+  };
+}
+
+test('actual Coda host runs all original command branches and resumes a cancelled investigation', { skip: !runtime }, async t => {
+  const f = await fixture(t);
   const samples = { ask: 'ask why?', investigate: 'investigate continue', review: 'review task.md', refine: 'refine', kb: 'kb draft details', 'kb-refine': 'kb refine', direct: 'fix CI script' };
   for (const [mode, latest] of Object.entries(samples)) {
-    const request = startRequest(repo, latest, { intent: 'maintenance' }), runId = `run-${mode}`;
-    const results = {}, scriptIds = [], waits = [];
-    const listener = new EventEmitter();
-    listener.on('activity.wait', api => waits.push(api.id));
-    listener.on('activity.end', api => { if (api.content.output) results[api.id] = api.content.output; });
-    const scripts = { register() {}, getScript(format, activity) {
-      if (activity.type !== 'bpmn:ScriptTask') return;
-      return { execute(scope, callback) {
-        try {
-          scriptIds.push(activity.id);
-          const output = join(folder, `${mode}-${activity.id}.out`);
-          const result = spawnSync(process.execPath, [join(plugin, 'scripts/workflow.mjs'), activity.id], { encoding: 'utf8', env: {
-            ...process.env, VCZH_ROOT: repo, VCZH_REQUEST: request.id, VCZH_RUN: runId, GITHUB_OUTPUT: output
-          } });
-          assert.equal(result.status, 0, result.stderr);
-          callback(null, Object.fromEntries(readFileSync(output, 'utf8').trim().split('\n').map(line => line.split('='))));
-        } catch (error) { callback(error); }
-      } };
-    } };
-    const expressions = { resolveExpression: (value, context) => read(value, { ...context?.environment?.variables, ...results }), isExpression, hasExpression: value => isExpression(value) || isTemplate(value) };
-    const options = { source, moddleOptions: { coda: CODA_MODDLE }, variables: { inputs: { root: repo, request: request.id }, run: { id: runId } }, scripts, expressions };
-    let failure, ended = false;
-    let engine = new Engine(options);
-    engine.on('error', e => { failure = e; });
-    let execution = await engine.execute({ listener });
-    assert.equal(failure, undefined); assert.deepEqual(waits, [mode]);
+    const request = startRequest(f.repo, latest, { intent: 'maintenance' }), id = await f.start(request);
+    let task = await f.task(id); assert.equal(task.step, mode);
     if (mode === 'investigate') {
-      const snapshot = await engine.getState(); await engine.stop();
-      engine = new Engine(options).recover(snapshot);
-      engine.on('error', e => { failure = e; });
-      execution = await engine.resume({ listener });
+      await f.stop(id); await f.call('workflow_resume', { runId: id });
+      task = await f.task(id); assert.equal(task.step, mode);
     }
-    engine.on('end', () => { ended = true; });
-    execution.signal({ id: mode });
-    await new Promise(resolve => setImmediate(resolve));
-    assert.equal(failure, undefined); assert.equal(ended, true, mode);
-    assert.deepEqual(scriptIds, ['route', 'finish']);
-    assert.equal(getRequest(repo, request.id).status, 'done');
+    assert.equal(getRequest(f.repo, request.id, id).boundGroup, requestGroup(f.repo));
+    await f.call('workflow_task', { runId: id, task: task.task, result: 'completed' });
+    await f.wait(() => f.run(id).state === 'succeeded');
+    assert.equal(getRequest(f.repo, request.id).status, 'done');
   }
+});
+
+test('resuming after terminal evidence cannot overlap an abandoned request with its successor', { skip: !runtime }, async t => {
+  const f = await fixture(t), request = startRequest(f.repo, 'investigate continue'), old = await f.start(request);
+  await f.task(old); await f.stop(old);
+  const evidence = await f.call('workflow_status', { runId: old });
+  await f.call('workflow_resume', { runId: old });
+  const oldTask = await f.task(old);
+  // The resumed agent has already passed its read guard before the saved terminal proof is used.
+  getRequest(f.repo, request.id, old);
+  abandonRequest(f.repo, request.id, { reason: 'Terminal evidence was superseded by a resume', runStatus: evidence });
+  const next = startRequest(f.repo, 'ask successor'), successor = await f.start(next);
+  await f.wait(() => f.store.one("SELECT 1 FROM group_holds WHERE run_id = ? AND state = 'waiting'", successor));
+  assert.equal(getRequest(f.repo, next.id).status, 'pending'); assert.deepEqual(f.tasks(successor), []);
+  // Finish refuses the abandoned request. The resulting failed run resumes in-place at finish,
+  // without rerunning route; its old scope must still reacquire the group before it can execute.
+  await f.call('workflow_task', { runId: old, task: oldTask.task, result: 'completed' });
+  await f.wait(() => f.run(old).state === 'failed');
+  const nextTask = await f.task(successor);
+  await f.call('workflow_resume', { runId: old });
+  await f.wait(() => f.store.one("SELECT 1 FROM group_holds WHERE run_id = ? AND state = 'waiting'", old));
+  assert.equal(f.run(old).rounds.at(-1).resumed, true);
+  assert.deepEqual(f.tasks(old), []);
+  assert.equal(getRequest(f.repo, next.id, successor).status, 'running');
+  await f.call('workflow_task', { runId: successor, task: nextTask.task, result: 'completed' });
+  await f.wait(() => f.run(successor).state === 'succeeded' && f.run(old).state === 'failed');
+  assert.equal(getRequest(f.repo, request.id).status, 'abandoned');
+  assert.equal(getRequest(f.repo, next.id).status, 'done');
 });

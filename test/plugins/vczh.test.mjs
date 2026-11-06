@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,9 +9,9 @@ import { panelItems } from '../../check/panel.mjs';
 import { config, hash, init, inside, json, managed, save } from '../../plugins/vczh/scripts/store.mjs';
 import { builtinPrompts, enablePrompt, manifest, prompts, promptTemplate, putPrompt, renderPrompt, sourceText, validatePrompt } from '../../plugins/vczh/scripts/prompts.mjs';
 import { backups, documents, legacyDocuments, remember } from '../../plugins/vczh/scripts/knowledge.mjs';
-import { abandonRequest, bindRequest, finishRequest, getRequest, route, startRequest } from '../../plugins/vczh/scripts/requests.mjs';
+import { abandonRequest, bindRequest, finishRequest, getRequest, requestGroup, route, startRequest } from '../../plugins/vczh/scripts/requests.mjs';
 import { protocol } from '../../plugins/vczh/scripts/protocol.mjs';
-import { panel } from '../../plugins/vczh/scripts/panel.mjs';
+import { panel, readPanel } from '../../plugins/vczh/scripts/panel.mjs';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const plugin = join(root, 'plugins/vczh'), cli = join(plugin, 'scripts/cli.mjs');
@@ -227,6 +227,28 @@ test('abandon rejects missing, mismatched or still-active run evidence and keeps
   assert.throws(() => bindRequest(f.repo, next.id, 'next'), /固定任务文档/);
 });
 
+test('abandon matches the historical binding after a repository rename and keeps the same host group', t => {
+  const f = fixture(t), r = startRequest(f.repo, 'investigate continue'), renamed = join(f.dir, 'renamed');
+  const binding = bindRequest(f.repo, r.id, 'original'), group = requestGroup(f.repo);
+  const status = { runId: 'original', workflow: 'vczh', inputs: { root: f.repo, request: r.id }, state: 'cancelled', finishedAt: Date.now(), jobs: [] };
+  renameSync(f.repo, renamed);
+  assert.equal(requestGroup(renamed), group);
+  assert.equal(binding.boundRoot, f.repo);
+  const next = startRequest(renamed, 'ask next');
+  assert.throws(() => abandonRequest(renamed, r.id, { reason: 'Moved', runStatus: { ...status, inputs: { ...status.inputs, root: renamed } } }), /绑定工作区/);
+  assert.equal(abandonRequest(renamed, r.id, { reason: 'Moved', runStatus: status }).status, 'abandoned');
+  assert.equal(bindRequest(renamed, next.id, 'next').status, 'running');
+});
+
+test('legacy bindings without host serialization cannot be released using a status snapshot', t => {
+  const { repo } = fixture(t), r = startRequest(repo, 'investigate continue');
+  const binding = bindRequest(repo, r.id, 'old'); delete binding.boundGroup;
+  save(managed(repo, `requests/${r.id}.json`), binding);
+  const runStatus = { runId: 'old', workflow: 'vczh', inputs: { root: repo, request: r.id }, state: 'cancelled', finishedAt: Date.now(), jobs: [] };
+  assert.throws(() => abandonRequest(repo, r.id, { reason: 'Stop', runStatus }), /宿主独占组/);
+  assert.equal(getRequest(repo, r.id, 'old').status, 'running');
+});
+
 test('remember preserves complete notes, resets the marker, orders backups and avoids timestamp collisions', t => {
   const { repo } = fixture(t), time = new Date('2026-11-07T00:00:00Z');
   assert.deepEqual(remember(repo, time), { archived: false });
@@ -356,10 +378,52 @@ test('workflow scripts resume and finish the same request without changing Markd
   const f = fixture(t), r = startRequest(f.repo, 'review existing.md'); write(f.repo, logPath, investigation);
   const env = { ...process.env, VCZH_ROOT: f.repo, VCZH_REQUEST: r.id, VCZH_RUN: 'run', GITHUB_OUTPUT: join(f.dir, 'output'), CODA_PLUGIN_STATE: f.state };
   const run = action => spawnSync(process.execPath, [join(plugin, 'scripts/workflow.mjs'), action], { env, encoding: 'utf8' });
+  assert.equal(run('workspace').status, 0);
+  assert.equal(readFileSync(env.GITHUB_OUTPUT, 'utf8'), `group=${requestGroup(f.repo)}\n`);
+  assert.equal(run('route').status, 1, 'binding requires the host group output');
+  assert.equal(getRequest(f.repo, r.id).status, 'pending');
+  env.VCZH_GROUP = requestGroup(f.repo);
   assert.equal(run('route').status, 0); assert.equal(run('route').status, 0);
   assert.match(readFileSync(env.GITHUB_OUTPUT, 'utf8'), /mode=review/);
   assert.equal(run('finish').status, 0); assert.equal(run('finish').status, 0);
   assert.equal(getRequest(f.repo, r.id).status, 'done'); assert.equal(readFileSync(join(f.repo, logPath), 'utf8'), investigation);
+});
+
+test('persisted archive details return to overview after refine deletes the archive', t => {
+  const f = fixture(t), viewFile = join(f.state, 'view.json');
+  write(f.repo, logPath, investigation); remember(f.repo);
+  const archive = documents(f.repo, 'archives')[0];
+  const view = { view: 'detail', key: hash(f.repo), kind: 'archives', id: archive.id };
+  const run = args => spawnSync(process.execPath, [join(plugin, 'scripts/panel.mjs'), ...args], { encoding: 'utf8', env: {
+    ...process.env, CODA_PLUGIN_STATE: f.state, CODA_PANEL_ARGS: JSON.stringify(view),
+  } });
+  assert.equal(run(['--browse']).status, 0);
+  assert.match(run([]).stdout, /PROBLEM DESCRIPTION/);
+  rmSync(join(f.repo, archive.path));
+  assert.throws(() => panel(f.state, view), /条目不存在/, 'an explicit stale selection is still an error');
+  const refreshed = run([]);
+  assert.equal(refreshed.status, 0, refreshed.stderr);
+  assert.deepEqual(JSON.parse(refreshed.stdout), panel(f.state));
+  assert.equal(existsSync(viewFile), false);
+  assert.equal(run([]).status, 0, 'later refreshes no longer reload the deleted entry');
+});
+
+test('persisted workspace selections recover from removal or replacement, but data errors stay visible', t => {
+  const f = fixture(t), viewFile = join(f.state, 'view.json');
+  const view = { view: 'project', key: hash(f.repo), kind: 'prompts' };
+  save(viewFile, view);
+  write(f.repo, '.github/vczh/prompts/broken.json', '{');
+  assert.throws(() => readPanel(f.state), /JSON/);
+  assert.deepEqual(json(viewFile), view, 'a corrupt prompt must not be mistaken for a deleted selection');
+  rmSync(managed(f.repo, 'prompts/broken.json'));
+  const cfg = config(f.repo); save(managed(f.repo, 'project.json'), { ...cfg, projectId: 'replacement' });
+  assert.deepEqual(readPanel(f.state), panel(f.state));
+  assert.equal(existsSync(viewFile), false);
+  save(viewFile, view); rmSync(f.repo, { recursive: true });
+  assert.deepEqual(readPanel(f.state), panel(f.state));
+  assert.equal(existsSync(viewFile), false);
+  writeFileSync(viewFile, '{');
+  assert.throws(() => readPanel(f.state), /JSON/);
 });
 
 test('multiple Git worktrees count as one project with readable fallback', t => {
@@ -368,6 +432,12 @@ test('multiple Git worktrees count as one project with readable fallback', t => 
   execFileSync('git', ['-C', other, 'read-tree', '--empty']);
   init(other); assert.equal(config(other).projectId, config(f.repo).projectId);
   assert.equal(panel(f.state).items[1].items[0].value, '1');
+  for (const [repo, registeredAt] of [[f.repo, '2020-01-01'], [other, '2021-01-01']]) {
+    const file = join(f.state, 'projects', `${hash(repo)}.json`); save(file, { ...json(file), registeredAt });
+  }
+  const view = join(f.state, 'view.json'); save(view, { view: 'project', key: hash(f.repo), kind: 'knowledge' });
+  assert.deepEqual(readPanel(f.state), panel(f.state), 'switching the selected worktree clears the saved selection');
+  assert.equal(existsSync(view), false);
   rmSync(other, { recursive: true, force: true }); assert.equal(panel(f.state).items[1].items[1].value, '0');
   rmSync(f.repo, { recursive: true, force: true }); assert.equal(panel(f.state).items[1].items[1].value, '1');
 });

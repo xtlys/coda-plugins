@@ -31,7 +31,7 @@ vczh request start --file /tmp/latest-request.txt --intent coding
 
 然后调用 `workflow_run`，workflow 为 `vczh`，inputs 为 `root` 与 `request`。固定任务文档串行使用，失败或中断恢复原运行，不重新清空调查。请求内的步骤以 Markdown 为准。
 
-放弃无法继续的请求时，先确认原运行已结束，再执行 `vczh request abandon` 释放占用；任务、知识和学习文档保持原样。核验步骤见 [释放活动请求](skills/vczh/references/adapter.md#释放活动请求)。已放弃的旧请求不能重新执行，后续使用新请求。
+放弃无法继续的请求时，先确认原运行已结束，再执行 `vczh request abandon` 释放请求占用；任务、知识和学习文档保持原样。核验步骤见 [释放活动请求](skills/vczh/references/adapter.md#释放活动请求)。Coda 以持久化项目标识独占调度同项目的运行，恢复时也重新取得占用；状态快照本身不能阻止并发恢复。新请求必须等旧运行退出，已放弃请求再次绑定会失败。绑定路径单独保存，仓库改名不影响放弃时的核对。
 
 ## 先维度，再主题
 
@@ -87,16 +87,18 @@ Project.md
 
 `init` 只补缺失文件。根目录 Project.md 需要根据项目事实填写构建、测试、生成物和变更触发规则。`vczh remember` 保留调查全文到时间戳归档，再重置当前标记；`--earliest N` 列出最早归档。
 
-面板直接读取 Markdown，展示知识、学习计数、归档、自定义规范和命令状态。只统计本后端登记的工作区；同一 Git 项目取最近登记且可读的一份，不累加分支副本。第一版 .github/vczh 内的知识仍可在「旧版资料」阅读。
+面板直接读取 Markdown，展示知识、学习计数、归档、自定义规范和命令状态。只统计本后端登记的工作区；同一 Git 项目取最近登记且可读的一份，不累加分支副本。已保存的详情被删除或工作区失效、切换后，刷新会清除旧选择并返回总览；数据损坏等错误仍明确显示。第一版 .github/vczh 内的知识仍可在「旧版资料」阅读。
 
 ## 验证
 
 ```sh
-node --test test/plugins/vczh.test.mjs
+node --test test/plugins/vczh.test.mjs test/plugins/vczh-rebuild.test.mjs
 node bin/check.mjs plugins/vczh
 node scripts/vczh/rebuild.mjs --source vczh/repos/Tools/Copilot --check
 ```
 
-存在本地 Coda 运行时时，可设置 `VCZH_CODA_RUNTIME` 并运行 `test/plugins/vczh-bpmn.test.mjs`。测试覆盖分发范围、正文指纹、来源与分类、主题导航、旧配置兼容、七个命令分支、归档与知识浏览。生成校验额外对照固定版本原始文件，确保保留正文只有登记过的删节。
+存在支持独占组及恢复后重新取组的本地 Coda 运行时时，可设置 `VCZH_CODA_RUNTIME` 并运行 `node --test test/plugins/vczh-bpmn.test.mjs`。宿主集成测试覆盖七个命令分支、取消恢复、取得终态证明后恢复原运行，以及失败步骤原地恢复时的独占组排队；测试代替 Agent 答复任务，不调用模型。没有本地运行时会跳过这两项，不能把跳过视为通过。
+
+其他测试覆盖分发范围、正文指纹、来源与分类、主题导航、旧配置兼容、改名后放弃、失效详情恢复与归档浏览。生成校验额外对照固定版本原始文件，确保保留正文只有登记过的删节；重建会删除已不在预期输出集合内的 upstream 文件，`--check` 会报告这些残留。
 
 这些检查验证协议内容与运行接线，不代表所有模型都能完全遵循自然语言指令。插件为 Apache-2.0，保留 [NOTICE](NOTICE)；不分发参考仓库产品源码与具体项目知识正文。

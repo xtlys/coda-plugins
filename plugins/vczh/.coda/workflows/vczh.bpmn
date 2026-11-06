@@ -6,9 +6,18 @@
       <coda:input name="request" required="true" description="vczh request start 返回的请求 ID；恢复时不变" />
     </extensionElements>
     <startEvent id="start" />
-    <sequenceFlow id="start-route" sourceRef="start" targetRef="route" />
+    <sequenceFlow id="start-workspace" sourceRef="start" targetRef="workspace" />
+    <scriptTask id="workspace" name="读取项目标识" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
+      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:output name="group" /></extensionElements>
+      <script>node "$CODA_PLUGIN_PATH/scripts/workflow.mjs" workspace</script>
+    </scriptTask>
+    <sequenceFlow id="workspace-documents" sourceRef="workspace" targetRef="documents" />
+    <serviceTask id="documents" name="独占项目任务文档" coda:action="hold-group">
+      <extensionElements><coda:param name="group" value="=workspace.group" /><coda:param name="exclusive" value="true" /><coda:param name="borrow" value="no" /></extensionElements>
+    </serviceTask>
+    <sequenceFlow id="documents-route" sourceRef="documents" targetRef="route" />
     <scriptTask id="route" name="读取原文命令" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
-      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_REQUEST" value="=inputs.request" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:output name="mode" /><coda:output name="status" /></extensionElements>
+      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_REQUEST" value="=inputs.request" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:env name="VCZH_GROUP" value="=documents.group" /><coda:output name="mode" /><coda:output name="status" /></extensionElements>
       <script>node "$CODA_PLUGIN_PATH/scripts/workflow.mjs" route</script>
     </scriptTask>
     <sequenceFlow id="route-pick" sourceRef="route" targetRef="pick" />
@@ -58,7 +67,7 @@
 完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
     <sequenceFlow id="direct-finish" sourceRef="direct" targetRef="finish" />
     <scriptTask id="finish" name="记录命令完成" scriptFormat="bash" coda:checkout="false" coda:timeout="2">
-      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_REQUEST" value="=inputs.request" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:output name="mode" /><coda:output name="status" /></extensionElements>
+      <extensionElements><coda:env name="VCZH_ROOT" value="=inputs.root" /><coda:env name="VCZH_REQUEST" value="=inputs.request" /><coda:env name="VCZH_RUN" value="=run.id" /><coda:env name="VCZH_GROUP" value="=documents.group" /><coda:output name="mode" /><coda:output name="status" /></extensionElements>
       <script>node "$CODA_PLUGIN_PATH/scripts/workflow.mjs" finish</script>
     </scriptTask>
     <sequenceFlow id="finish-done" sourceRef="finish" targetRef="done" />

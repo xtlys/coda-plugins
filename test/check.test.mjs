@@ -62,6 +62,16 @@ describe('this repository', () => {
       assert.deepEqual(failed((await checkPlugin(dir, { manifestOnly: true })).report), ['manifest.skills']);
     }
   });
+  test('skills report cyclic symlinks as structured failures and continue source checks', async () => {
+    const dir = plugin({ manifest: { contributes: { skills: ['skills/example'] } } });
+    mkdirSync(join(dir, 'skills'));
+    symlinkSync('example', join(dir, 'skills/example'));
+    const { report } = await checkPlugin(dir, { manifestOnly: true });
+    assert.deepEqual(failed(report), ['manifest.skills', 'source.symlink']);
+    const item = report.items.find(item => item.rule === 'manifest.skills');
+    assert.match(JSON.stringify(item), /skills\/example/);
+    assert.match(JSON.stringify(item), /ELOOP/);
+  });
   test('templates/agent passes every level', async () => {
     const { report } = await checkPlugin(at('templates/agent'), { live: true, limits });
     assertPasses(report, ['manifest.name', 'manifest.agents', 'source.files', 'handshake.initialize', 'handshake.system-prompt', 'handshake.new',

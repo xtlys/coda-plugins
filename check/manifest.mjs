@@ -294,11 +294,16 @@ export function checkManifest(dir, say) {
       check(!parts.includes('..') && parts.at(-1) !== '.', `Skill 路径不能包含 .. 或以 /. 结尾：${value}`);
       const path = inside(value, `contributes.skills[${i}]`).replace(/\/+$/, ''), name = path.split(sep).at(-1);
       check(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name), `Skill 目录名无效：${name}`);
-      check(statSync(join(dir, path), { throwIfNoEntry: false })?.isDirectory(), `Skill 路径须为目录：${path}`);
-      check(existsSync(join(dir, path, 'SKILL.md')), `Skill 缺少 SKILL.md：${path}`);
-      check(statSync(join(dir, path, 'SKILL.md'), { throwIfNoEntry: false })?.isFile(), `SKILL.md 须为普通文件：${path}`);
-      const target = realpathSync(join(dir, path, 'SKILL.md'));
-      check(target.startsWith(`${realpathSync(dir)}${sep}`), `Skill 超出插件目录：${path}`);
+      try {
+        check(statSync(join(dir, path), { throwIfNoEntry: false })?.isDirectory(), `Skill 路径须为目录：${path}`);
+        check(existsSync(join(dir, path, 'SKILL.md')), `Skill 缺少 SKILL.md：${path}`);
+        check(statSync(join(dir, path, 'SKILL.md'), { throwIfNoEntry: false })?.isFile(), `SKILL.md 须为普通文件：${path}`);
+        const target = realpathSync(join(dir, path, 'SKILL.md'));
+        check(target.startsWith(`${realpathSync(dir)}${sep}`), `Skill 超出插件目录：${path}`);
+      } catch (error) {
+        if (error instanceof Invalid || typeof error.code !== 'string') throw error;
+        throw new Invalid(`无法读取 Skill 路径 ${path}：${error.code} (${error.path ?? path})`);
+      }
       return name;
     });
     check(new Set(names).size === names.length, 'contributes.skills 不能声明同名 Skill');

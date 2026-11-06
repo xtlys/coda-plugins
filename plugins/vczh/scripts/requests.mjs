@@ -44,6 +44,7 @@ export function route(root, latest, { intent, taskFile } = {}) {
   return { mode, command: command ?? null, latest, request, ...(taskFile ? { taskFile } : {}) };
 }
 const location = (root, key) => managed(root, `requests/${id(key)}.json`);
+export const requestGroup = root => `vczh:${config(root).projectId}`;
 const terminal = ['done', 'abandoned'];
 function requireActive(root, r, runId) {
   text(runId, 'runId', 200);
@@ -76,7 +77,8 @@ export function bindRequest(root, key, runId) {
       const active = json(activeFile);
       if (active.id && active.id !== key) requireValue(terminal.includes(getRequest(root, active.id).status), '同一工作区的固定任务文档正在使用中，请先完成、恢复或安全放弃原请求');
     }
-    r.runId = runId; r.status = 'running'; save(location(root, key), r); save(activeFile, { id: key });
+    r.runId = runId; r.boundRoot ??= root; r.boundGroup = requestGroup(root);
+    r.status = 'running'; save(location(root, key), r); save(activeFile, { id: key });
     return r;
   });
 }
@@ -96,10 +98,11 @@ export function abandonRequest(root, key, { reason, runStatus } = {}) {
     if (r.status === 'abandoned') { release(root, key); return r; }
     requireValue(r.status !== 'done', '已完成请求不能放弃');
     if (r.runId) {
-      // The caller obtains a fresh workflow_status after cancellation has finished. Never infer
-      // a stopped run from a task rejection, missing process, timeout, or a free-form boolean.
+      // The snapshot records why the request was abandoned; it cannot prevent a concurrent resume.
+      // Coda's exclusive, non-borrowed group serializes old and new runs, including in-place resumes.
+      requireValue(r.boundGroup === requestGroup(root), '旧请求未受宿主独占组保护；先用新版工作流从头恢复原运行，不能凭状态快照释放');
       requireValue(runStatus?.runId === r.runId && runStatus.workflow === 'vczh'
-        && runStatus.inputs?.root === root && runStatus.inputs?.request === key, '需要原运行的 workflow_status JSON，且运行、工作区和请求须匹配');
+        && runStatus.inputs?.root === r.boundRoot && runStatus.inputs?.request === key, '需要原运行的 workflow_status JSON，且运行、绑定工作区和请求须匹配');
       requireValue(['succeeded', 'failed', 'cancelled'].includes(runStatus.state) && Number.isFinite(runStatus.finishedAt),
         '原运行尚未结束；先取消并确认退出后才能放弃请求');
       requireValue((runStatus.tasks === undefined || (Array.isArray(runStatus.tasks) && runStatus.tasks.length === 0))

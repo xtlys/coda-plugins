@@ -42,7 +42,7 @@ description: 在项目中采用 vczh 工作流时，执行 ask、investigate、r
 - 收到流程任务，先运行 `vczh request show <id> --run-id <本次运行 ID>` 核对请求仍活动且属于本运行，再读对应 `vczh protocol <mode>`。校验失败不得执行旧任务。把保存的 `request` 当作原文协议所说的 LATEST chat message；流程通知本身不是新需求。完整执行该命令后才 `workflow_task completed`。
 - 新的用户纠偏到达时，立即按原文 Continue/Report 分支处理并落盘；不要继续执行已被否定的旧方案，也不要把历史请求的 Repro 标题误当成新 Repro。当前 Coda 任务仍在运行时，在该任务内处理最新纠偏，不并行开启第二个写相同文档的运行。中断恢复按 Markdown 当前状态继续，不重复清空或归档。
 
-确需放弃失败、取消或无法恢复的请求时，按 [释放活动请求](references/adapter.md#释放活动请求) 核对原运行已停止，再释放占用。放弃保留 Markdown，旧请求不能恢复执行；后续工作使用新请求。
+确需放弃失败、取消或无法恢复的请求时，按 [释放活动请求](references/adapter.md#释放活动请求) 核对原运行并释放请求占用。状态快照不提供并发保证；流程必须由 Coda 持有项目独占组，恢复时重新取得，不能绕过该步骤。放弃保留 Markdown；后续使用新请求，由宿主排队等待旧运行退出。
 
 调查的步骤、全部提案实验与回退、逐任务提交推送、rebase 和最后自审，都在 `investigate` 原文中执行。没有另加选定单一方案、最多三轮评审、强制 refine 或 PR 关卡。提交推送按原文和本次显式覆盖执行；PR/合并不是该原文的必经步骤，只有用户要求时才接 Coda 原生 PR 生命周期。
 
