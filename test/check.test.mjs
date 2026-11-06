@@ -125,8 +125,13 @@ describe('a liar fails on the rule it breaks', () => {
   test('one that steers answers promptRequired once its turn has ended', async () => {
     const { report } = await checkPlugin(plugin({ mode: 'steer' }), { live: true, limits });
     assertPasses(report, ['live.steering']);
-    // Its turns end as soon as they say something: the message under way finds the turn ended too.
-    assert.match(report.items.findLast(item => item.rule === 'live.steering').message, /一轮进行中插话：回 promptRequired/);
+    const steering = report.items.filter(item => item.rule === 'live.steering');
+    assert.equal(steering.length, 2);
+    assert.match(steering[0].message, /一轮已经结束时插话：回 promptRequired/);
+    // Its update and reply are written together: depending on pipe batching, the checker either
+    // sends steering to an already idle agent or sees the reply before it can send steering.
+    assert.equal(steering[1].status, 'info');
+    assert.match(steering[1].message, /一轮进行中插话：回 promptRequired|一轮进行中的插话没机会发/);
   });
   test('the session instructions go with session/load too', async () => {
     const { report } = await checkPlugin(plugin({ mode: 'load-fails' }), { live: true, limits });
