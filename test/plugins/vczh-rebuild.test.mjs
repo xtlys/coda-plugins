@@ -34,4 +34,15 @@ test('rebuild removes retired source outputs and check detects files outside the
   const link = join(root, 'plugins/vczh/upstream/unlisted/retired'); symlinkSync('missing', link);
   assert.match(rebuild('--check').stderr, /Obsolete generated file/);
   passes(rebuild()); assert.equal(lstatSync(link, { throwIfNoEntry: false }), undefined);
+  const prompts = join(root, 'plugins/vczh/upstream/prompts');
+  rmSync(prompts, { recursive: true }); writeFileSync(prompts, 'stale file occupies a required directory');
+  assert.notEqual(rebuild('--check').status, 0);
+  assert.equal(readFileSync(prompts, 'utf8'), 'stale file occupies a required directory', '--check must not remove it');
+  write('source/prompts/keep.prompt.md', 'changed source');
+  const invalid = rebuild(); assert.notEqual(invalid.status, 0); assert.match(invalid.stderr, /Source changed/);
+  assert.equal(readFileSync(prompts, 'utf8'), 'stale file occupies a required directory', 'validate sources before deleting anything');
+  write('source/prompts/keep.prompt.md', text);
+  passes(rebuild()); passes(rebuild('--check'));
+  assert.ok(lstatSync(prompts).isDirectory());
+  assert.equal(readFileSync(join(prompts, 'keep.prompt.md'), 'utf8'), text);
 });

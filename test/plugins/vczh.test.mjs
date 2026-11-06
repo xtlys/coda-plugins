@@ -441,3 +441,26 @@ test('multiple Git worktrees count as one project with readable fallback', t => 
   rmSync(other, { recursive: true, force: true }); assert.equal(panel(f.state).items[1].items[1].value, '0');
   rmSync(f.repo, { recursive: true, force: true }); assert.equal(panel(f.state).items[1].items[1].value, '1');
 });
+
+test('a corrupt project name is isolated from healthy projects in the persisted overview', t => {
+  const f = fixture(t), other = join(f.dir, 'other');
+  const cfg = { ...config(f.repo), projectId: hash(other), name: 'Healthy project' };
+  save(join(other, '.github/vczh/project.json'), cfg);
+  save(join(f.state, 'projects', `${hash(other)}.json`), { root: other, projectId: cfg.projectId, name: cfg.name });
+  const recordFile = join(f.state, 'projects', `${hash(f.repo)}.json`), record = json(recordFile), original = config(f.repo);
+  save(join(f.state, 'view.json'), { view: 'overview' });
+  for (const name of [null, 42, '', '   ']) {
+    save(managed(f.repo, 'project.json'), { ...original, name });
+    for (const cachedName of [record.name, name]) {
+      save(recordFile, { ...record, name: cachedName });
+      const output = readPanel(f.state);
+      assert.doesNotThrow(() => panelItems(JSON.stringify(output), { actions: { browse: {} } }));
+      assert.ok(output.items.some(item => item.title === 'Healthy project'));
+      const stats = output.items.find(item => item.title === '项目知识总览').items;
+      assert.equal(stats.find(item => item.label === '已登记项目').value, '2');
+      assert.equal(stats.find(item => item.label === '暂不可读取').value, '1');
+      assert.match(JSON.stringify(output), /项目名称/);
+      assert.throws(() => config(f.repo), /项目名称/);
+    }
+  }
+});

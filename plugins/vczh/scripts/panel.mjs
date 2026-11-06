@@ -41,7 +41,8 @@ function registered(state) {
       entry.tasks = existsSync(tasksDir) ? readdirSync(tasksDir).filter(name => name.endsWith('.json')).map(name => json(managed(entry.root, `requests/${name}`))) : [];
       entry.stale = [...entry.knowledge, ...entry.learning].filter(d => freshness(entry.root, d) === 'stale').length;
     } catch (e) {
-      entry = { ...entry, key: file.slice(0, -5), error: e.message, name: entry?.name ?? '无效登记',
+      entry = { ...entry, key: file.slice(0, -5), error: e.message,
+        name: typeof entry?.name === 'string' && entry.name.trim() ? entry.name : '无效登记',
         unavailable: e instanceof StaleSelection || ['ENOENT', 'ENOTDIR'].includes(e.code) };
     }
     const group = groups.get(entry.projectId ?? entry.key) ?? []; group.push(entry); groups.set(entry.projectId ?? entry.key, group);

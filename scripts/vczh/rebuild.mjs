@@ -195,14 +195,15 @@ function obsoleteIn(path) {
 const obsolete = [...obsoleteIn('plugins/vczh/upstream'),
   'plugins/vczh/prompts/workflow.json', 'plugins/vczh/prompts/vczh-project.json'];
 // Finish all validation before mutating outputs.
-for (const [path, body] of outputs) {
-  const file = join(root, path);
-  if (values.check) assert.equal(readFileSync(file, 'utf8'), body, `Generated file differs: ${path}`);
-  else { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, body); }
-}
+// Remove obsolete files first: one may occupy a directory required by a new output.
 for (const path of obsolete) {
   const file = join(root, path), entry = lstatSync(file, { throwIfNoEntry: false });
   if (values.check) assert.ok(!entry, `Obsolete generated file is still distributed: ${path}`);
   else if (entry) unlinkSync(file);
+}
+for (const [path, body] of outputs) {
+  const file = join(root, path);
+  if (values.check) assert.equal(readFileSync(file, 'utf8'), body, `Generated file differs: ${path}`);
+  else { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, body); }
 }
 console.log(`${values.check ? 'Verified' : 'Generated'} 13 source classifications; ${packs.map(p => `${p.id}: ${p.topics.length} topics / ${p.sections.length} rules`).join('; ')}; ${retained.length} scoped protocol files.`);

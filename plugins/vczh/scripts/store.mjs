@@ -47,6 +47,7 @@ export function managed(root, name) { return inside(root, `${base}/${name}`); }
 export function config(root) {
   const value = json(managed(root, 'project.json'));
   requireValue(value.schemaVersion === 1 && typeof value.projectId === 'string', '不支持的项目数据版本');
+  text(value.name, '项目名称');
   requireValue(Array.isArray(value.enabledPrompts), 'enabledPrompts 须为数组');
   value.enabledPrompts = value.enabledPrompts.filter(key => !retiredBuiltinIds.includes(key));
   return value;
