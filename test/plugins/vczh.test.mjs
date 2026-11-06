@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,7 @@ import { panelItems } from '../../check/panel.mjs';
 import { config, hash, init, inside, json, managed, save } from '../../plugins/vczh/scripts/store.mjs';
 import { builtinPrompts, enablePrompt, manifest, prompts, promptTemplate, putPrompt, renderPrompt, sourceText, validatePrompt } from '../../plugins/vczh/scripts/prompts.mjs';
 import { backups, documents, legacyDocuments, remember } from '../../plugins/vczh/scripts/knowledge.mjs';
-import { bindRequest, finishRequest, getRequest, route, startRequest } from '../../plugins/vczh/scripts/requests.mjs';
+import { abandonRequest, bindRequest, finishRequest, getRequest, route, startRequest } from '../../plugins/vczh/scripts/requests.mjs';
 import { protocol } from '../../plugins/vczh/scripts/protocol.mjs';
 import { panel } from '../../plugins/vczh/scripts/panel.mjs';
 
@@ -73,7 +73,8 @@ test('every executable protocol loads scoped instructions without bringing exclu
     const output = protocol(mode);
     for (const path of ['AGENTS.md', 'copilot-instructions.md', ...(mode === 'direct' ? [] : [`prompts/${mode}.prompt.md`])]) assert.ok(output.includes(sourceText(path)), `${mode}: ${path}`);
     assert.doesNotMatch(output, /GacUI|Vlpp|MSBuild|vmake|copilotBuild|copilotExecute|\.github\/Scripts|\.github\/Ubuntu|\.github\/Guidelines\/|prompt show (?:workflow|vczh-project)/);
-    assert.match(output, /vczh prompt show general/);
+    assert.match(output, /vczh prompt list/);
+    assert.doesNotMatch(output, /vczh prompt (?:show|enable) (?:general|cpp)\b/);
   }
   assert.throws(() => protocol('implementation'), /未知原文协议/);
 });
@@ -134,6 +135,26 @@ test('semantic fallbacks distinguish coding, research, and build/CI maintenance'
   assert.throws(() => route(repo, 'investigate repro', { taskFile: '../outside' }), /相对路径/);
 });
 
+test('task-file expansion rejects additional instructions and mismatched tags without losing the request', t => {
+  const f = fixture(t), tag = '<tagging REPO-ROOT/task.md>', file = join(f.dir, 'latest.md');
+  write(f.repo, 'task.md', 'Original task\n');
+  for (const prefix of ['investigate repro', 'review']) {
+    assert.ok(route(f.repo, `${prefix} ${tag}`, { taskFile: 'task.md' }).request.includes(prefix === 'review' ? tag : 'Original task'));
+    for (const body of [`${tag}\n另需保持现有 API 兼容`, '@task.md\nkeep constraints', '<tagging REPO-ROOT/other.md>', 'extra instructions']) {
+      const latest = `${prefix} ${body}`;
+      writeFileSync(file, latest);
+      for (const command of [['route'], ['request', 'start']]) {
+        const result = f.run([...command, '--file', file, '--task-file', 'task.md']);
+        assert.equal(result.status, 1, result.stdout); assert.match(result.stderr, /附加说明/);
+      }
+      const accepted = startRequest(f.repo, latest);
+      assert.equal(accepted.latest, latest); assert.ok(getRequest(f.repo, accepted.id).request.endsWith(body));
+    }
+  }
+  assert.equal(readdirSync(managed(f.repo, 'requests')).length, 8, 'only complete requests are persisted');
+  assert.throws(() => route(f.repo, 'ask question', { taskFile: 'task.md' }), /只用于/);
+});
+
 test('continuation, report and restart never clear the current investigation', t => {
   const { repo } = fixture(t); write(repo, logPath, investigation);
   for (let i = 0; i < 5; i++) {
@@ -154,6 +175,56 @@ test('fixed task documents cannot be taken over by a simultaneous workflow', t =
   assert.throws(() => bindRequest(repo, b.id, 'b'), /固定任务文档/);
   assert.throws(() => finishRequest(repo, a.id, 'b'), /只能完成/);
   finishRequest(repo, a.id, 'a'); assert.equal(bindRequest(repo, b.id, 'b').status, 'running');
+});
+
+test('abandoning a stopped request preserves documents and releases the next request without reviving the old one', t => {
+  const f = fixture(t);
+  const paths = [logPath, '.github/KnowledgeBase/Index.md', '.github/Learning/Learning_Coding.md'];
+  const before = paths.map(path => readFileSync(join(f.repo, path), 'utf8'));
+  for (const state of ['failed', 'cancelled', 'succeeded']) {
+    const a = startRequest(f.repo, 'investigate continue'), b = startRequest(f.repo, 'kb topic next');
+    const runId = `run-${state}`; bindRequest(f.repo, a.id, runId);
+    const status = { runId, workflow: 'vczh', inputs: { root: f.repo, request: a.id }, state, finishedAt: Date.now(), jobs: [{ state }] };
+    const file = join(f.dir, 'run-status.json'); writeFileSync(file, JSON.stringify(status));
+    const result = f.run(['request', 'abandon', a.id, '--run-status', file, '--reason', 'Original run stopped']);
+    assert.equal(result.status, 0, result.stderr);
+    const abandoned = JSON.parse(result.stdout);
+    assert.equal(abandoned.status, 'abandoned'); assert.equal(abandoned.abandonment.runState, state);
+    assert.equal(abandoned.abandonment.reason, 'Original run stopped'); assert.ok(abandoned.finishedAt);
+    assert.equal(existsSync(managed(f.repo, 'active-request.json')), false);
+    bindRequest(f.repo, b.id, 'next');
+    assert.throws(() => bindRequest(f.repo, a.id, runId), /已结束/);
+    assert.throws(() => finishRequest(f.repo, a.id, runId), /已结束/);
+    assert.equal(f.run(['request', 'show', a.id, '--run-id', runId]).status, 1);
+    abandonRequest(f.repo, a.id, { reason: 'Repeat cleanup' });
+    assert.equal(getRequest(f.repo, b.id, 'next').status, 'running', 'repeat cleanup does not release another request');
+    finishRequest(f.repo, b.id, 'next');
+    assert.throws(() => bindRequest(f.repo, b.id, 'next'), /已结束/);
+  }
+  assert.deepEqual(paths.map(path => readFileSync(join(f.repo, path), 'utf8')), before);
+  const pending = startRequest(f.repo, 'ask unused');
+  assert.equal(abandonRequest(f.repo, pending.id, { reason: 'Not started' }).status, 'abandoned');
+  const counts = panel(f.state).items.flatMap(item => item.items ?? []).find(item => item.label === '进行中 / 已完成 / 已放弃');
+  assert.equal(counts.value, '0 / 3 / 4');
+});
+
+test('abandon rejects missing, mismatched or still-active run evidence and keeps its lock', t => {
+  const f = fixture(t), r = startRequest(f.repo, 'investigate continue');
+  bindRequest(f.repo, r.id, 'original');
+  const status = { runId: 'original', workflow: 'vczh', inputs: { root: f.repo, request: r.id }, state: 'cancelled', finishedAt: Date.now(), jobs: [{ state: 'cancelled' }] };
+  const evidence = [undefined, { ...status, runId: 'other' }, { ...status, inputs: { ...status.inputs, root: '/other' } },
+    { ...status, inputs: { ...status.inputs, request: 'other' } }, { ...status, finishedAt: null },
+    ...['running', 'waiting', 'cancelling', 'unknown'].map(state => ({ ...status, state })),
+    ...['queued', 'running', 'agent', 'user', 'unknown'].map(state => ({ ...status, jobs: [{ state }] })),
+    { ...status, tasks: [{ task: 'open' }] }];
+  for (const runStatus of evidence) {
+    assert.throws(() => abandonRequest(f.repo, r.id, { reason: 'Abandon', runStatus }));
+    assert.equal(getRequest(f.repo, r.id, 'original').status, 'running');
+  }
+  assert.throws(() => getRequest(f.repo, r.id, 'different'), /不属于/);
+  assert.equal(f.run(['request', 'abandon', r.id, '--reason', 'No evidence']).status, 1);
+  const next = startRequest(f.repo, 'ask next');
+  assert.throws(() => bindRequest(f.repo, next.id, 'next'), /固定任务文档/);
 });
 
 test('remember preserves complete notes, resets the marker, orders backups and avoids timestamp collisions', t => {
@@ -193,6 +264,37 @@ test('custom prompts preserve original style, legacy schema and immutable builti
   putPrompt(repo, flat); assert.ok(renderPrompt(prompts(repo).find(q => q.id === 'flat')).includes(flat.sections[0].body));
   assert.throws(() => renderPrompt(p, 'missing'), /主题不存在/);
   assert.throws(() => putPrompt(repo, { ...p, sections: [{ ...p.sections[0], topic: 'missing' }] }), /主题/);
+});
+
+test('custom prompt IDs remain unique across filenames for reading, toggling and updates', t => {
+  const f = fixture(t), p = promptTemplate('team');
+  save(managed(f.repo, 'prompts/a.json'), p);
+  putPrompt(f.repo, { ...p, title: 'Updated team' });
+  assert.equal(prompts(f.repo).find(p => p.id === 'team').title, 'Updated team');
+  assert.equal(existsSync(managed(f.repo, 'prompts/team.json')), false);
+  save(managed(f.repo, 'prompts/b.json'), p);
+  const before = config(f.repo);
+  for (const action of [() => prompts(f.repo), () => enablePrompt(f.repo, 'team', true), () => putPrompt(f.repo, p)])
+    assert.throws(action, /team.*a\.json.*b\.json/);
+  for (const args of [['prompt', 'list'], ['prompt', 'show', 'team']]) {
+    const result = f.run(args); assert.equal(result.status, 1); assert.match(result.stderr, /a\.json.*b\.json/);
+  }
+  assert.deepEqual(config(f.repo), before);
+});
+
+test('disabled builtins stay disabled across every protocol while enabled project prompts remain selectable', t => {
+  const f = fixture(t); putPrompt(f.repo, promptTemplate('team')); enablePrompt(f.repo, 'team', true);
+  enablePrompt(f.repo, 'cpp', true);
+  for (const key of ['general', 'cpp']) assert.equal(f.run(['prompt', 'disable', key]).status, 0);
+  const before = config(f.repo);
+  for (const mode of ['', 'adapter', 'prompts', 'ask', 'investigate', 'review', 'refine', 'kb', 'kb-refine', 'direct']) {
+    const result = f.run(['protocol', ...(mode ? [mode] : [])]); assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /vczh prompt (?:show|enable) (?:general|cpp)\b/);
+    assert.match(result.stdout, /enabled.*true/);
+  }
+  const listed = JSON.parse(f.run(['prompt', 'list']).stdout);
+  assert.deepEqual(listed.filter(p => p.enabled).map(p => p.id), ['team']);
+  assert.deepEqual(config(f.repo), before);
 });
 
 test('retired builtin selections are ignored and migrated without deleting user documents', t => {

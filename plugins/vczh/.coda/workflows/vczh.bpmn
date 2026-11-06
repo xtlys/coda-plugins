@@ -17,43 +17,43 @@
     <endEvent id="invalid-state" name="未知命令"><errorEventDefinition /></endEvent>
     <sequenceFlow id="pick-ask" sourceRef="pick" targetRef="ask"><conditionExpression xsi:type="tFormalExpression">=route.mode = "ask"</conditionExpression></sequenceFlow>
     <userTask id="ask" name="分析问题" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
-在上述工作区先运行 vczh request show {{inputs.request}}，再运行 vczh protocol ask，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在上述工作区先运行 vczh request show {{inputs.request}} --run-id {{run.id}} 核对请求仍活动且属于本运行，校验失败不得执行旧任务；再运行 vczh protocol ask，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
 在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
 完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
     <sequenceFlow id="ask-finish" sourceRef="ask" targetRef="finish" />
     <sequenceFlow id="pick-investigate" sourceRef="pick" targetRef="investigate"><conditionExpression xsi:type="tFormalExpression">=route.mode = "investigate"</conditionExpression></sequenceFlow>
     <userTask id="investigate" name="调查与实现" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
-在上述工作区先运行 vczh request show {{inputs.request}}，再运行 vczh protocol investigate，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在上述工作区先运行 vczh request show {{inputs.request}} --run-id {{run.id}} 核对请求仍活动且属于本运行，校验失败不得执行旧任务；再运行 vczh protocol investigate，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
 在原工作区操作原文规定的 Markdown 文件。严格执行 Repro/Continue/Report 分支；所有待验证提案依次实验、记录、回退，之后重放最佳方案并复验自审。不得自行增加评审轮数上限或强制 refine。
 完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
     <sequenceFlow id="investigate-finish" sourceRef="investigate" targetRef="finish" />
     <sequenceFlow id="pick-review" sourceRef="pick" targetRef="review"><conditionExpression xsi:type="tFormalExpression">=route.mode = "review"</conditionExpression></sequenceFlow>
     <userTask id="review" name="执行前任务审阅" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
-在上述工作区先运行 vczh request show {{inputs.request}}，再运行 vczh protocol review，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在上述工作区先运行 vczh request show {{inputs.request}} --run-id {{run.id}} 核对请求仍活动且属于本运行，校验失败不得执行旧任务；再运行 vczh protocol review，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
 在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
 完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
     <sequenceFlow id="review-finish" sourceRef="review" targetRef="finish" />
     <sequenceFlow id="pick-refine" sourceRef="pick" targetRef="refine"><conditionExpression xsi:type="tFormalExpression">=route.mode = "refine"</conditionExpression></sequenceFlow>
     <userTask id="refine" name="归档学习提炼" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
-在上述工作区先运行 vczh request show {{inputs.request}}，再运行 vczh protocol refine，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在上述工作区先运行 vczh request show {{inputs.request}} --run-id {{run.id}} 核对请求仍活动且属于本运行，校验失败不得执行旧任务；再运行 vczh protocol refine，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
 在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
 完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
     <sequenceFlow id="refine-finish" sourceRef="refine" targetRef="finish" />
     <sequenceFlow id="pick-kb" sourceRef="pick" targetRef="kb"><conditionExpression xsi:type="tFormalExpression">=route.mode = "kb"</conditionExpression></sequenceFlow>
     <userTask id="kb" name="知识库编写" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
-在上述工作区先运行 vczh request show {{inputs.request}}，再运行 vczh protocol kb，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在上述工作区先运行 vczh request show {{inputs.request}} --run-id {{run.id}} 核对请求仍活动且属于本运行，校验失败不得执行旧任务；再运行 vczh protocol kb，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
 在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
 完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
     <sequenceFlow id="kb-finish" sourceRef="kb" targetRef="finish" />
     <sequenceFlow id="pick-kb-refine" sourceRef="pick" targetRef="kb-refine"><conditionExpression xsi:type="tFormalExpression">=route.mode = "kb-refine"</conditionExpression></sequenceFlow>
     <userTask id="kb-refine" name="更新既有知识" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
-在上述工作区先运行 vczh request show {{inputs.request}}，再运行 vczh protocol kb-refine，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在上述工作区先运行 vczh request show {{inputs.request}} --run-id {{run.id}} 核对请求仍活动且属于本运行，校验失败不得执行旧任务；再运行 vczh protocol kb-refine，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
 在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
 完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
     <sequenceFlow id="kb-refine-finish" sourceRef="kb-refine" targetRef="finish" />
     <sequenceFlow id="pick-direct" sourceRef="pick" targetRef="direct"><conditionExpression xsi:type="tFormalExpression">=route.mode = "direct"</conditionExpression></sequenceFlow>
     <userTask id="direct" name="其他非编码工作" coda:assignee="agent"><documentation>工作区：{{inputs.root}}。请求 ID：{{inputs.request}}。
-在上述工作区先运行 vczh request show {{inputs.request}}，再运行 vczh protocol direct，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
+在上述工作区先运行 vczh request show {{inputs.request}} --run-id {{run.id}} 核对请求仍活动且属于本运行，校验失败不得执行旧任务；再运行 vczh protocol direct，完整读取并执行原文协议。保存的 request 字段是 LATEST chat message，不是本通知，也不是历史消息。
 在原工作区操作原文规定的 Markdown 文件。遵守该命令的修改范围和停止位置，不自动执行下一种命令。
 完成该命令规定的全部工作及提交检查点后，workflow_task completed。中断时保留原文档并恢复原运行，不能重复清空。失败说明具体阻碍。源码和知识内容不在自动步骤的临时工作区修改。</documentation></userTask>
     <sequenceFlow id="direct-finish" sourceRef="direct" targetRef="finish" />

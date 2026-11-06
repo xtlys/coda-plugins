@@ -86,8 +86,8 @@ function scoped(path) {
     replace(53, 91, [
       '## Coding Guidelines', '',
       '- **SUPER IMPORTANT** Your should always follow the coding convention when coding:',
-      '  - Read enabled conventions with `vczh prompt list` and `vczh prompt show <id>`.',
-      '  - Read `vczh prompt show general`; for C++ work also read `vczh prompt show cpp`.',
+      '  - Use `vczh prompt list` to find conventions whose `enabled` field is true; read only those with `vczh prompt show <id>`.',
+      '  - Disabled conventions, including general and cpp, must not be loaded or re-enabled unless the user asks.',
       ...originalLines.slice(61, 64),
       '- Read this project\'s `Project.md` for its build, test, debugging and source-file conventions.',
     ].join('\n'), '仅接入通用和 C++ 规范；库和工具要求改由当前项目自身约定提供');
@@ -108,7 +108,7 @@ function scoped(path) {
       } else if (line.includes('copilotRemember.ps1')) {
         replace(n, n, line.replace('copilotRemember.ps1 -Earliest COUNT', 'vczh remember --earliest COUNT').replace('copilotRemember.ps1', 'vczh remember'), '替换等价归档入口');
       } else if (line.includes('`REPO-ROOT/.github/Guidelines/Coding.md`')) {
-        replace(n, n, line.replace('`REPO-ROOT/.github/Guidelines/Coding.md`', '`vczh prompt show general` and, for C++ work, `vczh prompt show cpp`'), '规范引用指向保留的两个维度');
+        replace(n, n, line.replace('`REPO-ROOT/.github/Guidelines/Coding.md`', 'only the conventions marked `enabled: true` by `vczh prompt list`, using `vczh prompt show <id>`'), '规范引用仅指向项目已启用的条目，遵守用户停用选择');
       }
     }
   }

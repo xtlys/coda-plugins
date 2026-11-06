@@ -78,7 +78,7 @@ I will put my reply here
     - Potential synchronization and multi-threading issues.
     - Potential performance issues.
   - You should de-ambiguous proactively, if there is an obvious best answer to the review comment, you should also propose your solution:
-    - You can find my preference in `vczh prompt show general` and, for C++ work, `vczh prompt show cpp`.
+    - You can find my preference in only the conventions marked `enabled: true` by `vczh prompt list`, using `vczh prompt show <id>`.
   - Review comments should only be created when you can't find any reasonable solution to the issue, or can't make any reasonable decision because of the ambiguity.
     - If anything in the the task is incorrect, only make changes for typos and grammar mistakes, fact mistakes should be put in `## DETAILS`, or when it causes unresolvable ambiguity, put it in `## REVIEW COMMENTS`.
     - If there are ambiguity or missing details, but you are able to figure it out, just add them to `## DETAILS` or `## VERIFICATION` section of the task file, instead of putting a review comment.

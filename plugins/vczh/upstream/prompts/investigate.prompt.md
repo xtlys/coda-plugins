@@ -174,7 +174,7 @@ Propose any solution you can think of and write them down in the document, you m
 
 - Unit test is always required to ensure the proposal actually works.
 - Review all code you have changed, make sure they are clean and follow the coding convention in:
-  - `vczh prompt show general` and, for C++ work, `vczh prompt show cpp`.
+  - only the conventions marked `enabled: true` by `vczh prompt list`, using `vczh prompt show <id>`.
   - `REPO-ROOT/.github/KnowledgeBase/Learning.md`
   - `REPO-ROOT/.github/Learning/Learning_Coding.md`
   - `REPO-ROOT/.github/Learning/Learning_Testing.md`

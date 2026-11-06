@@ -9,6 +9,6 @@
 1. `vczh prompt template <id>` 生成 schemaVersion 2 模板。scope 选择 general、cpp、language 或 project；language 要填写 language 字段。
 2. topics 定义主题目录，sections 的 topic 引用目录 ID。条目 body 使用原文风格的 Markdown，包含做法、同一边界的反面做法、原因与必要例外。确有帮助时添加示例；sources 填真实来源，不把项目偏好署名为上游原文。
 3. `vczh prompt put --file <json>` 写入 `.github/vczh/prompts`，`vczh prompt enable <id>` 启用。
-4. `prompt list/show/disable` 浏览或停用。原有 schemaVersion 1 和没有 topics 的 schemaVersion 2 项目规范仍可用。
+4. `prompt list/show/disable` 浏览或停用。工作流只读取 list 中 `enabled: true` 的规范；停用对内置和项目规范同样有效，不根据语言自动重新启用。用户主动浏览停用规范时仍可使用 show。原有 schemaVersion 1 和没有 topics 的 schemaVersion 2 项目规范仍可用。
 
 内置 ID 与旧版已移除的内置 ID 不允许由项目覆盖。升级时旧内置启用项不再生效，init 或下次启停规范时清理配置；不删除用户自己的知识和规范文件。内置更新由开发者核对来源、四维分类和提取结果后随插件发布；学习计数不自动修改内置规范。

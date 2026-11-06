@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { config, hash, id, inside, json, listFiles, managed, plugin, requireValue, retiredBuiltinIds, save, strings, text } from './store.mjs';
 
 export const builtinIds = ['general', 'cpp'];
@@ -61,11 +61,20 @@ export function validatePrompt(p, builtin = false) {
   return p;
 }
 export function builtinPrompts() { return builtinIds.map(key => validatePrompt(json(join(plugin, 'prompts', `${key}.json`)), true)); }
+function projectPrompts(root) {
+  const ids = new Map();
+  return listFiles(root, 'prompts', '.json').map(file => {
+    const prompt = validatePrompt(json(file));
+    requireValue(!reservedIds.includes(prompt.id), '项目规范不可覆盖内置或已移除的内置 ID');
+    requireValue(!ids.has(prompt.id), `项目规范 ID 重复：${prompt.id}（${ids.get(prompt.id)} 与 ${basename(file)}）`);
+    ids.set(prompt.id, basename(file));
+    return { file, prompt };
+  });
+}
 export function prompts(root) {
   const enabled = root ? config(root).enabledPrompts : [];
   requireValue(Array.isArray(enabled), 'enabledPrompts 须为数组');
-  const custom = root ? listFiles(root, 'prompts', '.json').map(file => validatePrompt(json(file))) : [];
-  for (const p of custom) requireValue(!reservedIds.includes(p.id), '项目规范不可覆盖内置或已移除的内置 ID');
+  const custom = root ? projectPrompts(root).map(entry => entry.prompt) : [];
   return [...builtinPrompts().map(p => ({ ...p, origin: 'builtin', enabled: enabled.includes(p.id) })),
     ...custom.map(p => ({ ...p, origin: 'project', enabled: enabled.includes(p.id) }))];
 }
@@ -74,7 +83,8 @@ export function putPrompt(root, p) {
   validatePrompt(p);
   const keys = p.schemaVersion === 1 ? ['language', 'prefer', 'avoid', 'examples', 'exceptions', 'checks', 'sources'] : ['language', 'topics', 'sections'];
   const canonical = Object.fromEntries(['schemaVersion', 'id', 'title', 'scope', 'appliesTo', ...keys].filter(k => p[k] !== undefined).map(k => [k, p[k]]));
-  save(managed(root, `prompts/${id(p.id)}.json`), canonical); return canonical;
+  const existing = projectPrompts(root).find(entry => entry.prompt.id === p.id);
+  save(existing?.file ?? managed(root, `prompts/${id(p.id)}.json`), canonical); return canonical;
 }
 export function enablePrompt(root, key, enable) {
   id(key); requireValue(prompts(root).some(p => p.id === key), `规范不存在：${key}`);

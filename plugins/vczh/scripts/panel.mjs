@@ -81,7 +81,7 @@ export function panel(state, view = { view: 'overview' }) {
       markdown('知识直接读取 .github/KnowledgeBase；学习读取原文 Learning 文件。使用 vczh init 登记。每个项目统计最近登记且仍可读的工作区，不重复累计分支副本。') ]));
     for (const p of pages(items, projects, view)) {
       if (p.error) { items.push(card(p.name, [markdown(`无法读取：${short(p.error, 450)}`)])); continue; }
-      items.push(card(p.name, [stat('知识 / 学习文件 / 规范', `${p.knowledge.length} / ${p.learning.length} / ${p.prompts.length}`), stat('进行中 / 已完成', `${p.tasks.filter(t => t.status !== 'done').length} / ${p.tasks.filter(t => t.status === 'done').length}`), stat('学习条目 / 归档', `${p.learning.reduce((n, d) => n + d.learningCount, 0)} / ${p.archives.length}`), ...Object.entries(names).map(([kind, label]) => button(label, { view: 'project', key: p.key, kind }))], p.root));
+      items.push(card(p.name, [stat('知识 / 学习文件 / 规范', `${p.knowledge.length} / ${p.learning.length} / ${p.prompts.length}`), stat('进行中 / 已完成 / 已放弃', `${p.tasks.filter(t => ['pending', 'running'].includes(t.status)).length} / ${p.tasks.filter(t => t.status === 'done').length} / ${p.tasks.filter(t => t.status === 'abandoned').length}`), stat('学习条目 / 归档', `${p.learning.reduce((n, d) => n + d.learningCount, 0)} / ${p.archives.length}`), ...Object.entries(names).map(([kind, label]) => button(label, { view: 'project', key: p.key, kind }))], p.root));
     }
   } else {
     const p = projects.find(p => p.key === view.key); requireValue(p && !p.error, '工作区不可读或已切换，请返回项目总览');

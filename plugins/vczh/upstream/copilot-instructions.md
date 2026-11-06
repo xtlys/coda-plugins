@@ -12,8 +12,8 @@
 ## Coding Guidelines
 
 - **SUPER IMPORTANT** Your should always follow the coding convention when coding:
-  - Read enabled conventions with `vczh prompt list` and `vczh prompt show <id>`.
-  - Read `vczh prompt show general`; for C++ work also read `vczh prompt show cpp`.
+  - Use `vczh prompt list` to find conventions whose `enabled` field is true; read only those with `vczh prompt show <id>`.
+  - Disabled conventions, including general and cpp, must not be loaded or re-enabled unless the user asks.
   - `REPO-ROOT/.github/KnowledgeBase/Learning.md`
   - `REPO-ROOT/.github/Learning/Learning_Coding.md`
   - `REPO-ROOT/.github/Learning/Learning_Testing.md`

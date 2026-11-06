@@ -75,7 +75,7 @@
     {
       "path": "copilot-instructions.md",
       "originalSha256": "436ee96ac0de01539452ce70d3d29006f246015eede3f957a25cffb10a5a2fd6",
-      "sha256": "4fdbac3dd27b0aa5fdde1f7044c7fa1cfb14bc7420dfbeb757a18af708fcdc83",
+      "sha256": "ebbcea7114226f4b1642150c6178c3f8d243f038de713bd68f1bd6117262aea7",
       "edits": [
         {
           "start": 4,
@@ -92,7 +92,7 @@
         {
           "start": 53,
           "end": 91,
-          "replacement": "## Coding Guidelines\n\n- **SUPER IMPORTANT** Your should always follow the coding convention when coding:\n  - Read enabled conventions with `vczh prompt list` and `vczh prompt show <id>`.\n  - Read `vczh prompt show general`; for C++ work also read `vczh prompt show cpp`.\n  - `REPO-ROOT/.github/KnowledgeBase/Learning.md`\n  - `REPO-ROOT/.github/Learning/Learning_Coding.md`\n  - `REPO-ROOT/.github/Learning/Learning_Testing.md`\n- Read this project's `Project.md` for its build, test, debugging and source-file conventions.",
+          "replacement": "## Coding Guidelines\n\n- **SUPER IMPORTANT** Your should always follow the coding convention when coding:\n  - Use `vczh prompt list` to find conventions whose `enabled` field is true; read only those with `vczh prompt show <id>`.\n  - Disabled conventions, including general and cpp, must not be loaded or re-enabled unless the user asks.\n  - `REPO-ROOT/.github/KnowledgeBase/Learning.md`\n  - `REPO-ROOT/.github/Learning/Learning_Coding.md`\n  - `REPO-ROOT/.github/Learning/Learning_Testing.md`\n- Read this project's `Project.md` for its build, test, debugging and source-file conventions.",
           "reason": "仅接入通用和 C++ 规范；库和工具要求改由当前项目自身约定提供"
         },
         {
@@ -119,7 +119,7 @@
     {
       "path": "prompts/investigate.prompt.md",
       "originalSha256": "ac054e5a6e5d5f9e4773e81e67f5eb1699b0abf33c0b8168e101d5c9830cb333",
-      "sha256": "a4f307178e9574ff6daa8a31803b7b21ca8360f4dd3d0d0fb9ad55eb842d8d47",
+      "sha256": "37a3a6c5b5b585eb71eddd97531b4d7e48e6d7a033cd43b464b6edd05aa46b1a",
       "edits": [
         {
           "start": 3,
@@ -154,8 +154,8 @@
         {
           "start": 179,
           "end": 179,
-          "replacement": "  - `vczh prompt show general` and, for C++ work, `vczh prompt show cpp`.",
-          "reason": "规范引用指向保留的两个维度"
+          "replacement": "  - only the conventions marked `enabled: true` by `vczh prompt list`, using `vczh prompt show <id>`.",
+          "reason": "规范引用仅指向项目已启用的条目，遵守用户停用选择"
         }
       ]
     },
@@ -225,7 +225,7 @@
     {
       "path": "prompts/review.prompt.md",
       "originalSha256": "f4bfea3faf7ceb0865af4c1a4f65bc7ff99824e3be306925577bed4157c6d13b",
-      "sha256": "c75c33ee22348f6e76ce7e88928b8715cd547c93de0c5f89986e986da93ed9b7",
+      "sha256": "44817ca1be9ceae7cbd05eaaecaa310f78bda10c80d747251a180efbcbdacf52",
       "edits": [
         {
           "start": 3,
@@ -242,8 +242,8 @@
         {
           "start": 81,
           "end": 81,
-          "replacement": "    - You can find my preference in `vczh prompt show general` and, for C++ work, `vczh prompt show cpp`.",
-          "reason": "规范引用指向保留的两个维度"
+          "replacement": "    - You can find my preference in only the conventions marked `enabled: true` by `vczh prompt list`, using `vczh prompt show <id>`.",
+          "reason": "规范引用仅指向项目已启用的条目，遵守用户停用选择"
         }
       ]
     }

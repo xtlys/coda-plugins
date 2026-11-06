@@ -31,6 +31,8 @@ vczh request start --file /tmp/latest-request.txt --intent coding
 
 然后调用 `workflow_run`，workflow 为 `vczh`，inputs 为 `root` 与 `request`。固定任务文档串行使用，失败或中断恢复原运行，不重新清空调查。请求内的步骤以 Markdown 为准。
 
+放弃无法继续的请求时，先确认原运行已结束，再执行 `vczh request abandon` 释放占用；任务、知识和学习文档保持原样。核验步骤见 [释放活动请求](skills/vczh/references/adapter.md#释放活动请求)。已放弃的旧请求不能重新执行，后续使用新请求。
+
 ## 先维度，再主题
 
 | 内置维度 | 主题 |
@@ -38,7 +40,7 @@ vczh request start --file /tmp/latest-request.txt --intent coding
 | 通用 `general` | 正确性与错误处理、DRY 与抽象、依赖边界与上游修复、接口与所有权、值语义、并发与异步、跨平台设计、调试验证、MVVM |
 | C++ `cpp` | 声明与头文件、格式与类型推导、实现隐藏、对象生命周期、RAII、C++20 与模板迭代、指针有效值、原子操作 |
 
-通用默认启用；C++ 工作启用并读取 cpp。面板按「维度 → 主题 → 条目」浏览。条目保留英文原句、否定项、条件与例外，并附原提交行号；中文标题和适用说明由插件添加。混合条目仅删除库或工具专属片段，并标记删除位置，不将原库 API 改写为标准库 API。
+通用默认启用；C++ 规范由用户按需启用。工作流只读取已启用规范，停用后不会按语言自动恢复。面板按「维度 → 主题 → 条目」浏览。条目保留英文原句、否定项、条件与例外，并附原提交行号；中文标题和适用说明由插件添加。混合条目仅删除库或工具专属片段，并标记删除位置，不将原库 API 改写为标准库 API。
 
 ```sh
 vczh prompt list

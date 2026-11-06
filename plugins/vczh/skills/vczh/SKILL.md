@@ -12,7 +12,7 @@ description: 在项目中采用 vczh 工作流时，执行 ask、investigate、r
 1. 读取当前项目的 `AGENTS.md`、`Project.md`、已有 `.github/copilot-instructions.md`。
 2. 执行 `vczh protocol adapter`，了解 Coda 的入口、路径及平台对应。
 3. 首次为项目设置工作流时用 `vczh init` 初始化原文任务/知识文档；已有内容保留。补全根目录 `Project.md` 中本项目真实构建、测试、生成物与变更触发规则。已有项目无须重复初始化。尚未初始化的纯分析请求，直接读 `vczh protocol ask` 和已有资料答复，不为问答新建文档。
-4. `vczh prompt list` 后，用 `vczh prompt show <id>` 读取已启用规范。通用规范默认启用；C++ 工作启用并读取 `cpp`。目录先按维度、再按主题组织；需要复查某个主题时可用 `vczh prompt show <id> --topic <主题id>`。库 API、编译器、构建、测试和调试工具的具体用法读取当前项目自己的约定。
+4. `vczh prompt list` 后，仅对 `enabled: true` 的规范使用 `vczh prompt show <id>`。通用规范默认启用；用户停用的规范（包括通用和 C++）不得自动加载或重新启用，C++ 工作也遵守此选择。目录先按维度、再按主题组织；需要复查已启用规范的某个主题时可用 `vczh prompt show <id> --topic <主题id>`。库 API、编译器、构建、测试和调试工具的具体用法读取当前项目自己的约定。
 5. 决策前阅读 `.github/KnowledgeBase/Index.md`，按索引阅读相关 API、设计、手册。编码前还必须读 `.github/KnowledgeBase/Learning.md`、`.github/Learning/Learning_Coding.md`、`.github/Learning/Learning_Testing.md`。不能用一份生成摘要代替这些原文。
 
 ## 首词路由
@@ -36,11 +36,13 @@ description: 在项目中采用 vczh 工作流时，执行 ask、investigate、r
 将本轮最新请求逐字保存到临时文件。只去掉「使用 vczh 工作流」这类调用外壳，保留需求全文，不能先改写为任务摘要。
 
 - `vczh route --file <临时文件>` 查看路由。没有显式首词时，按语义传入 `--intent coding|research|maintenance`，不要只凭关键词判断。
-- `investigate repro` 后仅有文件标签时传 `--task-file <仓库相对路径>`，读取文件全文；后面为空时读取根目录 `TODO_TASK.md`。空 `review` 也标记 `TODO_TASK.md`。
+- `investigate repro` 或 `review` 后仅有对应文件标签时可传 `--task-file <仓库相对路径>`；若同条请求还有附加说明，不传此选项，保留完整正文并按协议阅读其中的文件。空 repro 读取根目录 `TODO_TASK.md`；空 review 也标记该文件。
 - `vczh request start --file <临时文件> [--intent …] [--task-file …]` 保存原文与路由结果。
-- 调 `workflow_run`：`workflow: "vczh"`，`inputs: {root: <init 返回的根目录>, request: <返回的请求 ID>}`。一次调用重试复用 request ID；失败/取消后恢复原 run，不新建调查。
-- 收到流程任务，运行 `vczh request show <id>` 和对应 `vczh protocol <mode>`。把保存的 `request` 当作原文协议所说的 LATEST chat message；流程通知本身不是新需求。完整执行该命令后才 `workflow_task completed`。
+- 调 `workflow_run`：`workflow: "vczh"`，`inputs: {root: <init 返回的根目录>, request: <返回的请求 ID>}`。一次调用重试复用 request ID；失败/取消后可恢复原 run，不重新清空调查。
+- 收到流程任务，先运行 `vczh request show <id> --run-id <本次运行 ID>` 核对请求仍活动且属于本运行，再读对应 `vczh protocol <mode>`。校验失败不得执行旧任务。把保存的 `request` 当作原文协议所说的 LATEST chat message；流程通知本身不是新需求。完整执行该命令后才 `workflow_task completed`。
 - 新的用户纠偏到达时，立即按原文 Continue/Report 分支处理并落盘；不要继续执行已被否定的旧方案，也不要把历史请求的 Repro 标题误当成新 Repro。当前 Coda 任务仍在运行时，在该任务内处理最新纠偏，不并行开启第二个写相同文档的运行。中断恢复按 Markdown 当前状态继续，不重复清空或归档。
+
+确需放弃失败、取消或无法恢复的请求时，按 [释放活动请求](references/adapter.md#释放活动请求) 核对原运行已停止，再释放占用。放弃保留 Markdown，旧请求不能恢复执行；后续工作使用新请求。
 
 调查的步骤、全部提案实验与回退、逐任务提交推送、rebase 和最后自审，都在 `investigate` 原文中执行。没有另加选定单一方案、最多三轮评审、强制 refine 或 PR 关卡。提交推送按原文和本次显式覆盖执行；PR/合并不是该原文的必经步骤，只有用户要求时才接 Coda 原生 PR 生命周期。
 
