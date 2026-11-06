@@ -1,9 +1,8 @@
 # Investigate
 
-- Check out `Accessing Task Documents`, `(Windows Specific) Accessing Script Files`, and `(Linux Specific) Accessing Script Files` in `REPO-ROOT/.github/copilot-instructions.md` for context about mentioned `*.md`, `*.ps1` and `*.sh` files.
-- Check out `(Windows Specific) External Tools Environment and Context` and `(Linux Specific) External Tools Environment and Context` in `REPO-ROOT/.github/copilot-instructions.md` for accessing testing scripts and debugging tools.
+- Check out `Accessing Task Documents` in `REPO-ROOT/.github/copilot-instructions.md` for task documents, and `REPO-ROOT/Project.md` for this project's tools.
 - Check out `REPO-ROOT/Project.md` to find out what solutions you need to build.
-- All `*.md`, `*.ps1` and `*.sh` files should exist; you should not create any new files unless explicitly instructed.
+- All referenced task documents and project scripts should exist; you should not create any new files unless explicitly instructed.
   - The `Copilot_Investigate.md` file should already exist, it may or may not contain content from the last investigation.
   - If you cannot find the file, you are looking at a wrong folder.
 - Following `Leveraging the Knowledge Base` in `REPO-ROOT/.github/copilot-instructions.md`, find the knowledge and documents for this project in `REPO-ROOT/.github/KnowledgeBase/Index.md`.
@@ -40,8 +39,7 @@ Ignore this section if there is no "# Repro" in the LATEST chat message
 I am starting a fresh new request.
 
 - Before replacing `Copilot_Investigate.md`, read its current content.
-  - If it contains anything beyond the `# !!!INVESTIGATE!!!` title, run `copilotRemember.ps1` without arguments to archive the old investigation first.
-  - For non-Windows platform where `copilotRemember.ps1` can't be executed, you need to follow the script manually, which is move `Copilot_Investigate.md` to `REPO-ROOT/.github/Learning/YYYY-MM-DD-hh-mm-ss/` folder, using the current time.
+  - If it contains anything beyond the `# !!!INVESTIGATE!!!` title, run `vczh remember` without arguments to archive the old investigation first.
 - You should override `Copilot_Investigate.md` with only one title `# !!!INVESTIGATE!!!`.
   - At the moment, `Copilot_Investigate.md` may contain the last investigation. Even if it may look like the document is already finished for the current investigation, always clean it up.
 - After overriding, copy precisely my problem description in `# Repro` from the LATEST chat message under `# PROBLEM DESCRIPTION`.
@@ -176,7 +174,7 @@ Propose any solution you can think of and write them down in the document, you m
 
 - Unit test is always required to ensure the proposal actually works.
 - Review all code you have changed, make sure they are clean and follow the coding convention in:
-  - `REPO-ROOT/.github/Guidelines/Coding.md`.
+  - `vczh prompt show general` and, for C++ work, `vczh prompt show cpp`.
   - `REPO-ROOT/.github/KnowledgeBase/Learning.md`
   - `REPO-ROOT/.github/Learning/Learning_Coding.md`
   - `REPO-ROOT/.github/Learning/Learning_Testing.md`

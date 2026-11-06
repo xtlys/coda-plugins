@@ -1,15 +1,15 @@
 {
   "name": "vczh",
   "displayName": "vczh",
-  "description": "按 vczh 原文运行调查、任务审阅与知识工作流，分类管理通用和语言规范。",
-  "version": "2.0.0",
+  "description": "沿用 vczh 调查、任务审阅与知识工作流，按维度和主题管理通用与 C++ 规范原文片段。",
+  "version": "3.0.0",
   "type": "module",
   "license": "Apache-2.0",
   "contributes": {
     "skills": [
       "skills/vczh"
     ],
-    "instructions": "项目采用 vczh 工作流时先运行 vczh protocol，按最新请求首词执行完整原文。review 是执行前任务审阅。workflow_run 发起 vczh，传 root 与 request。知识在 .github 的 KnowledgeBase、Learning、TaskLogs；vczh prompt 管理通用、语言及项目规范。",
+    "instructions": "项目采用 vczh 工作流时先运行 vczh protocol，按最新请求首词执行协议。review 是执行前任务审阅。workflow_run 发起 vczh，传 root 与 request。知识在 .github 的 KnowledgeBase、Learning、TaskLogs；内置规范仅通用与 C++，vczh prompt 按维度和主题管理。",
     "commands": [
       {
         "name": "vczh",

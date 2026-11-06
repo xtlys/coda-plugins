@@ -2,142 +2,250 @@
   "repository": "https://github.com/vczh-libraries/Tools",
   "commit": "493f3fe00b4a48831c1cc0612184fde709bafcb2",
   "root": "Copilot",
-  "files": [
-    {
-      "path": "AGENTS.md",
-      "sha256": "95463c5df7d4dcb2fb9ea8e91b729ec51fa66a0fbd0f5b400376f1567b23b3e7"
-    },
-    {
-      "path": "Guidelines/Building.md",
-      "sha256": "5d104ddf23bd53826b027eb7b7492bdf432cf037c8b78541b4ed0c905d539bfb"
-    },
+  "note": "工作流保留原步骤；仅删除专属前提并替换宿主入口。规范按来源片段提取到 prompts/general.json 与 cpp.json。",
+  "conventionSources": [
     {
       "path": "Guidelines/Coding.md",
-      "sha256": "28644d40d8a197a1788d3b06bb764a3a56543c1735aa2c389ac2471bcb3995b0"
+      "sha256": "28644d40d8a197a1788d3b06bb764a3a56543c1735aa2c389ac2471bcb3995b0",
+      "lineCount": 267
     },
     {
       "path": "Guidelines/Coding_MultiThreading.md",
-      "sha256": "4b5ed431621577b64bc296db999443aa81aa785551d0fdd42f55d7163f3b2ff8"
-    },
-    {
-      "path": "Guidelines/Debugging.md",
-      "sha256": "25f35a13b456724264bbf9ecb49f1730349ea952c15707e0ebb12f1db58c75f5"
-    },
-    {
-      "path": "Guidelines/GacUIEazyLayout.md",
-      "sha256": "84ad4d7c8f73a3ed93e1d7b3e27a8a871340de71207dabfb6c6a14ea6024de09"
-    },
-    {
-      "path": "Guidelines/GacUILayout.md",
-      "sha256": "a5a325a9ae39cd10aa9525b795f0036e0f801a17f514d259e2e88a505bde0425"
+      "sha256": "4b5ed431621577b64bc296db999443aa81aa785551d0fdd42f55d7163f3b2ff8",
+      "lineCount": 58
     },
     {
       "path": "Guidelines/GacUIMVVM.md",
-      "sha256": "821bb34d005dd5aff84e09ddcb33d8ec5204cfe5a9abb531671ccfb0fdb1b51c"
+      "sha256": "821bb34d005dd5aff84e09ddcb33d8ec5204cfe5a9abb531671ccfb0fdb1b51c",
+      "lineCount": 30
     },
     {
-      "path": "Guidelines/GacUIXmlResource.md",
-      "sha256": "331500044150886c0e315eec8aaa8a1cdc66ce0a804dab0123b7b405306027fe"
+      "path": "Guidelines/Building.md",
+      "sha256": "5d104ddf23bd53826b027eb7b7492bdf432cf037c8b78541b4ed0c905d539bfb",
+      "lineCount": 73
     },
     {
-      "path": "Guidelines/Running-CLI.md",
-      "sha256": "bd39503a37663916edb6db4ee2b5df43f627325ba1256e83ce9a33510dc6c316"
-    },
-    {
-      "path": "Guidelines/Running-ComputerUse.md",
-      "sha256": "724cff03f98cd07760ad0dae5c177abf78f45f98b13e927a6b4ac638483026ac"
-    },
-    {
-      "path": "Guidelines/Running-GacUI.md",
-      "sha256": "abcae7ada64e371a7c96f60558c8ff5d43ee5499d1684e946ffb6a3b5f59b0a7"
+      "path": "Guidelines/Debugging.md",
+      "sha256": "25f35a13b456724264bbf9ecb49f1730349ea952c15707e0ebb12f1db58c75f5",
+      "lineCount": 102
     },
     {
       "path": "Guidelines/Running-UnitTest.md",
-      "sha256": "46fd1b72a4d7c8ef002640c0a07f03f5cf9bcf5cc803f9b529d298d1a5dab749"
+      "sha256": "46fd1b72a4d7c8ef002640c0a07f03f5cf9bcf5cc803f9b529d298d1a5dab749",
+      "lineCount": 100
     },
     {
-      "path": "Guidelines/SourceFileManagement.md",
-      "sha256": "e21ba06cee3debdc3314920173ccd39253513574c5e0e79c170841968f7c03c6"
-    },
+      "path": "Guidelines/Running-CLI.md",
+      "sha256": "bd39503a37663916edb6db4ee2b5df43f627325ba1256e83ce9a33510dc6c316",
+      "lineCount": 54
+    }
+  ],
+  "files": [
     {
-      "path": "Learning/Learning_Coding.md",
-      "sha256": "ddce42d2169a48ff6ede34eb91b43247a9c0aeca073f89266dcc53612aea5656"
-    },
-    {
-      "path": "Learning/Learning_Testing.md",
-      "sha256": "ddce42d2169a48ff6ede34eb91b43247a9c0aeca073f89266dcc53612aea5656"
-    },
-    {
-      "path": "Project.md",
-      "sha256": "1fdff5e88cf508c3fb0b200df4d86ce6ecf6f0d4563c4dee18fc6476798cee07"
-    },
-    {
-      "path": "Scripts/.gitignore",
-      "sha256": "60cfc54d66d9b2ad05de421ad40fafe6b73186f8fa0a1c8783a448097355e8df"
-    },
-    {
-      "path": "Scripts/copilotBuild.ps1",
-      "sha256": "60166a2e7f3301696977dd10797f7e9d69e2d93766a536e553dc76a362583cab"
-    },
-    {
-      "path": "Scripts/copilotExecute.ps1",
-      "sha256": "593cc2c72e4a8340fca2a937a8b7bb54bbbccdd5451bf4f638ffc3eb1dcd488a"
-    },
-    {
-      "path": "Scripts/copilotRemember.ps1",
-      "sha256": "fc103cee58726f4f3646a43d2f31281038091e570810585599a7099cbcea92d8"
-    },
-    {
-      "path": "Scripts/copilotShared.ps1",
-      "sha256": "44383d7d2f1ee7647ee7bce0d36cd7f384419f9d1731e7fb50661e7092bddc4d"
-    },
-    {
-      "path": "TaskLogs/.gitignore",
-      "sha256": "3390058a40b3404f4fc1f33bbb583929f763097aa43833b6d3831278d6040cb7"
-    },
-    {
-      "path": "TaskLogs/Copilot_Investigate.md",
-      "sha256": "0d397c80c13ee5d4585591b2e38e58978bf1de3b288d5bc512615ff71dba336d"
-    },
-    {
-      "path": "TaskLogs/Copilot_KB.md",
-      "sha256": "d72f890c0598bff341b74d1c99f3e205fefc67a1e5da660aa56258adef94b489"
+      "path": "AGENTS.md",
+      "originalSha256": "95463c5df7d4dcb2fb9ea8e91b729ec51fa66a0fbd0f5b400376f1567b23b3e7",
+      "sha256": "b88d12cdce26313a1049e44312dd386cc8e85d1c02943dfb78c4f92062f88362",
+      "edits": [
+        {
+          "start": 3,
+          "end": 3,
+          "replacement": "  - MUST READ `Coding Guidelines` before touching the source code.",
+          "reason": "规范入口改名"
+        },
+        {
+          "start": 6,
+          "end": 7,
+          "replacement": "",
+          "reason": "移除 Jobs 路由和原项目脚本语言偏好"
+        },
+        {
+          "start": 10,
+          "end": 10,
+          "replacement": "",
+          "reason": "移除原库跨仓复制前提"
+        },
+        {
+          "start": 12,
+          "end": 17,
+          "replacement": "",
+          "reason": "移除原库应用及系统工具的操作要求"
+        }
+      ]
     },
     {
       "path": "copilot-instructions.md",
-      "sha256": "436ee96ac0de01539452ce70d3d29006f246015eede3f957a25cffb10a5a2fd6"
-    },
-    {
-      "path": "copilotInit.ps1",
-      "sha256": "a48373eceadb357000a5d077c8ac10b0f765d55c4b3fbefa07eb7a3863b9287d"
-    },
-    {
-      "path": "copilotInitAll.ps1",
-      "sha256": "795244c541a44df1708ad211a489b796ade10dd3c2306931f3b49c63862ac111"
+      "originalSha256": "436ee96ac0de01539452ce70d3d29006f246015eede3f957a25cffb10a5a2fd6",
+      "sha256": "4fdbac3dd27b0aa5fdde1f7044c7fa1cfb14bc7420dfbeb757a18af708fcdc83",
+      "edits": [
+        {
+          "start": 4,
+          "end": 4,
+          "replacement": "",
+          "reason": "移除 MSBuild solution 前提"
+        },
+        {
+          "start": 12,
+          "end": 51,
+          "replacement": "",
+          "reason": "移除原测试应用部署假设及 Windows/Linux 工具链规定"
+        },
+        {
+          "start": 53,
+          "end": 91,
+          "replacement": "## Coding Guidelines\n\n- **SUPER IMPORTANT** Your should always follow the coding convention when coding:\n  - Read enabled conventions with `vczh prompt list` and `vczh prompt show <id>`.\n  - Read `vczh prompt show general`; for C++ work also read `vczh prompt show cpp`.\n  - `REPO-ROOT/.github/KnowledgeBase/Learning.md`\n  - `REPO-ROOT/.github/Learning/Learning_Coding.md`\n  - `REPO-ROOT/.github/Learning/Learning_Testing.md`\n- Read this project's `Project.md` for its build, test, debugging and source-file conventions.",
+          "reason": "仅接入通用和 C++ 规范；库和工具要求改由当前项目自身约定提供"
+        },
+        {
+          "start": 107,
+          "end": 119,
+          "replacement": "",
+          "reason": "移除原项目脚本目录清单"
+        }
+      ]
     },
     {
       "path": "prompts/ask.prompt.md",
-      "sha256": "d148ced3a0098e7118f168dbd4f05c8d6dc150f0a49264ff508760e9da3eb00a"
+      "originalSha256": "d148ced3a0098e7118f168dbd4f05c8d6dc150f0a49264ff508760e9da3eb00a",
+      "sha256": "6e503e23c98a33436336c2a3f408336e1c0c10637f317bca0322ab271ff77ae8",
+      "edits": [
+        {
+          "start": 5,
+          "end": 5,
+          "replacement": "- You must try your best to read any source code that may possibly be related to the analysis work.",
+          "reason": "移除固定语言和项目规模前提"
+        }
+      ]
     },
     {
       "path": "prompts/investigate.prompt.md",
-      "sha256": "ac054e5a6e5d5f9e4773e81e67f5eb1699b0abf33c0b8168e101d5c9830cb333"
+      "originalSha256": "ac054e5a6e5d5f9e4773e81e67f5eb1699b0abf33c0b8168e101d5c9830cb333",
+      "sha256": "a4f307178e9574ff6daa8a31803b7b21ca8360f4dd3d0d0fb9ad55eb842d8d47",
+      "edits": [
+        {
+          "start": 3,
+          "end": 3,
+          "replacement": "- Check out `Accessing Task Documents` in `REPO-ROOT/.github/copilot-instructions.md` for task documents, and `REPO-ROOT/Project.md` for this project's tools.",
+          "reason": "移除固定平台脚本前提"
+        },
+        {
+          "start": 4,
+          "end": 4,
+          "replacement": "",
+          "reason": "工具由当前 Project.md 提供"
+        },
+        {
+          "start": 6,
+          "end": 6,
+          "replacement": "- All referenced task documents and project scripts should exist; you should not create any new files unless explicitly instructed.",
+          "reason": "保留文件存在约束，不假设 PowerShell/bash 工具链"
+        },
+        {
+          "start": 43,
+          "end": 43,
+          "replacement": "  - If it contains anything beyond the `# !!!INVESTIGATE!!!` title, run `vczh remember` without arguments to archive the old investigation first.",
+          "reason": "替换等价归档入口"
+        },
+        {
+          "start": 44,
+          "end": 44,
+          "replacement": "",
+          "reason": "vczh remember 已提供相同的跨平台归档操作"
+        },
+        {
+          "start": 179,
+          "end": 179,
+          "replacement": "  - `vczh prompt show general` and, for C++ work, `vczh prompt show cpp`.",
+          "reason": "规范引用指向保留的两个维度"
+        }
+      ]
     },
     {
       "path": "prompts/kb-refine.prompt.md",
-      "sha256": "a49de14d4724796ad41ee5340bfff8e7d2f4d4744929fbeb524332cc8d801c0f"
+      "originalSha256": "a49de14d4724796ad41ee5340bfff8e7d2f4d4744929fbeb524332cc8d801c0f",
+      "sha256": "47c8bf1a336794dc38607748aeec7b06c4a9128d41c786f8c739dc79813395d8",
+      "edits": [
+        {
+          "start": 3,
+          "end": 3,
+          "replacement": "- Check out `Accessing Task Documents` in `REPO-ROOT/.github/copilot-instructions.md` for task documents, and `REPO-ROOT/Project.md` for this project's tools.",
+          "reason": "移除固定平台脚本前提"
+        },
+        {
+          "start": 4,
+          "end": 4,
+          "replacement": "- All referenced task documents and project scripts should exist; you should not create any new files unless explicitly instructed.",
+          "reason": "保留文件存在约束，不假设 PowerShell/bash 工具链"
+        }
+      ]
     },
     {
       "path": "prompts/kb.prompt.md",
-      "sha256": "1d490f27ae82327da48d6c23b63e89d6d0420d7b15bc8ece77d661b7c0665d6a"
+      "originalSha256": "1d490f27ae82327da48d6c23b63e89d6d0420d7b15bc8ece77d661b7c0665d6a",
+      "sha256": "e6d10b81a8f0f52568fc84de95553d2154715be83619c48c82ad73ee87c915a1",
+      "edits": [
+        {
+          "start": 3,
+          "end": 3,
+          "replacement": "- Check out `Accessing Task Documents` in `REPO-ROOT/.github/copilot-instructions.md` for task documents, and `REPO-ROOT/Project.md` for this project's tools.",
+          "reason": "移除固定平台脚本前提"
+        },
+        {
+          "start": 4,
+          "end": 4,
+          "replacement": "- All referenced task documents and project scripts should exist; you should not create any new files unless explicitly instructed.",
+          "reason": "保留文件存在约束，不假设 PowerShell/bash 工具链"
+        }
+      ]
     },
     {
       "path": "prompts/refine.prompt.md",
-      "sha256": "3caf33ec019d6efd6466535c1af3a9e37267b7950efa17397160f3552c181096"
+      "originalSha256": "3caf33ec019d6efd6466535c1af3a9e37267b7950efa17397160f3552c181096",
+      "sha256": "501d202e3d1ee18b0f0d651214a0fe34953a20708bfad4a0cd36fbf393997396",
+      "edits": [
+        {
+          "start": 3,
+          "end": 3,
+          "replacement": "- Check out `Accessing Task Documents` in `REPO-ROOT/.github/copilot-instructions.md` for task documents, and `REPO-ROOT/Project.md` for this project's tools.",
+          "reason": "移除固定平台脚本前提"
+        },
+        {
+          "start": 4,
+          "end": 4,
+          "replacement": "- All referenced task documents and project scripts should exist; you should not create any new files unless explicitly instructed.",
+          "reason": "保留文件存在约束，不假设 PowerShell/bash 工具链"
+        },
+        {
+          "start": 32,
+          "end": 32,
+          "replacement": "  - You can use `vczh remember --earliest COUNT` to help you identify the earliest COUNT backup folders.",
+          "reason": "替换等价归档入口"
+        }
+      ]
     },
     {
       "path": "prompts/review.prompt.md",
-      "sha256": "f4bfea3faf7ceb0865af4c1a4f65bc7ff99824e3be306925577bed4157c6d13b"
+      "originalSha256": "f4bfea3faf7ceb0865af4c1a4f65bc7ff99824e3be306925577bed4157c6d13b",
+      "sha256": "c75c33ee22348f6e76ce7e88928b8715cd547c93de0c5f89986e986da93ed9b7",
+      "edits": [
+        {
+          "start": 3,
+          "end": 3,
+          "replacement": "- Check out `Accessing Task Documents` in `REPO-ROOT/.github/copilot-instructions.md` for task documents, and `REPO-ROOT/Project.md` for this project's tools.",
+          "reason": "移除固定平台脚本前提"
+        },
+        {
+          "start": 4,
+          "end": 4,
+          "replacement": "- All referenced task documents and project scripts should exist; you should not create any new files unless explicitly instructed.",
+          "reason": "保留文件存在约束，不假设 PowerShell/bash 工具链"
+        },
+        {
+          "start": 81,
+          "end": 81,
+          "replacement": "    - You can find my preference in `vczh prompt show general` and, for C++ work, `vczh prompt show cpp`.",
+          "reason": "规范引用指向保留的两个维度"
+        }
+      ]
     }
   ]
 }

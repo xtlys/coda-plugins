@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 export const plugin = fileURLToPath(new URL('..', import.meta.url));
 export const base = '.github/vczh';
+export const retiredBuiltinIds = ['workflow', 'vczh-project'];
 export const hash = value => createHash('sha256').update(value).digest('hex');
 export const now = () => new Date().toISOString();
 export function requireValue(ok, message) { if (!ok) throw new Error(message); }
@@ -46,6 +47,8 @@ export function managed(root, name) { return inside(root, `${base}/${name}`); }
 export function config(root) {
   const value = json(managed(root, 'project.json'));
   requireValue(value.schemaVersion === 1 && typeof value.projectId === 'string', '不支持的项目数据版本');
+  requireValue(Array.isArray(value.enabledPrompts), 'enabledPrompts 须为数组');
+  value.enabledPrompts = value.enabledPrompts.filter(key => !retiredBuiltinIds.includes(key));
   return value;
 }
 export function lock(root, name, work) {
@@ -67,6 +70,7 @@ export function init(root) {
     try { writeFileSync(file, `${JSON.stringify(cfg, null, 2)}\n`, { flag: 'wx' }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
   }
   for (const dir of ['requests', 'prompts']) mkdirSync(managed(root, dir), { recursive: true });
+  if (json(file).enabledPrompts.some(key => retiredBuiltinIds.includes(key))) save(file, config(root));
   const learning = '# !!!LEARNING!!!\n\n# Orders\n\n# Refinements\n';
   const defaults = {
     '.github/TaskLogs/Copilot_Investigate.md': '# !!!INVESTIGATE!!!\n',

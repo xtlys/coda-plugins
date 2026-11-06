@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { panelItems } from '../../check/panel.mjs';
 import { config, hash, init, inside, json, managed, save } from '../../plugins/vczh/scripts/store.mjs';
-import { builtinPrompts, enablePrompt, excerpt, manifest, prompts, promptTemplate, putPrompt, renderPrompt, sourceText } from '../../plugins/vczh/scripts/prompts.mjs';
+import { builtinPrompts, enablePrompt, manifest, prompts, promptTemplate, putPrompt, renderPrompt, sourceText, validatePrompt } from '../../plugins/vczh/scripts/prompts.mjs';
 import { backups, documents, legacyDocuments, remember } from '../../plugins/vczh/scripts/knowledge.mjs';
 import { bindRequest, finishRequest, getRequest, route, startRequest } from '../../plugins/vczh/scripts/requests.mjs';
 import { protocol } from '../../plugins/vczh/scripts/protocol.mjs';
@@ -32,27 +32,61 @@ function write(root, path, content) { const file = inside(root, path); mkdirSync
 const logPath = '.github/TaskLogs/Copilot_Investigate.md';
 const investigation = '# !!!INVESTIGATE!!!\n\n# PROBLEM DESCRIPTION\nexact request\n\n# TEST [CONFIRMED]\nobserved\n\n# PROPOSALS\n- No.1 one [CONFIRMED]\n- No.2 two [DENIED]\n';
 
-test('upstream snapshot is byte-exact and classification covers every guideline line exactly once', () => {
+test('only general and C++ topic packs are distributed, with checked bodies and source provenance', () => {
   for (const file of manifest.files) assert.equal(hash(readFileSync(join(plugin, 'upstream', file.path))), file.sha256);
   const packs = builtinPrompts();
-  for (const file of manifest.files.filter(f => f.path.startsWith('Guidelines/'))) {
-    const lines = sourceText(file.path).match(/[^\n]*\n|[^\n]+$/g) ?? [];
-    const coverage = lines.map(() => 0);
-    for (const p of packs) for (const s of p.sections.filter(s => s.source.path === file.path)) {
-      assert.ok(renderPrompt(p).includes(excerpt(s.source)), `${file.path} must not be paraphrased`);
-      for (let i = s.source.start - 1; i < s.source.end; i++) coverage[i]++;
+  assert.deepEqual(packs.map(p => p.id), ['general', 'cpp']);
+  assert.deepEqual(packs.map(p => p.topics.length), [9, 8]);
+  const audit = json(join(root, 'scripts/vczh/classification.json'));
+  assert.deepEqual(Object.keys(audit.dimensions), ['general', 'cpp', 'vczh-libraries', 'toolchain']);
+  assert.equal(audit.files.length, 13);
+  for (const file of audit.files) {
+    const coverage = Array(file.lineCount).fill(0);
+    for (const span of file.spans) {
+      const c = span.classification;
+      assert.ok(audit.dimensions[c.dimension].topics[c.topic]);
+      for (let n = span.start; n <= span.end; n++) coverage[n - 1]++;
+      if (c.rule) {
+        const s = packs.find(p => p.id === c.dimension).sections.find(s => s.id === c.rule);
+        assert.equal(s.topic, c.topic);
+        assert.ok(s.sources.some(f => f.path === file.path && f.start <= span.start && f.end >= span.end));
+      }
     }
-    assert.deepEqual(coverage, lines.map(() => 1), `No omissions or duplicates: ${file.path}`);
+    assert.deepEqual(coverage, Array(file.lineCount).fill(1), file.path);
+    assert.throws(() => sourceText(file.path), /未分发/);
+    assert.equal(existsSync(join(plugin, 'upstream', file.path)), false);
   }
-  assert.deepEqual(packs.map(p => p.id), ['general', 'cpp', 'workflow', 'vczh-project']);
+  for (const p of packs) {
+    for (const s of p.sections) {
+      assert.ok(renderPrompt(p, s.topic).includes(s.body));
+      assert.equal(hash(s.body), s.sha256);
+      assert.doesNotMatch(s.body, /Vlpp|GacUI|VCZH_|WString|Nullable<|Ptr<|SPIN_LOCK|ThreadPoolLite|RepeatingTaskExecutor|TaskQueue|IValue|vmake|msbuild|copilotBuild|copilotExecute|EMSCRIPTEN|wasm_/i);
+    }
+    const modified = structuredClone(p); modified.sections[0].body += 'altered';
+    assert.throws(() => validatePrompt(modified, true), /指纹/);
+  }
+  for (const file of ['prompts/workflow.json', 'prompts/vczh-project.json', 'upstream/Scripts/copilotBuild.ps1', 'upstream/copilotInit.ps1']) assert.equal(existsSync(join(plugin, file)), false);
 });
 
-test('every executable protocol includes the complete original prompt and its shared instructions', () => {
-  for (const mode of ['ask', 'investigate', 'review', 'refine', 'kb', 'kb-refine']) {
+test('every executable protocol loads scoped instructions without bringing excluded conventions back', () => {
+  for (const mode of ['ask', 'investigate', 'review', 'refine', 'kb', 'kb-refine', 'direct']) {
     const output = protocol(mode);
-    for (const path of ['AGENTS.md', 'copilot-instructions.md', `prompts/${mode}.prompt.md`]) assert.ok(output.includes(sourceText(path)), `${mode}: ${path}`);
+    for (const path of ['AGENTS.md', 'copilot-instructions.md', ...(mode === 'direct' ? [] : [`prompts/${mode}.prompt.md`])]) assert.ok(output.includes(sourceText(path)), `${mode}: ${path}`);
+    assert.doesNotMatch(output, /GacUI|Vlpp|MSBuild|vmake|copilotBuild|copilotExecute|\.github\/Scripts|\.github\/Ubuntu|\.github\/Guidelines\/|prompt show (?:workflow|vczh-project)/);
+    assert.match(output, /vczh prompt show general/);
   }
   assert.throws(() => protocol('implementation'), /未知原文协议/);
+});
+
+test('retained rules keep original conditions, exceptions and deliberately uncorrected statements', () => {
+  const [general, cpp] = builtinPrompts();
+  assert.match(general.sections.find(s => s.id === 'correctness-first').body, /Unless explicitly instructed/);
+  assert.match(general.sections.find(s => s.id === 'upstream').body, /project is well covered by unit test/);
+  assert.match(general.sections.find(s => s.id === 'interfaces').body, /stricker contract is allowed\/encouraged/);
+  assert.match(general.sections.find(s => s.id === 'unstable-bugs').body, /consecutive 25 successful runs/);
+  assert.match(cpp.sections.find(s => s.id === 'pimpl').body, /The only exception is forcing to hide platform dependend constructions/);
+  assert.match(cpp.sections.find(s => s.id === 'raii').body, /If an exception is surely going to crash the app and nothing will recover from it/);
+  assert.match(cpp.sections.find(s => s.id === 'modern').body, /up to C\+\+ 20/);
 });
 
 test('initialization preserves native and legacy documents and does not impose a review limit', t => {
@@ -155,6 +189,26 @@ test('custom prompts preserve original style, legacy schema and immutable builti
   putPrompt(repo, old); assert.ok(renderPrompt(prompts(repo).find(q => q.id === 'old')).includes('difference'));
   enablePrompt(repo, 'cpp', true); assert.ok(prompts(repo).find(q => q.id === 'cpp').enabled);
   assert.throws(() => putPrompt(repo, { ...p, sections: [{ ...p.sections[0], source: { path: 'fake' } }] }), /冒充/);
+  const flat = structuredClone(p); flat.id = 'flat'; delete flat.topics; delete flat.sections[0].topic;
+  putPrompt(repo, flat); assert.ok(renderPrompt(prompts(repo).find(q => q.id === 'flat')).includes(flat.sections[0].body));
+  assert.throws(() => renderPrompt(p, 'missing'), /主题不存在/);
+  assert.throws(() => putPrompt(repo, { ...p, sections: [{ ...p.sections[0], topic: 'missing' }] }), /主题/);
+});
+
+test('retired builtin selections are ignored and migrated without deleting user documents', t => {
+  const { repo, state } = fixture(t);
+  const p = promptTemplate('team'); putPrompt(repo, p);
+  const cfg = config(repo); cfg.enabledPrompts = ['general', 'cpp', 'workflow', 'vczh-project', 'team'];
+  save(managed(repo, 'project.json'), cfg);
+  assert.deepEqual(prompts(repo).filter(p => p.enabled).map(p => p.id), ['general', 'cpp', 'team']);
+  assert.deepEqual(panel(state, { view: 'builtin', id: 'workflow', page: 20 }), panel(state));
+  for (const id of ['workflow', 'vczh-project']) {
+    assert.throws(() => enablePrompt(repo, id, true), /不存在/);
+    assert.throws(() => putPrompt(repo, { ...p, id }), /内置规范/);
+  }
+  init(repo);
+  assert.deepEqual(json(managed(repo, 'project.json')).enabledPrompts, ['general', 'cpp', 'team']);
+  assert.deepEqual(json(managed(repo, 'prompts/team.json')), p);
 });
 
 test('managed and native document paths reject symlink escape', t => {
@@ -163,7 +217,7 @@ test('managed and native document paths reject symlink escape', t => {
   assert.throws(() => init(f.repo), /符号链接/); assert.equal(existsSync(join(outside, 'vczh')), false);
 });
 
-test('all original and custom prompt pages, native knowledge and archive views satisfy the panel contract', t => {
+test('dimension, topic, custom prompt, knowledge and archive pages satisfy the panel contract', t => {
   const f = fixture(t);
   for (let i = 0; i < 7; i++) { write(f.repo, `.github/KnowledgeBase/KB_Project_${i}.md`, '# Topic\n' + 'content '.repeat(600)); putPrompt(f.repo, promptTemplate(`custom-${i}`)); }
   write(f.repo, logPath, investigation); remember(f.repo);
@@ -173,7 +227,9 @@ test('all original and custom prompt pages, native knowledge and archive views s
     const output = panel(f.state, view); assert.doesNotThrow(() => panelItems(JSON.stringify(output), { actions: { browse: {} } }), key);
     for (const item of output.items.flatMap(x => x.type === 'card' ? x.items : [x])) if (item.type === 'button') queue.push(item.args);
   }
-  assert.ok(seen.size > 70);
+  for (const p of builtinPrompts()) for (const topic of p.topics) assert.ok(seen.has(JSON.stringify({ view: 'builtin', id: p.id, topic: topic.id })));
+  assert.throws(() => panel(f.state, { view: 'builtin', id: 'general', topic: 'missing' }), /主题不存在/);
+  assert.throws(() => panel(f.state, { view: 'builtin', id: 'general', topic: '../escape' }), /主题标识/);
 });
 
 test('CLI exposes complete protocols, read-only routing, native knowledge and prompt authoring', t => {
@@ -187,6 +243,11 @@ test('CLI exposes complete protocols, read-only routing, native knowledge and pr
   assert.equal(f.run(['prompt', 'put', '--file', p]).status, 0);
   assert.equal(f.run(['kb', 'list']).status, 0);
   assert.equal(f.run(['source', '../outside']).status, 1);
+  assert.equal(f.run(['source', 'Guidelines/Coding.md']).status, 1);
+  const topic = f.run(['prompt', 'show', 'cpp', '--topic', 'raii']);
+  assert.equal(topic.status, 0, topic.stderr); assert.match(topic.stdout, /RAII/); assert.doesNotMatch(topic.stdout, /# 原子操作/);
+  assert.equal(f.run(['prompt', 'show', 'cpp', '--topic', 'missing']).status, 1);
+  assert.equal(f.run(['prompt', 'show', 'workflow']).status, 1);
 });
 
 test('workflow scripts resume and finish the same request without changing Markdown or running extra stages', t => {

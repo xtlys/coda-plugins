@@ -1,20 +1,11 @@
 - Read through `REPO-ROOT/.github/copilot-instructions.md` before performing any work.
   - `copilot-instructions.md` is the guideline you should follow.
-  - MUST READ `Coding Guidelines and Tools` before touching the source code.
+  - MUST READ `Coding Guidelines` before touching the source code.
   - MUST READ `Leveraging the Knowledge Base` and find the knowledge you may need before making any decision.
 - Read through `REPO-ROOT/Project.md` before performing any work.
-- When `job:*` is mentioned, it means either `REPO-ROOT/.github/Jobs/job.*.prompt.md` or `REPO-ROOT/.github/Jobs/job.Windows.*.prompt.md`.
-- Python scripts are strong recommended not to commit, we prefer powershell/bash/javascript.
 - Absolute paths are forbidden in any documents:
   - Referencing to any file outside of the `KnowledgeBase` folder should starts with `<XXX repo>/...`.
-  - `<any-repo>/.github` documents are all copied from `Tools/Copilot`, make sure any path storing on these documents will not confuse readers working with any other repos.
 - When commit and/or push are required, you should always commit and push once finishing a request, no matter whatever is pending or not. Github repos and clones are more for the backup purpose, there is no strong requirement of completeness of tasks before committing.
-- Computer Use:
-  - You are most of the time running in a locked session, or a remote desktop session when the host machine is locked. Deny of computer use is very common, this should not become a reason to avoid any request.
-  - For any GacUI app, the first choise is always automation service, then UI Automation, then general computer use, checkout `REPO-ROOT/.github/Guidelines/Running-GacUI.md` for details.
-  - For any CLI app, the first choise is always starting it in an interactive CLI session, checkout `REPO-ROOT/.github/Guidelines/Running-CLI.md` for details.
-  - For any TUI app, when interacting with OS terminal host is not doable due to computer use failure, you can still start it in an interactive CLI session, checkout `REPO-ROOT/.github/Guidelines/Running-CLI.md` for details.
-  - For OS native dialog, for Windows try UIA first, checkout `REPO-ROOT/.github/Guidelines/Running-ComputerUse.md` for details.
 
 ## Keyword Driven Prompt File Selection
 

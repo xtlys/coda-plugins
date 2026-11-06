@@ -1,5 +1,0 @@
-# !!!LEARNING!!!
-
-# Orders
-
-# Refinements

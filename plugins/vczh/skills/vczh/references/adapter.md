@@ -1,13 +1,13 @@
-# Coda 与上游原文的对应
+# Coda 与上游协议的对应
 
-`vczh protocol <mode>` 在本说明后输出完整 `AGENTS.md`、`copilot-instructions.md` 和对应 prompt，正文直接来自固定提交，不做转述。读到的原文是执行协议，本说明仅说明宿主入口与实际项目资源的对应。
+`vczh protocol <mode>` 输出本说明、共享上下文和对应工作 prompt。命令分支、调查步骤、知识结构、停止点、提交回退检查点来自固定版本。原库及工具链前提已移除，宿主入口已替换；改动逐项登记在 `upstream/manifest.json`，不能称为上游完整逐字副本。
 
-- `REPO-ROOT` 指 `inputs.root`，`Project.md` 在根目录，任务文档在 `.github/TaskLogs`，知识库和 Learning 也直接在 `.github`。工作在这个原工作区完成；自动脚本仅分发命令与记录 Coda 状态。
-- 原文引用的共享 `.github/prompts/<mode>.prompt.md` 对应 `vczh protocol <mode>` 输出的完整 prompt；共享文件也可用 `vczh source prompts/<mode>.prompt.md` 阅读。共享 Guidelines 原文可用 `vczh source Guidelines/<文件名>` 阅读。它们由插件提供，无须为了满足路径字面值再复制一套到项目；项目自己的同名约定仍须读取。
-- 共享规范从 `vczh prompt show` 读取；按原文适用条件组合通用、C++、Workflow Script 及项目/工具规则。项目存在 `.github/Guidelines` 时也读取它。原文涉及的 Vlpp 类型、GacUI、目录、宏和 MSBuild wrappers 没有被改写成普适规则。普通项目由自己的 `Project.md` 给出对应工具；不凭空假定它安装了原作者的库或构建环境。
-- 原文中的 “large C++ project” 和 “C++ project ... MSBuild wrappers” 描述原作者工程上下文；迁移到其他语言项目时，项目语言与工具由该项目的 `Project.md` 确定。命令的目标、分支、文件结构和停止点仍逐条执行。
-- `copilotRemember.ps1` 可用 `vczh remember` 跨平台执行相同的“复制到时间戳 Learning 目录，然后重置当前调查标记”；`--earliest N` 对应 `-Earliest N`。归档没有自动提炼、永久保留或按任务 ID 计数。重复快照清理和消费后删除按 `refine.prompt.md` 执行。
-- 原文要求的工作文档由 `init` 初建，已有正文保留。共享原文由插件版本维护，项目源码、任务、学习、知识和自定义规范由项目维护。Coda 的贡献机制代替 `copilotInit.ps1` 复制并覆盖其他 Agent 的全局入口，避免把插件自身注入到无关会话；原同步脚本也完整保存在 upstream 可供核对。
-- 同一工作区使用固定任务文件，Coda 请求串行执行。request JSON 只记最新消息、命令、run ID 和状态，不替代调查内容、不规定额外的证据格式或审查轮数。上一版 `.github/vczh` 的资料保留为旧版资料供浏览，不自动迁移或冒充原文格式。
-- 原文的 commit/push 检查点、逐 Task 提交、实验后保存调查文档并回退其余实验改动、重放最佳方案、rebase 后重测都保留。Git 操作前核对当前改动的所有权；必要时先在隔离工作树准备调查基线，使原文的实验回退不会丢失用户并行修改。明确的用户指示与宿主权限仍优先；如本次明确要求不推送，在记录中写明这项覆盖，不能把不推送做成协议默认值。
-- 上游文本中的拼写、重复章节、截断句和相互张力原样保留。不要自行把它们“优化”为新的硬性政策；按完整上下文和用户显式指示处理，发现无法消解的实质冲突才提出。
+- `REPO-ROOT` 指 `inputs.root`，`Project.md` 在根目录，任务在 `.github/TaskLogs`，知识库和 Learning 直接在 `.github`。自动脚本仅分发命令与记录 Coda 状态。
+- 共享 `.github/prompts/<mode>.prompt.md` 对应 `vczh protocol <mode>`；`vczh source prompts/<mode>.prompt.md` 可单独阅读。无须把插件文件再复制到项目。项目自己的 AGENTS、Project 与已有指令仍须读取。
+- 内置规范只有 `general` 和 `cpp`，按维度、主题、条目组织。用 `vczh prompt list` 查看，再用 `vczh prompt show <id>` 阅读；`--topic <主题id>` 可单独查看主题。不得从旧版规范包或外部上游文件重新自动加载已移除的规范。
+- 原库 API、构建器、调试器、编译目标、目录和发布工具的具体要求由当前项目自己的 `Project.md`、AGENTS、Guidelines 等提供。不得假定其他项目具备原作者的库或工具环境。
+- `vczh remember` 对应原文的“复制到时间戳 Learning 目录，再重置当前调查标记”；`--earliest N` 列出最早归档。归档没有自动提炼、永久保留或按任务 ID 计数；去重与消费后删除按 refine 协议执行。
+- `init` 仅补缺失工作文档，保留已有正文。共享协议和内置规范由插件开发者维护；项目源码、任务、学习、知识和自定义规范由项目维护。Coda 的贡献机制代替覆盖其他 Agent 全局入口的同步脚本。
+- 同一工作区使用固定任务文件，请求串行执行。request JSON 仅记消息、命令、run ID 和状态，不替代调查内容、不规定额外证据格式或审查轮数。旧版 `.github/vczh` 资料仍可浏览。
+- 保留原文 commit/push、逐 Task 提交、实验后保存调查文档并回退实验改动、重放最佳方案、rebase 后重测。Git 操作前核对改动所有权；必要时先在隔离工作树准备调查基线，避免回退丢失用户并行修改。用户明确指示与宿主权限优先；本次覆盖应记入工作记录。
+- 保留范围内的原文拼写、重复、截断句和相互张力不自行改写为新政策。根据完整上下文与用户指示执行；实质冲突无法消解时再提出。

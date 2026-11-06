@@ -1,7 +1,7 @@
 # Review Task for Investigation
 
-- Check out `Accessing Task Documents`, `(Windows Specific) Accessing Script Files`, and `(Linux Specific) Accessing Script Files` in `REPO-ROOT/.github/copilot-instructions.md` for context about mentioned `*.md`, `*.ps1` and `*.sh` files.
-- All `*.md`, `*.ps1` and `*.sh` files should exist; you should not create any new files unless explicitly instructed.
+- Check out `Accessing Task Documents` in `REPO-ROOT/.github/copilot-instructions.md` for task documents, and `REPO-ROOT/Project.md` for this project's tools.
+- All referenced task documents and project scripts should exist; you should not create any new files unless explicitly instructed.
 - Following `Leveraging the Knowledge Base` in `REPO-ROOT/.github/copilot-instructions.md`, find the knowledge and documents for this project in `REPO-ROOT/.github/KnowledgeBase/Index.md`.
 
 ## Goal and Constraints
@@ -78,7 +78,7 @@ I will put my reply here
     - Potential synchronization and multi-threading issues.
     - Potential performance issues.
   - You should de-ambiguous proactively, if there is an obvious best answer to the review comment, you should also propose your solution:
-    - You can find my preference in `REPO-ROOT/.github/Guidelines/Coding.md`.
+    - You can find my preference in `vczh prompt show general` and, for C++ work, `vczh prompt show cpp`.
   - Review comments should only be created when you can't find any reasonable solution to the issue, or can't make any reasonable decision because of the ambiguity.
     - If anything in the the task is incorrect, only make changes for typos and grammar mistakes, fact mistakes should be put in `## DETAILS`, or when it causes unresolvable ambiguity, put it in `## REVIEW COMMENTS`.
     - If there are ambiguity or missing details, but you are able to figure it out, just add them to `## DETAILS` or `## VERIFICATION` section of the task file, instead of putting a review comment.

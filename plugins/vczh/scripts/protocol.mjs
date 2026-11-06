@@ -10,5 +10,5 @@ export function protocol(mode) {
   requireValue(modes.includes(mode), '未知原文协议；使用 ask|investigate|review|refine|kb|kb-refine|direct');
   const adapter = readFileSync(join(plugin, 'skills/vczh/references/adapter.md'), 'utf8');
   const files = ['AGENTS.md', 'copilot-instructions.md', ...(mode === 'direct' ? [] : [`prompts/${mode}.prompt.md`])];
-  return `${adapter}\n\n${files.map(path => `\n---\n\n原文文件：${path}\n\n${sourceText(path)}`).join('\n')}`;
+  return `${adapter}\n\n${files.map(path => `\n---\n\n协议文件：${path}（已移除原项目与工具链前提；改动见 upstream/manifest.json）\n\n${sourceText(path)}`).join('\n')}`;
 }

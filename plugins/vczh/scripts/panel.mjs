@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { config, hash, json, managed, requireValue, save } from './store.mjs';
+import { config, hash, json, managed, requireValue, retiredBuiltinIds, save } from './store.mjs';
 import { builtinPrompts, prompts, renderPrompt } from './prompts.mjs';
 import { documents, freshness, legacyDocuments } from './knowledge.mjs';
 
@@ -17,6 +17,7 @@ function validateView(view) {
   if (view.key) requireValue(/^[a-f0-9]{64}$/.test(view.key), '项目标识无效');
   if (view.kind) requireValue(Object.hasOwn(names, view.kind), '内容类型无效');
   if (view.id) requireValue(/^[a-z0-9][a-z0-9-]{0,79}$/.test(view.id), '条目标识无效');
+  if (view.topic) requireValue(/^[a-z0-9][a-z0-9-]{0,79}$/.test(view.topic), '主题标识无效');
   return view;
 }
 function registered(state) {
@@ -54,11 +55,23 @@ function pages(items, list, view, size = 5) {
 }
 export function panel(state, view = { view: 'overview' }) {
   validateView(view);
+  // An installed 2.0 panel can retain a now-removed builtin selection.
+  if (view.view === 'builtin' && retiredBuiltinIds.includes(view.id)) view = { view: 'overview' };
   const items = [card('vczh', [button('项目总览', { view: 'overview' }), ...builtinPrompts().map(p => button(p.title, { view: 'builtin', id: p.id }))])];
   if (view.view === 'builtin') {
     const p = builtinPrompts().find(p => p.id === view.id); requireValue(p, '内置规范不存在');
-    const chunks = renderPrompt(p).match(/[\s\S]{1,2200}/gu) ?? [];
-    items.push(card(p.title, pages(items, chunks, view, 1).map(markdown), '内置 · 由插件开发者维护'));
+    if (!view.topic) {
+      items.push(card(p.title, [markdown(p.appliesTo), stat('主题 / 条目', `${p.topics.length} / ${p.sections.length}`)], '内置 · 由插件开发者维护'));
+      for (const topic of pages(items, p.topics, view)) items.push(card(topic.title, [
+        markdown(p.sections.filter(s => s.topic === topic.id).map(s => `- ${s.title}`).join('\n')),
+        button('阅读规范', { view: 'builtin', id: p.id, topic: topic.id }),
+      ]));
+    } else {
+      const topic = p.topics.find(t => t.id === view.topic); requireValue(topic, '主题不存在');
+      items.push(button('返回主题目录', { view: 'builtin', id: p.id }));
+      const chunks = renderPrompt(p, topic.id).match(/[\s\S]{1,2200}/gu) ?? [];
+      items.push(card(topic.title, pages(items, chunks, view, 1).map(markdown), `${p.title} · 原文片段与来源`));
+    }
     return { items };
   }
   const projects = registered(state);

@@ -14,12 +14,12 @@ vczh route --file <最新请求> [--intent coding|research|maintenance] [--task-
 vczh request start --file <最新请求> [--intent ...] [--task-file ...]
 vczh request show <id>
 vczh remember [--earliest <数量>]
-vczh prompt list|show <id>|put --file <json>|enable <id>|disable <id>|template <新id>
+vczh prompt list|show <id> [--topic <主题id>]|put --file <json>|enable <id>|disable <id>|template <新id>
 vczh kb list|show <id> [--kind knowledge|learning|archives|legacy]
 所有项目命令支持 --root。知识和学习文件使用原生 Markdown，由对应原文 prompt 编辑。`;
 try {
   const { positionals: p, values: v } = parseArgs({ allowPositionals: true,
-    options: Object.fromEntries(['root', 'file', 'kind', 'intent', 'task-file', 'earliest'].map(k => [k, { type: 'string' }])) });
+    options: Object.fromEntries(['root', 'file', 'kind', 'intent', 'task-file', 'earliest', 'topic'].map(k => [k, { type: 'string' }])) });
   let output;
   if (!p.length || p[0] === 'help') output = help;
   else if (p[0] === 'protocol') output = protocol(p[1]);
@@ -32,8 +32,8 @@ try {
     else {
       config(root); register(root);
       if (p[0] === 'prompt') {
-        if (p[1] === 'list') output = prompts(root).map(({ id, title, scope, origin, enabled, appliesTo }) => ({ id, title, scope, origin, enabled, appliesTo }));
-        else if (p[1] === 'show') { const found = prompts(root).find(r => r.id === p[2]); requireValue(found, '规范不存在'); output = renderPrompt(found); }
+        if (p[1] === 'list') output = prompts(root).map(({ id, title, scope, origin, enabled, appliesTo, topics }) => ({ id, title, scope, origin, enabled, appliesTo, topics }));
+        else if (p[1] === 'show') { const found = prompts(root).find(r => r.id === p[2]); requireValue(found, '规范不存在'); output = renderPrompt(found, v.topic); }
         else if (p[1] === 'put') output = lock(root, 'prompts', () => putPrompt(root, json(v.file)));
         else if (['enable', 'disable'].includes(p[1])) output = lock(root, 'prompts', () => enablePrompt(root, p[2], p[1] === 'enable'));
       } else if (p[0] === 'kb') {

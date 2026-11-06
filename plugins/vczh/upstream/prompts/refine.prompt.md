@@ -1,7 +1,7 @@
 # Refine
 
-- Check out `Accessing Task Documents`, `(Windows Specific) Accessing Script Files`, and `(Linux Specific) Accessing Script Files` in `REPO-ROOT/.github/copilot-instructions.md` for context about mentioned `*.md`, `*.ps1` and `*.sh` files.
-- All `*.md`, `*.ps1` and `*.sh` files should exist; you should not create any new files unless explicitly instructed.
+- Check out `Accessing Task Documents` in `REPO-ROOT/.github/copilot-instructions.md` for task documents, and `REPO-ROOT/Project.md` for this project's tools.
+- All referenced task documents and project scripts should exist; you should not create any new files unless explicitly instructed.
 - Following `Leveraging the Knowledge Base` in `REPO-ROOT/.github/copilot-instructions.md`, find the knowledge and documents for this project in `REPO-ROOT/.github/KnowledgeBase/Index.md`.
 
 ## Goal and Constraints
@@ -29,7 +29,7 @@
   - Sometimes the same document will be backed up multiple times with new content increasing as instructed in the original request.
   - You should identify them, and leave the latest one while deleting earlier ones. The kept document should contain the most content.
   - Stop cleaning up at the first group of documents. Or when the second earilest document has a different task than the earliest one, you will have nothing to delete and just stops the cleaning up.
-  - You can use `copilotRemember.ps1 -Earliest COUNT` to help you identify the earliest COUNT backup folders.
+  - You can use `vczh remember --earliest COUNT` to help you identify the earliest COUNT backup folders.
 - Secondly, pick the earliest backup folder after cleaning up and continue.
 
 ## Step 2. Read All Documents

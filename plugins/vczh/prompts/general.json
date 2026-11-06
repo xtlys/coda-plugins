@@ -1,169 +1,449 @@
 {
-  "title": "通用工程规范",
-  "scope": "general",
-  "appliesTo": "与语言无关的工程判断。原文中的例子、适用前提和例外一并保留。",
   "schemaVersion": 2,
   "id": "general",
+  "title": "通用规范",
+  "scope": "general",
+  "appliesTo": "语言无关的工程实践；具体条目保留原文前提。",
+  "topics": [
+    {
+      "id": "correctness",
+      "title": "正确性与错误处理"
+    },
+    {
+      "id": "abstraction",
+      "title": "DRY 与抽象"
+    },
+    {
+      "id": "dependencies",
+      "title": "依赖边界与上游修复"
+    },
+    {
+      "id": "interfaces",
+      "title": "接口、组合与所有权"
+    },
+    {
+      "id": "values",
+      "title": "值语义与有效性"
+    },
+    {
+      "id": "concurrency",
+      "title": "并发与异步"
+    },
+    {
+      "id": "portability",
+      "title": "跨平台设计"
+    },
+    {
+      "id": "verification",
+      "title": "调试、验证与故障处理"
+    },
+    {
+      "id": "mvvm",
+      "title": "MVVM 与可测试性"
+    }
+  ],
   "sections": [
     {
-      "id": "building-34",
-      "title": "构建结果的事实来源",
-      "context": "保留原文适用条件。",
-      "source": {
-        "path": "Guidelines/Building.md",
-        "start": 34,
-        "end": 34
-      }
+      "id": "crash-early",
+      "topic": "correctness",
+      "title": "尽早暴露错误",
+      "context": "语言无关的工程偏好。",
+      "body": "- I am a fan of crash early. When something should happen, it should just happen, do not play a game like \"what if it is not the case\" and silently covers the issue. One example is that, if an object should not be null, then we should just use it, if a nullable object should not be null, we should just cast it. No test is performed in this case, using it will crash if it is null, and we know there is a problem. Fix the actual problem instead of doing \"error tolerance\".",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 8,
+          "end": 8
+        }
+      ],
+      "sha256": "dcf6ec974cb40de6cde1f657b9b8bc4e5eb8ffec853dbc801fcf2bd33827454f"
     },
     {
-      "id": "coding-multithreading-1",
-      "title": "线程安全的范围",
-      "context": "保留原文适用条件。",
-      "source": {
-        "path": "Guidelines/Coding_MultiThreading.md",
-        "start": 1,
-        "end": 3
-      }
+      "id": "correctness-first",
+      "topic": "correctness",
+      "title": "静态检查、失败契约与异常恢复",
+      "context": "语言无关的工程偏好。",
+      "body": "- Unless explicitly instructed:\n  - Prefer static analyzing (including ultilizing the type system, or static assertions, etc) over dynamic/runtime assertion.\n  - Prefer correctness over stability.\n    - Prefer crashing early over recovery.\n    - Crashing expose issues immediately, if something can be fixed and made correctly, there is no need to care about what to do when it fails unexpectedly.\n    - Expected failures should be part of the signature, when the type system cannot represents expected failures, comments are needed.\n  - Handle exceptions only when recovery is practical. DO NOT consume exceptions silently.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 21,
+          "end": 27
+        }
+      ],
+      "sha256": "14a0bed1f69954d9eb8472e3d61e8c4380d14b9c566229a2f67cab8989ae0fe9"
     },
     {
-      "id": "coding-multithreading-14",
-      "title": "无锁方案的复杂度",
-      "context": "保留原文适用条件。",
-      "source": {
-        "path": "Guidelines/Coding_MultiThreading.md",
-        "start": 14,
-        "end": 14
-      }
+      "id": "dry",
+      "topic": "abstraction",
+      "title": "避免重复信息，先复用已有实现",
+      "context": "保留 DRY 原则及 AST 抽取条件；移除依赖具体库的构造示例。",
+      "body": "- I am a fan of **DO NOT REPEAT YOURSELF (DRY)**.\n  - DRY focus on not repeating information in source code. For example, compiler always do name mangling, but name mangling is complex. If you implementaion the mangling in two different places, you repeat the information twice. Therefore a function for such thing is always needed.\n  - DRY does not focus on not repeating some code.\n    - But if building an AST requires significantly more lines of code, extracting functions for the work is preferred.\n  - DRY requires finding if a feature has already been implemented somewhere else before implementing it. avoiding massive duplication.\n    - If the existing implementation is not sharable, refactoring is preferred.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 9,
+          "end": 14,
+          "edited": true
+        }
+      ],
+      "sha256": "3f2cc7807617339bb4de18009e9d52cdf333cdc49c379d7ec52e9c60ca0e6844"
     },
     {
-      "id": "coding-multithreading-17",
+      "id": "code-generation",
+      "topic": "abstraction",
+      "title": "代码生成的维护成本",
+      "context": "语言无关的工程偏好。",
+      "body": "- Unless explicitly instructed, do not invent your own code generator as part of the committed solution. It adds more technical debt in maintenance.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 15,
+          "end": 15
+        }
+      ],
+      "sha256": "2be19ca223c023c63f5c544e49ec377f72520ddc0ad24a6cce64c59724a9c077"
+    },
+    {
+      "id": "abstraction",
+      "topic": "abstraction",
+      "title": "抽象应带来实际收益",
+      "context": "语言无关的工程偏好。",
+      "body": "- When it is not explicltly instructed, be conservative on creating new layers of abstractions:\n  - It should bring actual benefits, including better separation of ownership and dependencies, allowing needed extensibility.\n  - Extraction of common code would also be a good reason, when it doesn't fragmentize the code. I am not a fan of big amounts of small functions.\n  - Extractin of functions/classes are welcome, when there are large pieces of duplicated code, or when the same logic is duplicated >= 3 times.\n  - Extraction of common interfaces (aka abstract classes in C++) are welcome, when the details of implementation does not really affect how algorithms and tools are built around the concept.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 16,
+          "end": 20
+        }
+      ],
+      "sha256": "905a4ef2217039fad8869f7b56b0b3f074c8999fa931132183b1830951dfede8"
+    },
+    {
+      "id": "upstream",
+      "topic": "dependencies",
+      "title": "修复根因并保持依赖边界",
+      "context": "原文以有单元测试覆盖为前提讨论破坏性变更；不能脱离该上下文。",
+      "body": "This section is a high level philosophy of trade-offs during making decision of where to fix the code.\nIt looks amgibuous, that actually means you are expected to consider the context of each issues you are facing to.\n\n- Always fix the bug at its root cause.\n  - If you find any API that doesn't work, fix instead of making a replacement. Even when the API is in an upstream repo, prefer fixing in the upstream repo and releasing it to the current repo.\n- DO NOT concern about making breaking change.\n  - The project is well covered by unit test, any unexpecting breaking change is highly possibly to be cought.\n  - If such breaking change is intented, unit test could help you perform complete refactoring.\n  - If an API design does not fit the requirement or contract, just change it.\n- Interface design could have been wrong, DO NOT implement twisted logic just to finish the current task while fitting the wrong design.\n- But DO NOT leaks information from downstream to upstream repos.\n  - Each upstream repo has its own scope, contract, policy, strategy, etc.\n  - Each upstream repo releases libraries that is supposed to serve broader purposes.\n  - Keep interfaces between repos clean.\n  - If downstream repos need to need to do something depending on upstream repos' non-public information:\n    - If the issue is the upstream repo itself, fix the upstream repo.\n    - Otherwise, expose informations elegantly so that downstream repos could process and react to them properly.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 31,
+          "end": 47
+        }
+      ],
+      "sha256": "0626ec3cb8dcd739e4b3ca4bc33d76ac59e4b5d8b005247b1ed320df5a442d60"
+    },
+    {
+      "id": "interfaces",
+      "topic": "interfaces",
+      "title": "继承、组合、契约和所有权",
+      "context": "保留作者对 LSP 的原始表述，不将其改写为教材定义。",
+      "body": "- I don't have strong preference of which is bettern between inheritance and composition, choose the best one in the context.\n- When doing inheritance, the interface design should follow LSP (Liskov Substitution Principle), that is basically:\n  - Wherever accepts a type, it means all sub types could be used.\n  - Any sub type should not loosen the contract, stricker contract is allowed/encouraged.\n- I prefer interface oriented programming.\n  - Interface is a general concept, I an not forcing creating abstract classes.\n  - Interface means contract. Such contract could be forced by the type system, or described in the class/method level comments on signatures.\n- Ownership should be clear.\n  - For a group of coupled objects without ownership, it is also acceptable to create one object owning all sub objects, to control their lifecycle in an easy way.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 156,
+          "end": 163
+        },
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 169,
+          "end": 169
+        }
+      ],
+      "sha256": "809db045d5bfe35c522c64711f64dc01269ec8b244314b1eac3a4974bce8a061"
+    },
+    {
+      "id": "ioc",
+      "topic": "interfaces",
+      "title": "控制反转与类型分派",
+      "context": "语言无关的工程偏好。",
+      "body": "- Prefer Inversion of Control (IoC) and other design patterns, over trivial virtual functions, over switch-case on types, over if-else on types.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 134,
+          "end": 134
+        }
+      ],
+      "sha256": "1f1bc3e6b6e433a3d1714a8bfb59c184cfc9190d7dc117a5aea2b2b481c05ec4"
+    },
+    {
+      "id": "combinators",
+      "topic": "interfaces",
+      "title": "递归组合与流畅接口",
+      "context": "保留组合原则；移除三个原库类型示例。",
+      "body": "- Combinator oriented programming is very common in this project. that is basically:\n  - Design an interface that is supposed to build up large/complex strategy or logic recursively.\n  - Such interface should satisfy LSP.\n- A good interface maintains good shape in components forming up a recursive algorithms by cutting in a good place, therefore making it simple, and easy to implement.\n- A good interface letting users building recursive algorithms with fluent code.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 173,
+          "end": 177,
+          "edited": true
+        }
+      ],
+      "sha256": "961bde91c87337083ccebdaf90baa37efb01b97bcf71006324b977f5546bb78b"
+    },
+    {
+      "id": "availability",
+      "topic": "values",
+      "title": "值的有效性与额外状态",
+      "context": "仅保留与语言、库无关的值语义；指针空值规则单列在 C++。",
+      "body": "- To attach availability semantic to a value:\n  - If any number is expected to be valid only when non-negative, you could use `-1` to represent invalid value.\n  - Only when there is no other choice, use an extra `bool` variable.\n    - This could happen when \"null\" semantic is valid.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 90,
+          "end": 91
+        },
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 95,
+          "end": 96
+        }
+      ],
+      "sha256": "a7dcacc6cbc38ce1eebb4ca95b46f6e3564f79e3afef7b61235d850a315b3367"
+    },
+    {
+      "id": "thread-safety",
+      "topic": "concurrency",
+      "title": "避免过度线程安全设计",
+      "context": "语言无关的工程偏好。",
+      "body": "- Most of the code do not require thread safety, DO NOT over engineering.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding_MultiThreading.md",
+          "start": 3,
+          "end": 3
+        }
+      ],
+      "sha256": "9f5e9f991a6cc5737dfd1eeaeedf65568852b00cf214e18acc62599884dc3793"
+    },
+    {
+      "id": "lock-free",
+      "topic": "concurrency",
+      "title": "保持无锁逻辑简单",
+      "context": "语言无关的工程偏好。",
+      "body": "- Prefer lock free construction only when the code would be simple, DO NOT involve complex lock free trick unless explicitly required.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding_MultiThreading.md",
+          "start": 14,
+          "end": 14
+        }
+      ],
+      "sha256": "5a1a9d1a2a47c4687a2fac3e51d5ad718db6e49a9bb218fad5c0fbf5973c63f3"
+    },
+    {
+      "id": "async",
+      "topic": "concurrency",
       "title": "异步调度与轮询",
-      "context": "保留原文适用条件。",
-      "source": {
-        "path": "Guidelines/Coding_MultiThreading.md",
-        "start": 17,
-        "end": 18
-      }
+      "context": "语言无关的工程偏好。",
+      "body": "- Avoid polling at all cost, I strongly prefer scheduling in async way.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding_MultiThreading.md",
+          "start": 17,
+          "end": 17
+        }
+      ],
+      "sha256": "494a524b7be1fd52a532e1c09d4a94f101a6529e11b9411cf3073549921c293c"
     },
     {
-      "id": "coding-1",
-      "title": "基本工程偏好",
-      "context": "任何语言；保留原文中的具体示例。",
-      "source": {
-        "path": "Guidelines/Coding.md",
-        "start": 1,
-        "end": 28
-      }
+      "id": "platform-api",
+      "topic": "portability",
+      "title": "平台能力与公共实现的取舍",
+      "context": "语言无关的工程偏好。",
+      "body": "- If platform specific API could be used, avoid hard-coding a table.\n- If not all OS provides enough platform specific API for a requirement:\n  - Use platform specific API when the quality and performance would be better for that platform.\n    - Except that the calulation is so tiny and simple, then it is fine to do a cross-platform solution instead.\n  - Implement the solution for the rest of the platform.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 201,
+          "end": 205
+        }
+      ],
+      "sha256": "5cec2b9eb36a81cf63b3ee7a6a734f89ddd0ea8c3c661759a0c278b0b27fb49b"
     },
     {
-      "id": "coding-29",
-      "title": "修复上游与破坏性变更",
-      "context": "保留原文的测试覆盖假设及跨仓所有权边界。",
-      "source": {
-        "path": "Guidelines/Coding.md",
-        "start": 29,
-        "end": 48
-      }
+      "id": "portable-locks",
+      "topic": "portability",
+      "title": "同步方法的跨平台取舍",
+      "context": "原文 other locks 指自旋锁以外的锁；保留平台性能例外，移除原库线程池特例。",
+      "body": "- When using other locks, try your best to only use methods that available to all platforms.\n  - Write cross platform code when it is performance optimal for all platforms.\n  - If Windows specific methods could make Windows implementation much better, then you are allowed to implement them in different ways.\n- Avoid using any platform specific methods.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding_MultiThreading.md",
+          "start": 10,
+          "end": 12
+        },
+        {
+          "path": "Guidelines/Coding_MultiThreading.md",
+          "start": 21,
+          "end": 21
+        }
+      ],
+      "sha256": "305bfc23237ee0bf90b0a5b8d3aabe2082d7c68cef4b44cb19099981c23a1f86"
     },
     {
-      "id": "coding-154",
-      "title": "继承、组合与接口契约",
-      "context": "任何语言；LSP 的表述按上游原文保留。",
-      "source": {
-        "path": "Guidelines/Coding.md",
-        "start": 154,
-        "end": 162
-      }
+      "id": "debug-evidence",
+      "topic": "verification",
+      "title": "崩溃与猜测失败后调试",
+      "context": "语言无关的工程偏好。",
+      "body": "- You are recommended to debug the compiled binary: \n  - Once it crashes.\n  - When after one attemp of failed guessing to fix.\n  - But respect to `Project.md` first.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 4,
+          "end": 7
+        }
+      ],
+      "sha256": "fb56686534990dd2a00082834b63c764b0826226c83c69a2cd9f1fbeab7574fe"
     },
     {
-      "id": "coding-171",
-      "title": "组合子设计",
-      "context": "语言无关的设计原则；原文用 Vlpp 和 GacUI 作例子。",
-      "source": {
-        "path": "Guidelines/Coding.md",
-        "start": 171,
-        "end": 178
-      }
+      "id": "debug-observation",
+      "topic": "verification",
+      "title": "用调试补足信息并约束输出",
+      "context": "语言无关的工程偏好。",
+      "body": "Debugging can be useful when you lack necessary information.\nDo not leave unbounded debugger output flowing through the terminal. If output repeats continuously, interrupt execution immediately and configure the relevant exception or output filter before continuing.",
+      "sources": [
+        {
+          "path": "Guidelines/Debugging.md",
+          "start": 9,
+          "end": 9
+        },
+        {
+          "path": "Guidelines/Debugging.md",
+          "start": 32,
+          "end": 32
+        }
+      ],
+      "sha256": "08af1e6b8f493f0498404439df42f2464a842fc2b0e08f77ff6f2ee5e8018275"
     },
     {
-      "id": "coding-201",
-      "title": "平台 API 与共享实现取舍",
-      "context": "跨平台工程。",
-      "source": {
-        "path": "Guidelines/Coding.md",
-        "start": 201,
-        "end": 206
-      }
+      "id": "unstable-bugs",
+      "topic": "verification",
+      "title": "内存泄漏与不稳定问题",
+      "context": "25 次是作者的工程偏好，保留原文适用表述。",
+      "body": "- Memory leaks and unstable bugs will always be the highest priority issue.\n- Detecting unstable bugs:\n  - One of a typical example would be about dangling pointers.\n  - When experiencing bugs that can't repro in every test run, do not easily treat it as a non-issue.\n  - The standard way in this project would be to repeat the test 25 times, and only treat it as a non-issue only if observing consecutive 25 successful runs.\n- Whenever we see such issues:\n  - If it is a new issue due to completing the current task, you have to address that as part of the current task.\n  - If it is an existing issue, you still have to fix the issue along with the current task. And when the current task requires commit and push, make a separate commit to fix the issue, and push it together.",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 209,
+          "end": 209
+        },
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 216,
+          "end": 219
+        },
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 221,
+          "end": 223
+        }
+      ],
+      "sha256": "e7ec0428e8abbaf7a09309f92f7b92cb9686415b2be45e7c7bf1b1fe80416f8b"
     },
     {
-      "id": "coding-207",
-      "title": "泄漏与不稳定问题优先级",
-      "context": "保留原文的最高优先级要求。",
-      "source": {
-        "path": "Guidelines/Coding.md",
-        "start": 207,
-        "end": 209
-      }
+      "id": "unstable-repeat",
+      "topic": "verification",
+      "title": "不稳定问题的重复原文段落",
+      "context": "原文重复段落及末尾截断句照录；不据此补造新的规则。",
+      "body": "- One of a typical example would be about dangling pointers.\n- When experiencing bugs that can't repro in every test run, do not easily treat it as non-issue.\n- The standard way in this project would be to repeat the test 25 times, and only define non-issue as observing consecutive 25 successful runs.\n- If we can't the consecutive 25 successful runs:\n  - Such issue would be",
+      "sources": [
+        {
+          "path": "Guidelines/Coding.md",
+          "start": 227,
+          "end": 231
+        }
+      ],
+      "sha256": "6c477a8fb66e2e6d0abf3653ab395ee1e7d959b75646156dd1931e247792c2f0"
     },
     {
-      "id": "coding-216",
-      "title": "连续 25 次成功的验证标准",
-      "context": "不稳定问题；原文以悬垂指针作例子。",
-      "source": {
-        "path": "Guidelines/Coding.md",
-        "start": 216,
-        "end": 219
-      }
+      "id": "compiler-output",
+      "topic": "verification",
+      "title": "以编译器实际输出为准",
+      "context": "语言无关的工程偏好。",
+      "body": "- The only source of truth is the raw output of the compiler.",
+      "sources": [
+        {
+          "path": "Guidelines/Building.md",
+          "start": 34,
+          "end": 34
+        }
+      ],
+      "sha256": "3882e3fa2206edf312778f91f440435bbe32a8e479d8cf255d12352514dd731a"
     },
     {
-      "id": "coding-221",
-      "title": "已观察问题的修复与提交",
-      "context": "当前任务发现的新增或既有泄漏、不稳定问题。",
-      "source": {
-        "path": "Guidelines/Coding.md",
-        "start": 221,
-        "end": 224
-      }
+      "id": "test-output",
+      "topic": "verification",
+      "title": "以测试实际输出为准",
+      "context": "语言无关的工程偏好。",
+      "body": "- The only source of truth is the raw output of the unit test process.",
+      "sources": [
+        {
+          "path": "Guidelines/Running-UnitTest.md",
+          "start": 58,
+          "end": 58
+        }
+      ],
+      "sha256": "d51fca9d3d243733ad31dc35bfafd92c006774ecd1c83c2adf70655c93936d09"
     },
     {
-      "id": "coding-225",
-      "title": "不稳定问题：原文重复段落",
-      "context": "上游本段末句截断；保持原样，不推测补写。",
-      "source": {
-        "path": "Guidelines/Coding.md",
-        "start": 225,
-        "end": 232
-      }
+      "id": "test-wait",
+      "topic": "verification",
+      "title": "观察异步测试的实际进展",
+      "context": "语言无关的工程偏好。",
+      "body": "**IMPORTANT**: Always run it asynchronously, read terminal output and its return code.\nCompiled binary might have a bug causing it to trap in a dead loop. DO NOT just wait for it to complete.\nIf this seems suspicious, you are recommended to kill the process and run it again with the debugger.",
+      "sources": [
+        {
+          "path": "Guidelines/Running-UnitTest.md",
+          "start": 95,
+          "end": 97
+        }
+      ],
+      "sha256": "95c9476f8bb3005d2f5ae91e987a653b868fd87c6bf52435af1d1abe72050d53"
     },
     {
-      "id": "running-cli-50",
-      "title": "观察运行中与阻塞的 CLI",
-      "context": "保留原文适用条件。",
-      "source": {
-        "path": "Guidelines/Running-CLI.md",
-        "start": 50,
-        "end": 52
-      }
+      "id": "cli-wait",
+      "topic": "verification",
+      "title": "观察异步命令的实际进展",
+      "context": "语言无关的工程偏好。",
+      "body": "**IMPORTANT**: Always run it asynchronously, read terminal output and its return code.\nCompiled binary might have a bug causing it to trap in a dead loop. DO NOT just wait for it to complete.\nIf this seems suspicious, you are recommended to kill the process and run it again with the debugger.",
+      "sources": [
+        {
+          "path": "Guidelines/Running-CLI.md",
+          "start": 50,
+          "end": 52
+        }
+      ],
+      "sha256": "95c9476f8bb3005d2f5ae91e987a653b868fd87c6bf52435af1d1abe72050d53"
     },
     {
-      "id": "running-unittest-58",
-      "title": "测试结果的事实来源",
-      "context": "保留原文适用条件。",
-      "source": {
-        "path": "Guidelines/Running-UnitTest.md",
-        "start": 58,
-        "end": 58
-      }
-    },
-    {
-      "id": "running-unittest-95",
-      "title": "观察运行中与阻塞的测试",
-      "context": "保留原文适用条件。",
-      "source": {
-        "path": "Guidelines/Running-UnitTest.md",
-        "start": 95,
-        "end": 97
-      }
+      "id": "mvvm",
+      "topic": "mvvm",
+      "title": "视图职责、逻辑与可测试性",
+      "context": "保留独立于 UI 框架的 MVVM 原则；XML、绑定语法和库对象生命周期不在本条内。",
+      "body": "- When using view model and data binding with a UI:\n  - Move actual logic into view model implementation.\n  - This makes the UI simple enough as well as keeping the view model testable.\n    - In MVVM (model-view-viewmodel), view could be UI and unit test.\n    - Multiple views connecting to the same view model is a valid design, e.g. CLI application as a view.\n- It is recommended to define interfaces for view models.",
+      "sources": [
+        {
+          "path": "Guidelines/GacUIMVVM.md",
+          "start": 3,
+          "end": 3
+        },
+        {
+          "path": "Guidelines/GacUIMVVM.md",
+          "start": 5,
+          "end": 8
+        },
+        {
+          "path": "Guidelines/GacUIMVVM.md",
+          "start": 10,
+          "end": 10
+        }
+      ],
+      "sha256": "c91bd0e590c24b45da0645f08e0ac8655bfab50f8bd2e4e7930960a4fa3e1783"
     }
   ]
 }

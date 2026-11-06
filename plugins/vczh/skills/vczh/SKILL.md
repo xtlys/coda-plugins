@@ -1,18 +1,18 @@
 ---
 name: vczh
-description: 在项目中采用 vczh 工作流时，按原文执行 ask、investigate、review、refine、kb 与 kb refine；管理项目知识和按通用、语言分类的原文规范。解释或审查这个插件本身不会启动开发流程。
+description: 在项目中采用 vczh 工作流时，执行 ask、investigate、review、refine、kb 与 kb refine；管理项目知识和按通用、C++ 维度及主题整理的规范原文。解释或审查这个插件本身不会启动开发流程。
 ---
 
 # vczh 原文工作流
 
-采用本协议后，按最新请求的首词路由，读取并执行完整上游 prompt。规范只分类，不概括、不改变强弱、例外或正反例。上游固定版本和 SHA-256 记录于插件的 `upstream/manifest.json`。
+采用本协议后，按最新请求的首词路由，读取并执行对应协议。工作流保留上游步骤，仅删除原项目和固定工具链前提、替换 Coda 入口。内置规范只保留通用与 C++，正文按原文片段提取，专属示例删除处有标记；保留范围内不概括、不改变强弱或例外。固定版本、SHA-256 与协议改动记录于插件的 `upstream/manifest.json`。
 
 ## 先读取上下文
 
 1. 读取当前项目的 `AGENTS.md`、`Project.md`、已有 `.github/copilot-instructions.md`。
 2. 执行 `vczh protocol adapter`，了解 Coda 的入口、路径及平台对应。
 3. 首次为项目设置工作流时用 `vczh init` 初始化原文任务/知识文档；已有内容保留。补全根目录 `Project.md` 中本项目真实构建、测试、生成物与变更触发规则。已有项目无须重复初始化。尚未初始化的纯分析请求，直接读 `vczh protocol ask` 和已有资料答复，不为问答新建文档。
-4. `vczh prompt list` 后，用 `vczh prompt show <id>` 读取已启用规范。通用规范默认启用；C++ 工作启用并读取 `cpp`；Workflow Script 工作启用并读取 `workflow`；涉及 vczh 原库和工具时启用并读取 `vczh-project`。涉及库专用条目，必须保留其原始适用条件。
+4. `vczh prompt list` 后，用 `vczh prompt show <id>` 读取已启用规范。通用规范默认启用；C++ 工作启用并读取 `cpp`。目录先按维度、再按主题组织；需要复查某个主题时可用 `vczh prompt show <id> --topic <主题id>`。库 API、编译器、构建、测试和调试工具的具体用法读取当前项目自己的约定。
 5. 决策前阅读 `.github/KnowledgeBase/Index.md`，按索引阅读相关 API、设计、手册。编码前还必须读 `.github/KnowledgeBase/Learning.md`、`.github/Learning/Learning_Coding.md`、`.github/Learning/Learning_Testing.md`。不能用一份生成摘要代替这些原文。
 
 ## 首词路由
