@@ -48,7 +48,7 @@ description: 在项目中采用 vczh 工作流时，执行 ask、investigate、r
 
 ## 知识与规范
 
-原文权威位置为根目录 `Project.md`，以及 `.github/TaskLogs`、`.github/Learning`、`.github/KnowledgeBase`。`.github/vczh` 仅保存规范启用配置、自定义规范及 Coda 请求元数据；它不是原文知识库的替代目录。
+原文权威位置为根目录 `Project.md`，以及 `.github/TaskLogs`、`.github/Learning`、`.github/KnowledgeBase`。`.github/vczh` 保存规范启用配置和自定义规范；请求、活动指针和锁保存在每个 Git 工作树的私有元数据目录，不随提交传播。旧版本升级按 [运行态与升级](references/adapter.md#运行态与升级) 处理，不能把提交中的历史请求当作仍在运行。
 
 原文 `copilotRemember.ps1` 的跨平台等价入口为 `vczh remember`；`vczh remember --earliest <数量>` 列出归档。新的 repro 在旧日志不只含标记标题时先归档。refine 根据原文语义判断重复与冲突，不能用 task ID 去重代替计数。
 

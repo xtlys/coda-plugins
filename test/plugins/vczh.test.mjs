@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { panelItems } from '../../check/panel.mjs';
-import { config, hash, init, inside, json, managed, save } from '../../plugins/vczh/scripts/store.mjs';
+import { config, hash, init, inside, json, lock, managed, runtime, save } from '../../plugins/vczh/scripts/store.mjs';
 import { builtinPrompts, enablePrompt, manifest, prompts, promptTemplate, putPrompt, renderPrompt, sourceText, validatePrompt } from '../../plugins/vczh/scripts/prompts.mjs';
 import { backups, documents, legacyDocuments, remember } from '../../plugins/vczh/scripts/knowledge.mjs';
 import { abandonRequest, bindRequest, finishRequest, getRequest, requestGroup, route, startRequest } from '../../plugins/vczh/scripts/requests.mjs';
@@ -31,6 +31,73 @@ function fixture(t) {
 function write(root, path, content) { const file = inside(root, path); mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, content); }
 const logPath = '.github/TaskLogs/Copilot_Investigate.md';
 const investigation = '# !!!INVESTIGATE!!!\n\n# PROBLEM DESCRIPTION\nexact request\n\n# TEST [CONFIRMED]\nobserved\n\n# PROPOSALS\n- No.1 one [CONFIRMED]\n- No.2 two [DENIED]\n';
+const git = (root, ...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+function commit(root, message) {
+  // Commit the staged tree without consulting a developer's identity, signing or hooks.
+  // Fixture commits retain the identity headers already present in their parent commit.
+  const parent = git(root, 'rev-parse', 'HEAD'), tree = git(root, 'write-tree');
+  const identity = git(root, 'cat-file', '-p', parent).split('\n\n')[0].split('\n').filter(line => /^(author|committer) /.test(line)).join('\n');
+  const input = `tree ${tree}\nparent ${parent}\n${identity}\n\n${message}\n`;
+  const sha = execFileSync('git', ['-C', root, 'hash-object', '-t', 'commit', '-w', '--stdin'], { input, encoding: 'utf8' }).trim();
+  git(root, 'update-ref', 'HEAD', sha);
+}
+
+test('committing all changes while running does not carry request ownership into a new checkout', t => {
+  const f = fixture(t), r = startRequest(f.repo, 'investigate continue');
+  bindRequest(f.repo, r.id, 'original');
+  lock(f.repo, 'prompts', () => { git(f.repo, 'add', '-A'); commit(f.repo, 'investigation checkpoint'); });
+  const snapshot = git(f.repo, 'rev-parse', 'HEAD');
+  finishRequest(f.repo, r.id, 'original');
+  const cloned = join(f.dir, 'cloned'), worktree = join(f.dir, 'worktree');
+  git(f.dir, 'clone', '-q', '--shared', f.repo, cloned);
+  git(f.repo, 'worktree', 'add', '-q', '--detach', worktree, snapshot);
+  git(f.repo, 'restore', '--source', snapshot, '--staged', '--worktree', '.');
+  for (const repo of [cloned, worktree, f.repo]) {
+    init(repo);
+    const next = startRequest(repo, 'ask new checkout');
+    assert.equal(bindRequest(repo, next.id, 'next').status, 'running');
+    assert.doesNotMatch(git(repo, 'ls-files', '--', '.github/vczh'), /requests\/|active-request\.json|\/\.[^/]+\.lock/);
+    assert.equal(git(repo, 'status', '--porcelain'), '', 'runtime changes must not dirty tracked project data');
+  }
+});
+
+test('legacy tracked runtime is preserved as ignored history and never adopted by a fresh checkout', t => {
+  const f = fixture(t), old = startRequest(f.repo, 'investigate continue');
+  const binding = bindRequest(f.repo, old.id, 'old-run');
+  const paths = [`.github/vczh/requests/${old.id}.json`, '.github/vczh/active-request.json', '.github/vczh/.request.lock/owner'];
+  save(join(f.repo, paths[0]), binding); save(join(f.repo, paths[1]), { id: old.id }); write(f.repo, paths[2], 'old lock');
+  write(f.repo, '.github/vczh/.gitignore', '# User rules\n/private-notes/\n');
+  putPrompt(f.repo, promptTemplate('team'));
+  git(f.repo, 'add', '-A'); commit(f.repo, 'legacy runtime snapshot');
+  finishRequest(f.repo, old.id, 'old-run');
+  const history = paths.map(path => readFileSync(join(f.repo, path), 'utf8'));
+  for (const entry of ['init', 'start']) {
+    const repo = join(f.dir, entry); git(f.dir, 'clone', '-q', '--shared', f.repo, repo);
+    assert.ok(git(repo, 'ls-files', '--', ...paths));
+    if (entry === 'init') init(repo);
+    const request = startRequest(repo, 'ask new work');
+    assert.equal(bindRequest(repo, request.id, entry).status, 'running');
+    assert.throws(() => getRequest(repo, old.id), /仅保留为历史/);
+    assert.equal(git(repo, 'ls-files', '--', ...paths), '');
+    assert.deepEqual(git(repo, 'check-ignore', '--', ...paths).split('\n'), paths);
+    assert.deepEqual(paths.map(path => readFileSync(join(repo, path), 'utf8')), history);
+    const shared = ['Project.md', '.github/vczh/project.json', '.github/vczh/prompts/team.json'];
+    assert.deepEqual(git(repo, 'ls-files', '--', ...shared).split('\n').sort(), shared.sort());
+    const ignore = readFileSync(managed(repo, '.gitignore'), 'utf8'); assert.ok(ignore.startsWith('# User rules\n/private-notes/\n'));
+    init(repo);
+    assert.equal(readFileSync(managed(repo, '.gitignore'), 'utf8'), ignore, 'migration is idempotent');
+    assert.equal(getRequest(repo, request.id, entry).status, 'running', 'initialization must not release a current private request');
+  }
+});
+
+test('runtime migration does not discard an index-only version of a legacy request', t => {
+  const f = fixture(t), path = '.github/vczh/requests/old.json';
+  write(f.repo, path, 'original'); git(f.repo, 'add', '-f', '--', path); commit(f.repo, 'tracked legacy request');
+  write(f.repo, path, 'staged'); git(f.repo, 'add', '-f', '--', path); write(f.repo, path, 'working');
+  assert.throws(() => init(f.repo), /git/);
+  assert.equal(git(f.repo, 'show', `:${path}`), 'staged');
+  assert.equal(readFileSync(join(f.repo, path), 'utf8'), 'working');
+});
 
 test('only general and C++ topic packs are distributed, with checked bodies and source provenance', () => {
   for (const file of manifest.files) assert.equal(hash(readFileSync(join(plugin, 'upstream', file.path))), file.sha256);
@@ -151,7 +218,7 @@ test('task-file expansion rejects additional instructions and mismatched tags wi
       assert.equal(accepted.latest, latest); assert.ok(getRequest(f.repo, accepted.id).request.endsWith(body));
     }
   }
-  assert.equal(readdirSync(managed(f.repo, 'requests')).length, 8, 'only complete requests are persisted');
+  assert.equal(readdirSync(runtime(f.repo, 'requests')).length, 8, 'only complete requests are persisted');
   assert.throws(() => route(f.repo, 'ask question', { taskFile: 'task.md' }), /只用于/);
 });
 
@@ -191,7 +258,7 @@ test('abandoning a stopped request preserves documents and releases the next req
     const abandoned = JSON.parse(result.stdout);
     assert.equal(abandoned.status, 'abandoned'); assert.equal(abandoned.abandonment.runState, state);
     assert.equal(abandoned.abandonment.reason, 'Original run stopped'); assert.ok(abandoned.finishedAt);
-    assert.equal(existsSync(managed(f.repo, 'active-request.json')), false);
+    assert.equal(existsSync(runtime(f.repo, 'active-request.json')), false);
     bindRequest(f.repo, b.id, 'next');
     assert.throws(() => bindRequest(f.repo, a.id, runId), /已结束/);
     assert.throws(() => finishRequest(f.repo, a.id, runId), /已结束/);
@@ -243,7 +310,7 @@ test('abandon matches the historical binding after a repository rename and keeps
 test('legacy bindings without host serialization cannot be released using a status snapshot', t => {
   const { repo } = fixture(t), r = startRequest(repo, 'investigate continue');
   const binding = bindRequest(repo, r.id, 'old'); delete binding.boundGroup;
-  save(managed(repo, `requests/${r.id}.json`), binding);
+  save(runtime(repo, `requests/${r.id}.json`), binding);
   const runStatus = { runId: 'old', workflow: 'vczh', inputs: { root: repo, request: r.id }, state: 'cancelled', finishedAt: Date.now(), jobs: [] };
   assert.throws(() => abandonRequest(repo, r.id, { reason: 'Stop', runStatus }), /宿主独占组/);
   assert.equal(getRequest(repo, r.id, 'old').status, 'running');
@@ -444,6 +511,7 @@ test('multiple Git worktrees count as one project with readable fallback', t => 
 
 test('a corrupt project name is isolated from healthy projects in the persisted overview', t => {
   const f = fixture(t), other = join(f.dir, 'other');
+  git(f.dir, 'clone', '-q', '--shared', '--no-checkout', root, other);
   const cfg = { ...config(f.repo), projectId: hash(other), name: 'Healthy project' };
   save(join(other, '.github/vczh/project.json'), cfg);
   save(join(f.state, 'projects', `${hash(other)}.json`), { root: other, projectId: cfg.projectId, name: cfg.name });

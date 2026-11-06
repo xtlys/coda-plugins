@@ -44,6 +44,21 @@ export function atomic(file, content) {
 }
 export const save = (file, value) => atomic(file, `${JSON.stringify(value, null, 2)}\n`);
 export function managed(root, name) { return inside(root, `${base}/${name}`); }
+// Git gives each linked worktree its own metadata directory. Runtime ownership must never
+// travel with a commit, checkout or clone, even when a workflow commits every project change.
+export function runtime(root, name) { return inside(realpathSync(git(root, 'rev-parse', '--absolute-git-dir')), `vczh/${name}`); }
+export function prepareRuntime(root) {
+  const file = managed(root, '.gitignore'), before = existsSync(file) ? readFileSync(file, 'utf8') : '';
+  const rules = ['/requests/', '/active-request.json', '/.*.lock'];
+  const missing = rules.filter(rule => !before.split(/\r?\n/).includes(rule));
+  if (missing.length) atomic(file, `${before}${before && !before.endsWith('\n') ? '\n' : ''}# vczh legacy runtime: local history only\n${missing.join('\n')}\n`);
+  // Remove legacy snapshots from the index only; preserve their working files for reference.
+  // Without -f, an index-only edit conflicting with the working copy fails instead of losing data.
+  const tracked = git(root, 'ls-files', '-z', '--', `${base}/requests/`, `${base}/active-request.json`,
+    `:(glob)${base}/.*.lock`, `:(glob)${base}/.*.lock/**`).split('\0').filter(Boolean);
+  if (tracked.length) git(root, '--literal-pathspecs', 'rm', '-r', '--cached', '--', ...tracked);
+  mkdirSync(runtime(root, 'requests'), { recursive: true });
+}
 export function config(root) {
   const value = json(managed(root, 'project.json'));
   requireValue(value.schemaVersion === 1 && typeof value.projectId === 'string', '不支持的项目数据版本');
@@ -53,7 +68,8 @@ export function config(root) {
   return value;
 }
 export function lock(root, name, work) {
-  const path = managed(root, `.${id(name)}.lock`);
+  const path = runtime(root, `.${id(name)}.lock`);
+  mkdirSync(dirname(path), { recursive: true });
   try { mkdirSync(path); } catch (error) { if (error.code === 'EEXIST') throw new Error(`另一项操作持有 ${path}；确认进程已退出后才能删除残留锁`); throw error; }
   try { return work(); } finally { rmSync(path, { recursive: true, force: true }); }
 }
@@ -70,7 +86,8 @@ export function init(root) {
     const cfg = { schemaVersion: 1, projectId: hash(commonDir), name: root.split(sep).at(-1), enabledPrompts: ['general'] };
     try { writeFileSync(file, `${JSON.stringify(cfg, null, 2)}\n`, { flag: 'wx' }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
   }
-  for (const dir of ['requests', 'prompts']) mkdirSync(managed(root, dir), { recursive: true });
+  prepareRuntime(root);
+  mkdirSync(managed(root, 'prompts'), { recursive: true });
   if (json(file).enabledPrompts.some(key => retiredBuiltinIds.includes(key))) save(file, config(root));
   const learning = '# !!!LEARNING!!!\n\n# Orders\n\n# Refinements\n';
   const defaults = {

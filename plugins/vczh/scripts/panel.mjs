@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { config, hash, json, managed, requireValue, retiredBuiltinIds, save } from './store.mjs';
+import { config, hash, json, requireValue, retiredBuiltinIds, runtime, save } from './store.mjs';
 import { builtinPrompts, prompts, renderPrompt } from './prompts.mjs';
 import { documents, freshness, legacyDocuments } from './knowledge.mjs';
 
@@ -37,8 +37,8 @@ function registered(state) {
       entry.knowledge = documents(entry.root, 'knowledge'); entry.learning = documents(entry.root, 'learning');
       entry.archives = documents(entry.root, 'archives'); entry.legacy = legacyDocuments(entry.root);
       entry.prompts = prompts(entry.root).filter(p => p.origin === 'project');
-      const tasksDir = managed(entry.root, 'requests');
-      entry.tasks = existsSync(tasksDir) ? readdirSync(tasksDir).filter(name => name.endsWith('.json')).map(name => json(managed(entry.root, `requests/${name}`))) : [];
+      const tasksDir = runtime(entry.root, 'requests');
+      entry.tasks = existsSync(tasksDir) ? readdirSync(tasksDir).filter(name => name.endsWith('.json')).map(name => json(runtime(entry.root, `requests/${name}`))) : [];
       entry.stale = [...entry.knowledge, ...entry.learning].filter(d => freshness(entry.root, d) === 'stale').length;
     } catch (e) {
       entry = { ...entry, key: file.slice(0, -5), error: e.message,

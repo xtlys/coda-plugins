@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
-import { config, id, inside, json, lock, managed, now, requireValue, save, text } from './store.mjs';
+import { config, id, inside, json, lock, managed, now, prepareRuntime, requireValue, runtime, save, text } from './store.mjs';
 
 export const modes = ['ask', 'investigate', 'review', 'refine', 'kb', 'kb-refine', 'direct'];
 export function route(root, latest, { intent, taskFile } = {}) {
@@ -43,20 +43,23 @@ export function route(root, latest, { intent, taskFile } = {}) {
   }
   return { mode, command: command ?? null, latest, request, ...(taskFile ? { taskFile } : {}) };
 }
-const location = (root, key) => managed(root, `requests/${id(key)}.json`);
+const location = (root, key) => runtime(root, `requests/${id(key)}.json`);
 export const requestGroup = root => `vczh:${config(root).projectId}`;
 const terminal = ['done', 'abandoned'];
 function requireActive(root, r, runId) {
   text(runId, 'runId', 200);
-  requireValue(r.status === 'running' && r.runId === runId && json(managed(root, 'active-request.json')).id === r.id,
+  requireValue(r.status === 'running' && r.runId === runId && json(runtime(root, 'active-request.json')).id === r.id,
     '请求已结束或不属于当前运行，请勿执行旧任务');
 }
 function release(root, key) {
-  const file = managed(root, 'active-request.json');
+  const file = runtime(root, 'active-request.json');
   if (existsSync(file) && json(file).id === key) rmSync(file);
 }
 export function getRequest(root, key, runId) {
-  const r = json(location(root, key));
+  const file = location(root, key);
+  requireValue(existsSync(file) || !existsSync(managed(root, `requests/${id(key)}.json`)),
+    '旧版仓库请求仅保留为历史，不继承运行占用；请先结束旧运行，再用原始消息创建新请求');
+  const r = json(file);
   requireValue(r.schemaVersion === 2 && r.projectId === config(root).projectId && modes.includes(r.mode), '请求版本或项目不匹配');
   requireValue(['pending', 'running', ...terminal].includes(r.status), '未知请求状态');
   if (runId !== undefined) requireActive(root, r, runId);
@@ -65,12 +68,13 @@ export function getRequest(root, key, runId) {
 export function startRequest(root, latest, options) {
   const routed = route(root, latest, options);
   const r = { schemaVersion: 2, id: `r-${randomUUID()}`, projectId: config(root).projectId, ...routed, status: 'pending', createdAt: now() };
+  prepareRuntime(root);
   save(location(root, r.id), r); return r;
 }
 export function bindRequest(root, key, runId) {
   text(runId, 'runId', 200);
   return lock(root, 'request', () => {
-    const r = getRequest(root, key), activeFile = managed(root, 'active-request.json');
+    const r = getRequest(root, key), activeFile = runtime(root, 'active-request.json');
     requireValue(!terminal.includes(r.status), '请求已结束，不能重新绑定；新工作请创建新请求');
     requireValue(!r.runId || r.runId === runId, '请求已绑定其他运行，请恢复原运行');
     if (existsSync(activeFile)) {

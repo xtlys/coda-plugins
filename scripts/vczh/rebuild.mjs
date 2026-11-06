@@ -2,7 +2,7 @@
 // Reproduce the two distributable packs and the four-dimension audit from pinned sources.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -186,14 +186,24 @@ outputs.set('docs/vczh-classification.md', report.join('\n'));
 // upstream is entirely generated. Compare the tree with this build's outputs, including files
 // removed from sources.json; the current source list cannot enumerate those obsolete files.
 function obsoleteIn(path) {
-  if (!existsSync(join(root, path))) return [];
-  return readdirSync(join(root, path), { withFileTypes: true }).flatMap(entry => {
-    const child = `${path}/${entry.name}`;
-    return entry.isDirectory() ? obsoleteIn(child) : outputs.has(child) ? [] : [child];
-  });
+  const entry = lstatSync(join(root, path), { throwIfNoEntry: false });
+  if (!entry) return [];
+  if (!entry.isDirectory()) return outputs.has(path) ? [] : [path];
+  return readdirSync(join(root, path)).flatMap(name => obsoleteIn(`${path}/${name}`));
 }
-const obsolete = [...obsoleteIn('plugins/vczh/upstream'),
-  'plugins/vczh/prompts/workflow.json', 'plugins/vczh/prompts/vczh-project.json'];
+// Check parents from the root down, before looking through trees they may obstruct.
+const directories = new Set();
+for (const path of outputs.keys()) for (let parent = dirname(path); parent !== '.'; parent = dirname(parent)) directories.add(parent);
+const blocked = [];
+const obstructed = path => blocked.some(parent => path === parent || path.startsWith(`${parent}/`));
+for (const path of [...directories].sort((a, b) => a.split('/').length - b.split('/').length)) {
+  if (obstructed(path)) continue;
+  const entry = lstatSync(join(root, path), { throwIfNoEntry: false });
+  if (entry && !entry.isDirectory()) blocked.push(path);
+}
+const obsolete = [...blocked,
+  ...(obstructed('plugins/vczh/upstream') ? [] : obsoleteIn('plugins/vczh/upstream')),
+  ...['plugins/vczh/prompts/workflow.json', 'plugins/vczh/prompts/vczh-project.json'].filter(path => !obstructed(path))];
 // Finish all validation before mutating outputs.
 // Remove obsolete files first: one may occupy a directory required by a new output.
 for (const path of obsolete) {

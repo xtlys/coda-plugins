@@ -45,4 +45,12 @@ test('rebuild removes retired source outputs and check detects files outside the
   passes(rebuild()); passes(rebuild('--check'));
   assert.ok(lstatSync(prompts).isDirectory());
   assert.equal(readFileSync(join(prompts, 'keep.prompt.md'), 'utf8'), text);
+  for (const path of ['plugins/vczh/upstream', 'plugins/vczh/prompts', 'plugins/vczh', 'plugins', 'docs']) {
+    const file = join(root, path);
+    rmSync(file, { recursive: true }); writeFileSync(file, 'stale ancestor');
+    assert.notEqual(rebuild('--check').status, 0, path);
+    assert.equal(readFileSync(file, 'utf8'), 'stale ancestor', path);
+    passes(rebuild()); passes(rebuild('--check'));
+    assert.ok(lstatSync(file).isDirectory(), path);
+  }
 });
