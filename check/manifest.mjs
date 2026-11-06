@@ -4,7 +4,7 @@
 // catalogProblem); check/coda.mjs names the
 // commit. Coda stops at the first thing it cannot read; here each part is checked on its own, so one run lists them all.
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, normalize, relative, sep } from 'node:path';
 import { inflateSync } from 'node:zlib';
 import { AGENT_ID, AGENT_LIMITS, BUILTIN_AGENTS, BUILTIN_COMMANDS, BUILTIN_GROUPS, BUILTIN_HERE, BUILTIN_PLUGINS, BUILTIN_REPOSITORY, CAPABILITY,
@@ -286,12 +286,17 @@ export function checkManifest(dir, say) {
     check(value === undefined || (typeof value === 'string' && value.trim() && [...value].length <= INSTRUCTIONS_LIMIT), `contributes.instructions 须为不超过 ${INSTRUCTIONS_LIMIT} 字的说明`);
   });
   part('manifest.skills', () => {
-    const declared = contributes.skills ?? [];
+    const declared = contributes.skills === undefined ? [] : contributes.skills;
     check(Array.isArray(declared) && declared.length <= 100, 'contributes.skills 须为最多 100 个插件内目录的数组');
     const names = declared.map((value, i) => {
+      line(value, AGENT_LIMITS.path, `contributes.skills[${i}]`);
+      const parts = value.replace(/\/+$/, '').split('/');
+      check(!parts.includes('..') && parts.at(-1) !== '.', `Skill 路径不能包含 .. 或以 /. 结尾：${value}`);
       const path = inside(value, `contributes.skills[${i}]`).replace(/\/+$/, ''), name = path.split(sep).at(-1);
       check(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name), `Skill 目录名无效：${name}`);
+      check(statSync(join(dir, path), { throwIfNoEntry: false })?.isDirectory(), `Skill 路径须为目录：${path}`);
       check(existsSync(join(dir, path, 'SKILL.md')), `Skill 缺少 SKILL.md：${path}`);
+      check(statSync(join(dir, path, 'SKILL.md'), { throwIfNoEntry: false })?.isFile(), `SKILL.md 须为普通文件：${path}`);
       const target = realpathSync(join(dir, path, 'SKILL.md'));
       check(target.startsWith(`${realpathSync(dir)}${sep}`), `Skill 超出插件目录：${path}`);
       return name;

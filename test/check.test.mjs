@@ -47,6 +47,21 @@ describe('this repository', () => {
       assert.ok(failed((await checkPlugin(dir, { manifestOnly: true })).report).includes('manifest.skills'));
     }
   });
+  test('skills reject null and forbidden raw path segments before normalization', async () => {
+    const files = { 'skills/example/SKILL.md': 'Example' };
+    for (const skills of [null, ['skills/example/../example'], ['skills/example/.'], ['skills/example/./']]) {
+      const { report } = await checkPlugin(plugin({ manifest: { contributes: { skills } }, files }), { manifestOnly: true });
+      assert.deepEqual(failed(report), ['manifest.skills'], JSON.stringify(skills));
+    }
+    const good = plugin({ manifest: { contributes: { skills: ['skills/example/'] } }, files });
+    assertPasses((await checkPlugin(good, { manifestOnly: true })).report, ['manifest.skills']);
+  });
+  test('skills require a directory containing a regular SKILL.md file', async () => {
+    for (const files of [{ 'skills/example': 'not a directory' }, { 'skills/example/SKILL.md/child': 'not a document' }]) {
+      const dir = plugin({ manifest: { contributes: { skills: ['skills/example'] } }, files });
+      assert.deepEqual(failed((await checkPlugin(dir, { manifestOnly: true })).report), ['manifest.skills']);
+    }
+  });
   test('templates/agent passes every level', async () => {
     const { report } = await checkPlugin(at('templates/agent'), { live: true, limits });
     assertPasses(report, ['manifest.name', 'manifest.agents', 'source.files', 'handshake.initialize', 'handshake.system-prompt', 'handshake.new',
