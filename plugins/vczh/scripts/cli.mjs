@@ -7,7 +7,7 @@ import { documents, legacyDocuments, backups, remember } from './knowledge.mjs';
 import { abandonRequest, getRequest, route, startRequest } from './requests.mjs';
 import { protocol } from './protocol.mjs';
 
-const help = `vczh protocol [ask|investigate|review|refine|kb|kb-refine|direct|adapter|prompts]
+const help = `vczh protocol [ask|investigate|review|refine|kb|kb-refine|direct|adapter|prompts|develop]
 vczh source list|<上游相对路径>
 vczh init [--root <工作目录>]
 vczh route --file <最新请求> [--intent coding|research|maintenance] [--task-file <相对路径>]

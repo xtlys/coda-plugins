@@ -20,3 +20,7 @@ helper, and Coda workflow/panel integration are host features, not upstream ones
 This plugin is not an official vczh project or an endorsement by the authors.
 The reference repositories' product code and project knowledge bodies are not
 distributed with this plugin.
+
+GitHub check waiting in scripts/develop-checks.mjs is adapted from
+@coda-console/review (coda-console/coda-plugins, commit e3eee47), MIT License.
+See LICENSE-CODA for the license text.
