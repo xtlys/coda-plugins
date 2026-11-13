@@ -1,15 +1,15 @@
 {
   "name": "vczh",
-  "displayName": "vczh",
-  "description": "沿用 vczh 调查、任务审阅与知识工作流，按维度和主题管理通用与 C++ 规范原文片段。",
-  "version": "3.0.0",
+  "displayName": "vczh 开发",
+  "description": "原文任务审阅、调查与项目知识；在同一开发流程内检查、评审、验收及合并发布。",
+  "version": "4.0.0",
   "type": "module",
   "license": "Apache-2.0",
   "contributes": {
     "skills": [
       "skills/vczh"
     ],
-    "instructions": "项目采用 vczh 工作流时先运行 vczh protocol，按最新请求首词执行协议。review 是执行前任务审阅。workflow_run 发起 vczh，传 root 与 request。知识在 .github 的 KnowledgeBase、Learning、TaskLogs；内置规范仅通用与 C++，vczh prompt 按维度和主题管理。",
+    "instructions": "输入框选择 vczh 开发后先读 vczh protocol develop，在该运行工作树完成原文审阅、调查与交付，不另起 kickoff、simple、vczh 或 pull-request。独立原文命令先读 vczh protocol，保留停止点。知识在 Project.md 和 .github；仅加载启用的规范。",
     "commands": [
       {
         "name": "vczh",
@@ -28,6 +28,29 @@
           }
         }
       }
-    ]
-  }
+    ],
+    "configuration": {
+      "title": "vczh 开发",
+      "properties": {
+        "vczh.mergeMethod": {
+          "title": "合并方式",
+          "type": "string",
+          "enum": [
+            "merge",
+            "squash",
+            "rebase"
+          ],
+          "default": "merge",
+          "description": "默认保留调查的逐任务提交；仅在用户批准后合并到默认分支。"
+        }
+      }
+    }
+  },
+  "extensionDependencies": [
+    "github",
+    "review"
+  ],
+  "categories": [
+    "工作流程"
+  ]
 }

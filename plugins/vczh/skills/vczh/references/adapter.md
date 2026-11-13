@@ -4,6 +4,8 @@
 
 - `REPO-ROOT` 指 `inputs.root`，`Project.md` 在根目录，任务在 `.github/TaskLogs`，知识库和 Learning 直接在 `.github`。自动脚本仅分发命令与记录 Coda 状态。
 - 共享 `.github/prompts/<mode>.prompt.md` 对应 `vczh protocol <mode>`；`vczh source prompts/<mode>.prompt.md` 可单独阅读。无须把插件文件再复制到项目。项目自己的 AGENTS、Project 与已有指令仍须读取。
+- 共享 `.github/copilot-instructions.md` 对应 `vczh source copilot-instructions.md`（也随各个 `vczh protocol <mode>` 输出）；项目没有这份文件时读插件这份原文，不把它当作项目文件缺失。项目有自己的文件时两份都读，项目约定优先。
+- 输入框的 `vczh-develop` 已经持有项目独占组并负责交付。此时 `REPO-ROOT` 是任务通知中的调查工作树，不再创建通用 `vczh` 请求或嵌套运行；按 `vczh protocol develop` 衔接步骤。下文 request 的绑定与释放只适用于独立 `vczh` 命令流程。
 - 内置规范只有 `general` 和 `cpp`，按维度、主题、条目组织。用 `vczh prompt list` 查看，仅用 `vczh prompt show <id>` 阅读 `enabled: true` 的规范；`--topic <主题id>` 可单独查看主题。用户未要求时，不加载或重新启用已停用规范，也不从旧版规范包或外部上游文件重新自动加载已移除的规范。
 - 原库 API、构建器、调试器、编译目标、目录和发布工具的具体要求由当前项目自己的 `Project.md`、AGENTS、Guidelines 等提供。不得假定其他项目具备原作者的库或工具环境。
 - `vczh remember` 对应原文的“复制到时间戳 Learning 目录，再重置当前调查标记”；`--earliest N` 列出最早归档。归档没有自动提炼、永久保留或按任务 ID 计数；去重与消费后删除按 refine 协议执行。
