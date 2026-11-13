@@ -94,6 +94,7 @@ test('one privately owned PR carries exact task and check evidence; new heads in
   assert.match(pr.evidence, /check: succeeded coda:\/\/workflow-runs\/check-1/);
   assert.equal(pr.review, 'true'); assert.equal(pr.device, 'true');
   f.run('reviewed', { REVIEW: JSON.stringify({ head: first, decision: 'REQUEST_CHANGES', line: '需要修改', report: '检查边界' }) });
+  assert.equal(f.run('pr').review, 'true', 'unhandled requests for changes must survive a restart');
   f.run('kept', { ANSWER: JSON.stringify({ note: '已有调用前置条件' }) });
   f.run('accepted', { ROUTE: 'passed', DEVICE: JSON.stringify({ note: '已按命令确认' }) });
   pr = f.run('pr', { DEVICES: 'true' });
@@ -127,11 +128,29 @@ test('failed acceptance preserves attachments, incomplete reviews remain distinc
   const f = develop(t), head = f.change('implemented');
   f.run('push', { REPORT: JSON.stringify({ note: '实现' }) }); f.run('pr');
   assert.equal(f.run('reviewed', { REVIEW: JSON.stringify({ head, decision: 'INCOMPLETE', line: '服务中断' }) }).incomplete, 'true');
+  assert.equal(f.run('pr').review, 'true', 'an incomplete review cannot become a cached pass');
   assert.equal(f.run('accepted', { ROUTE: 'failed', DEVICE: JSON.stringify({ note: '边界仍错', attachments: ['/uploads/evidence.png'] }) }).route, 'fix');
   assert.match(f.run('problem').text, /边界仍错[\s\S]*\/uploads\/evidence.png/);
   assert.deepEqual(f.run('options', { APPROVED: JSON.stringify({ options: { deploy: true, preview: true, release: false, notify: true } }) }),
     { deploy: 'true', release: 'true', releaseKinds: 'preview', notify: 'true' });
   assert.deepEqual(JSON.parse(f.run('notes', { AGENT: JSON.stringify({ note: '修复边界' }) }).inputs), { notes: '修复边界', publish: 'true' });
+});
+
+test('a resumed run can revalidate its existing commit without inventing a new code change', t => {
+  const f = develop(t), head = f.change('implemented');
+  f.run('push', { REPORT: JSON.stringify({ note: '实现' }) });
+  assert.equal(f.run('push').route, 'fix');
+  assert.equal(f.run('push', { ATTEMPT: '2' }).head, head);
+});
+
+test('a transient failure can retry the same head but changed code must be pushed and checked', t => {
+  const f = develop(t);
+  assert.equal(f.run('retry').route, 'push');
+  f.change('implemented');
+  f.run('push', { REPORT: JSON.stringify({ note: '实现' }) });
+  assert.equal(f.run('retry').route, 'checks');
+  f.change('actual correction');
+  assert.equal(f.run('retry').route, 'push');
 });
 
 test('current host reads the develop menu contract and routes without a second PR lifecycle', { skip: !runtime }, async () => {
@@ -145,5 +164,7 @@ test('current host reads the develop menu contract and routes without a second P
   assert.equal(nodes.prepare.wake, 'false');
   assert.equal(nodes.review.calledElement, 'review-commit');
   assert.equal(nodes.approve.assignee, 'user');
+  assert.equal(nodes['direct-to-push'].targetRef.id, 'push');
+  assert.equal(nodes['retry-route-to-checks'].targetRef.id, 'checks');
   assert.ok(!process.flowElements.some(e => e.calledElement === 'pull-request'));
 });

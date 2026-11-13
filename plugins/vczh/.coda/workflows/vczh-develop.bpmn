@@ -38,12 +38,13 @@
     <sequenceFlow id="initialize-to-prepare" sourceRef="initialize" targetRef="prepare" />
     <userTask id="prepare" name="任务审阅" coda:noteLabel="说明" coda:wake="false">
       <documentation>本次已选择 vczh 开发，由这一条运行负责调查、PR、检查、评审、验收与合并发布。不要再启动 kickoff、simple、vczh 或 pull-request。
-工作根目录：{{lane.root}}；调查分支：{{lane.branch}}。这是从所选分支已提交内容建立的独立工作树；原工作区的未提交内容不在这里。
+工作根目录：{{lane.root}}；调查分支：{{lane.branch}}。本运行第 {{run.attempt}} 次执行；恢复时沿用本运行已经保存的 TODO_TASK.md 与调查记录，不将恢复通知当作新需求。这是从所选分支已提交内容建立的独立工作树；原工作区的未提交内容不在这里。
 先在此根目录读取 vczh protocol develop，按它加载项目上下文、已启用规范和原生知识库；补全 Project.md 的真实构建与验收命令。
 把随本任务到达的用户消息作为最新需求；流程通知不是需求。编码请求先将用户原话逐字写入 TODO_TASK.md，已有任务先保存，不覆盖未完成工作。按 vczh protocol review 审阅 TODO_TASK.md，只补 DETAILS / VERIFICATION / REVIEW COMMENTS，不能提前实现。无法合理解决的歧义用原生提问并写入真实答复，解决后再选「已审阅，开始调查」。本模式的选择已授权在任务审阅后继续调查。
-若用户显式要求 ask、review、refine、kb、kb refine 或 investigate report/continue，只执行对应原文命令，保留其停止点；未要求交付时选「本次命令已完成」，不会开 PR。</documentation>
+规划、文档维护、构建/CI 脚本修正等原文非编码例外，保存需求后选「按原文直接执行」，不强制走 Repro。研究或问题按 ask；若用户显式要求 ask、review、refine、kb、kb refine 或 investigate report/continue，只执行对应原文命令，保留其停止点；未要求交付时选「本次命令已完成」，不会开 PR。</documentation>
       <extensionElements>
         <coda:choice id="develop" name="已审阅，开始调查" primary="true" note="required" />
+        <coda:choice id="direct" name="按原文直接执行" note="required" />
         <coda:choice id="command" name="本次命令已完成" note="required" />
       </extensionElements>
     </userTask>
@@ -52,14 +53,25 @@
     <sequenceFlow id="prepared-to-command-done" sourceRef="prepared" targetRef="command-done">
       <conditionExpression xsi:type="tFormalExpression">=prepare.chose.command</conditionExpression>
     </sequenceFlow>
+    <sequenceFlow id="prepared-to-direct" sourceRef="prepared" targetRef="direct">
+      <conditionExpression xsi:type="tFormalExpression">=prepare.chose.direct</conditionExpression>
+    </sequenceFlow>
     <sequenceFlow id="prepared-to-investigate" sourceRef="prepared" targetRef="investigate" />
     <endEvent id="command-done" name="原文命令已完成">
       <extensionElements>
         <coda:output name="root" value="=lane.root" />
       </extensionElements>
     </endEvent>
+    <userTask id="direct" name="按原文完成维护任务" coda:noteLabel="说明">
+      <documentation>在 {{lane.root}}（{{lane.branch}}）读取 vczh protocol direct，按原文非编码例外完成 TODO_TASK.md 中的任务。保留原生项目知识和启用的规范；根据变更实际验证，不编造复现、候选方案、实验或用户偏好。
+遵守 vczh protocol develop 的提交与推送约定，提交本次改动及相关 Markdown 到 {{lane.branch}}，不要自行创建 PR。完成后备注约 8 行描述改动与验证；此运行随后负责检查、代码评审与批准交付。</documentation>
+      <extensionElements>
+        <coda:choice id="submit" name="提交检查" primary="true" note="required" />
+      </extensionElements>
+    </userTask>
+    <sequenceFlow id="direct-to-push" sourceRef="direct" targetRef="push" />
     <userTask id="investigate" name="复现、逐方案实验与择优重放" coda:noteLabel="说明">
-      <documentation>在 {{lane.root}}（{{lane.branch}}）执行 vczh protocol investigate 的完整原文。最新请求为 # Repro 加 TODO_TASK.md 全文；保留用户原话、补充内容及 REVIEW COMMENTS。
+      <documentation>在 {{lane.root}}（{{lane.branch}}）执行 vczh protocol investigate 的完整原文。首次执行的最新请求为 # Repro 加 TODO_TASK.md 全文；保留用户原话、补充内容及 REVIEW COMMENTS。第 {{run.attempt}} 次执行：若是恢复，沿用本运行已开始的调查，从 Markdown 中断处继续，不能再执行 Repro 清空或重新归档。
 严格完成：归档旧调查；构造并确认复现测试；实验前记录全部提案；逐个实验、记录 CONFIRMED / DENIED、只提交调查文档并回退实验；全部判断后择优重放；复验与原文自审。多任务逐项提交再做下一项。
 读 vczh protocol develop 的交付约定：原文提交与推送检查点保留，调查分支用明确的 refspec 推送；PR 只由本运行创建。把最终代码、Project.md、TODO_TASK.md、TaskLogs、Learning 和 KnowledgeBase 的本次改动提交到 {{lane.branch}}。不得为了完成流程编造偏好、知识或试验记录。
 收到纠偏按 # Continue；收到 # Report 只报告并停止。完成交付准备后选「提交检查」，备注约 8 行描述用户可感知的变化与风险。</documentation>
@@ -76,7 +88,8 @@
     <sequenceFlow id="investigated-to-push" sourceRef="investigated" targetRef="push" />
     <scriptTask id="push" name="推送交付提交" scriptFormat="bash" coda:timeout="5">
       <extensionElements>
-        <coda:env name="REPORT" value="=investigate" />
+        <coda:env name="REPORT" value="=if prepare.chose.direct then direct else investigate" />
+        <coda:env name="ATTEMPT" value="=run.attempt" />
         <coda:output name="head" />
         <coda:output name="baseCommit" />
         <coda:output name="route" />
@@ -144,7 +157,7 @@
         <coda:param name="task" value="=pr.task" />
         <coda:param name="reviewer" value="=inputs.reviewer" />
         <coda:param name="evidence" value="=pr.evidence" />
-        <coda:param name="focus" value="请阅读此提交的 Project.md、TODO_TASK.md、.github/TaskLogs/Copilot_Investigate.md 和相关 KnowledgeBase / Learning。核对复现证据、逐方案实验和最终重放；按项目启用的规范审查实际缺陷。复用已有有效检查。此处是实现后的代码评审，不是 vczh 的执行前 review 命令。" />
+        <coda:param name="focus" value="请阅读此提交的 Project.md、TODO_TASK.md、.github/TaskLogs/Copilot_Investigate.md 和相关 KnowledgeBase / Learning。调查任务核对复现证据、逐方案实验和最终重放；原文 direct 例外只核对相关验证，不要求虚构调查。按项目启用的规范审查实际缺陷，复用已有有效检查。此处是实现后的代码评审，不是 vczh 的执行前 review 命令。" />
       </extensionElements>
     </callActivity>
     <boundaryEvent id="review-failed" attachedToRef="review">
@@ -186,7 +199,7 @@
     <userTask id="answer" name="核实代码评审意见" coda:noteLabel="说明">
       <documentation>PR {{pr.url}}，提交 {{pr.head}}：
 {{review.report}}
-逐条核实可达触发路径与项目规则。成立的问题把原评审意见按 # Continue 追加到 {{lane.root}} 的调查，按原文实验和复验，提交 {{lane.branch}}。后续检查和代码评审针对新的提交重跑。
+逐条核实可达触发路径与项目规则。成立的问题把原评审意见按 # Continue 追加到 {{lane.root}} 的调查，按原文实验和复验，提交 {{lane.branch}}；原任务属于 direct 例外时继续按 direct 修复与验证。后续检查和代码评审针对新的提交重跑。
 不采纳的意见须写明依据；理由会原样出现在 PR 与批准卡，由用户决定。不得自动把要求修改当作通过。</documentation>
       <extensionElements>
         <coda:choice id="fixed" name="已修改" primary="true" note="required" />
@@ -353,12 +366,35 @@
     <userTask id="fix" name="继续调查并修复" coda:noteLabel="说明">
       <documentation>{{problem.text}}
 
-在 {{lane.root}} 继续原调查，读取 vczh protocol investigate 与 vczh protocol develop。把反馈原文作为 # Continue 记录，不重新清空已有调查。补齐复现或回归证据、记录并实验提案、择优重放和复验，提交到 {{lane.branch}}。之后由本运行更新同一个 PR，并重跑当前提交的检查、评审与验收。</documentation>
+在 {{lane.root}} 继续原调查，读取 vczh protocol investigate 与 vczh protocol develop。把反馈原文作为 # Continue 记录，不重新清空已有调查。补齐复现或回归证据、记录并实验提案、择优重放和复验，提交到 {{lane.branch}}。原任务属于 direct 例外时继续按 direct 修复与验证。之后由本运行更新同一个 PR，并重跑当前提交的检查、评审与验收。
+若确认只是临时网络或外部服务故障，当前提交无需改动，说明依据后选择「原提交重试检查」。真实代码或验收缺陷必须修复，不得用重试跳过。</documentation>
       <extensionElements>
         <coda:choice id="done" name="已修复并提交" primary="true" note="required" />
+        <coda:choice id="retry" name="原提交重试检查" note="required" />
+        <coda:choice id="stop" name="停止交付" note="required" />
       </extensionElements>
     </userTask>
-    <sequenceFlow id="fix-to-push" sourceRef="fix" targetRef="push" />
+    <sequenceFlow id="fix-to-fixed" sourceRef="fix" targetRef="fixed" />
+    <exclusiveGateway id="fixed" name="修复结果" default="fixed-to-push" />
+    <sequenceFlow id="fixed-to-stopped" sourceRef="fixed" targetRef="stopped">
+      <conditionExpression xsi:type="tFormalExpression">=fix.chose.stop</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="fixed-to-retry-head" sourceRef="fixed" targetRef="retry-head">
+      <conditionExpression xsi:type="tFormalExpression">=fix.chose.retry</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="fixed-to-push" sourceRef="fixed" targetRef="push" />
+    <scriptTask id="retry-head" name="核对重试提交" scriptFormat="bash" coda:timeout="5">
+      <extensionElements>
+        <coda:output name="route" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" retry</script>
+    </scriptTask>
+    <sequenceFlow id="retry-head-to-retry-route" sourceRef="retry-head" targetRef="retry-route" />
+    <exclusiveGateway id="retry-route" name="原提交仍一致" default="retry-route-to-push" />
+    <sequenceFlow id="retry-route-to-checks" sourceRef="retry-route" targetRef="checks">
+      <conditionExpression xsi:type="tFormalExpression">=retry-head.route = "checks"</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="retry-route-to-push" sourceRef="retry-route" targetRef="push" />
     <serviceTask id="kinds" name="读取部署与发布选项" coda:action="workflow-kinds">
       <extensionElements>
         <coda:param name="commit" value="=pr.head" />

@@ -76,7 +76,7 @@ switch (process.argv[2]) {
     const head = headOf(state.branch);
     git('fetch', '--quiet', state.remote, state.base);
     const baseCommit = git('rev-parse', 'FETCH_HEAD');
-    if (git('rev-list', '--count', `${baseCommit}..${head}`) === '0' || head === state.head) {
+    if (git('rev-list', '--count', `${baseCommit}..${head}`) === '0' || (head === state.head && Number(env.ATTEMPT || 1) === 1)) {
       feedback(`分支 ${state.branch} 没有新的交付提交。请完成调查、提交实现与 Markdown 文档后再答复。`);
       output('route', 'fix'); break;
     }
@@ -94,6 +94,9 @@ switch (process.argv[2]) {
     save({ ...state, checks: { head: state.head, runs: result.runs ?? [] } });
     break;
   }
+  case 'retry':
+    output('route', state.head && headOf(state.branch) === state.head ? 'checks' : 'push');
+    break;
   case 'pr': {
     const body = join(env.CODA_ARTIFACTS, 'pull-request.md');
     writeFileSync(body, summary(state));
@@ -110,7 +113,8 @@ switch (process.argv[2]) {
     save({ ...state, pr });
     outputs({ url: pr, head: state.head, base: state.baseCommit, task: state.task,
       evidence: runLines(state.checks, state.head), summary: summary(state),
-      review: state.review?.head !== state.head,
+      review: state.review?.head !== state.head || state.review?.decision === 'INCOMPLETE'
+        || (state.review?.decision === 'REQUEST_CHANGES' && !state.kept),
       device: env.DEVICES === 'true' && state.acceptedHead !== state.head });
     break;
   }
