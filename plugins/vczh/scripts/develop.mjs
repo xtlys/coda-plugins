@@ -30,8 +30,14 @@ const privateGh = (...args) => {
 };
 const feedback = text => { save({ ...state, feedback: text }); output('text', text); };
 const headOf = branch => git('rev-parse', '--verify', `refs/heads/${branch}^{commit}`);
+const checkRuns = raw => {
+  // run-workflows exposes runs as JSON text; also read arrays from saved state.
+  const runs = typeof raw === 'string' ? JSON.parse(raw) : raw ?? [];
+  ensure(Array.isArray(runs), '检查结果 runs 必须是 JSON 数组');
+  return runs;
+};
 const runLines = (record, head) => record?.head === head
-  ? record.runs.map(r => `${r.workflow}: ${r.state} coda://workflow-runs/${r.runId}`).join('\n') || '项目未声明此类检查。'
+  ? checkRuns(record.runs).map(r => `${r.workflow}: ${r.state} coda://workflow-runs/${r.runId}`).join('\n') || '项目未声明此类检查。'
   : '本提交尚未完成检查。';
 const summary = value => [value.report,
   `提交：${value.head}`,
@@ -91,7 +97,7 @@ switch (process.argv[2]) {
   }
   case 'checks': {
     const result = json('RESULT', {});
-    save({ ...state, checks: { head: state.head, runs: result.runs ?? [] } });
+    save({ ...state, checks: { head: state.head, runs: checkRuns(result.runs) } });
     break;
   }
   case 'retry':

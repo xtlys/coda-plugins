@@ -88,7 +88,7 @@ test('isolated investigation preserves uncommitted work and resumes without rese
 test('one privately owned PR carries exact task and check evidence; new heads invalidate review and acceptance', t => {
   const f = develop(t), first = f.change('first implementation');
   assert.equal(f.run('push', { REPORT: JSON.stringify({ note: '用户汇报' }) }).head, first);
-  f.run('checks', { RESULT: JSON.stringify({ runs: [{ workflow: 'check', state: 'succeeded', runId: 'check-1' }] }) });
+  f.run('checks', { RESULT: JSON.stringify({ runs: JSON.stringify([{ workflow: 'check', state: 'succeeded', runId: 'check-1' }]) }) });
   let pr = f.run('pr', { DEVICES: 'true' });
   assert.equal(pr.task, readFileSync(join(f.state().root, 'TODO_TASK.md'), 'utf8'));
   assert.match(pr.evidence, /check: succeeded coda:\/\/workflow-runs\/check-1/);
@@ -151,6 +151,16 @@ test('a transient failure can retry the same head but changed code must be pushe
   assert.equal(f.run('retry').route, 'checks');
   f.change('actual correction');
   assert.equal(f.run('retry').route, 'push');
+});
+
+test('saved host JSON check results remain readable when resuming at PR and approval', t => {
+  const f = develop(t), head = f.change('implemented');
+  f.run('push', { REPORT: JSON.stringify({ note: '实现' }) });
+  const runs = JSON.stringify([{ workflow: 'check', state: 'succeeded', runId: 'actual-check' }]);
+  writeFileSync(join(f.artifacts, 'vczh-develop.json'), JSON.stringify({ ...f.state(), checks: { head, runs } }));
+  assert.match(f.run('pr').evidence, /coda:\/\/workflow-runs\/actual-check/);
+  assert.match(f.run('approval', { PREMERGE: JSON.stringify({ runs }) }).premerge, /check: succeeded/);
+  f.run('checks', { RESULT: JSON.stringify({ runs: '{}' }) }, 1);
 });
 
 test('current host reads the develop menu contract and routes without a second PR lifecycle', { skip: !runtime }, async () => {
