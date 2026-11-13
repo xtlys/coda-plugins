@@ -53,7 +53,10 @@ describe('the plugins here', () => {
   for (const id of plugins) describe(`plugins/${id}`, () => {
     const dir = pluginDir(id), { dependencies = {}, optionalDependencies = {}, overrides = {}, extensionDependencies = [] } = manifest(id);
     const declared = Object.keys({ ...dependencies, ...optionalDependencies }).sort();
-    const theirs = extensionDependencies.flatMap(other => Object.keys(manifest(other).dependencies ?? {}));
+    // Host and external workflow plugins need not be checked out here. Only local
+    // dependency manifests can provide npm packages for this source-level check.
+    const theirs = extensionDependencies.filter(other => plugins.includes(other))
+      .flatMap(other => Object.keys(manifest(other).dependencies ?? {}));
     const used = [...new Set(files(dir).flatMap(file => packagesUsed(readFileSync(file, 'utf8'))))].filter(name => !theirs.includes(name)).sort();
 
     test('passes the checker\'s manifest level', async () => {
