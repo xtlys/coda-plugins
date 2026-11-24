@@ -1,11 +1,25 @@
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { backups, consumeBackup, layerHealth } from './assets.mjs';
 import { agentArgs, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
-import { appendGithubOutput, atomic, inside, managed, projectGroup, repo, requireValue } from './store.mjs';
-import { extractJsonBlock } from './verify.mjs';
+import { appendGithubOutput, atomic, git, inside, managed, projectGroup, repo, requireValue } from './store.mjs';
+import { extractJsonBlock, runCodeVerifiers } from './verify.mjs';
+
+function runCmd(bin, args, options = {}) {
+  return execFileSync(bin, args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'inherit'],
+    ...options,
+  }).trim();
+}
+
+const gh = (...args) => runCmd('gh', args);
+function privateGh(...args) {
+  const { CODA_THREAD_ID: _thread, ...privateEnv } = process.env;
+  return runCmd('gh', args, { env: privateEnv });
+}
 
 export function buildRefineContext(root) {
   const earliest = backups(root, 1)[0] ?? null;
@@ -53,23 +67,127 @@ export function applyProseRefinements(root, diagnosis) {
   atomic(target, `${content.trimEnd()}\n`);
 }
 
+// Chain refactor engineer commits sequentially onto startHead, then commit L4 prose updates + archive consumption,
+// and verify via L2/L3 code verifiers BEFORE anything is pushed or reported complete.
+export function executeRefinePlan(root, {
+  startHead,
+  refineBranch,
+  archive,
+  choice,
+  decisionNote = '',
+  diagnosis,
+  settings = loadSettings(),
+  runner,
+  tempDir = process.env.RUNNER_TEMP || join(root, '.dickda'),
+}) {
+  git(root, 'checkout', '-B', refineBranch, startHead);
+  let currentHead = startHead;
+
+  if (choice === 'refactor' && diagnosis.actions?.length) {
+    mkdirSync(tempDir, { recursive: true });
+    for (const [idx, item] of diagnosis.actions.entries()) {
+      const trade = ['architect', 'builder', 'verifier'].includes(item.trade) ? item.trade : 'architect';
+      const resolved = resolveEngineer(trade, { difficulty: item.difficulty === 'hard' ? 'hard' : 'normal' }, settings);
+      const promptFile = join(tempDir, `refine-exec-${idx}.tmp`);
+      writeFileSync(promptFile, [
+        rolePrompt(trade),
+        `## Refine 落层重构任务（目标层级：${item.layer}）\n标题：${item.title}\n\n${item.task}`,
+        decisionNote ? `交互者补充要求：\n${decisionNote}` : '',
+        '完成后必须在当前分支产生 Git 提交（不要自行推送远端或开 PR）。',
+      ].filter(Boolean).join('\n\n'));
+
+      const args = [
+        '--commit', currentHead,
+        '--title', `[Refine/${item.layer}] ${item.title}`,
+        ...agentArgs(resolved.agent),
+        '--json',
+        '--prompt-file', promptFile,
+      ];
+      mkdirSync(managed(root, 'lints'), { recursive: true });
+      mkdirSync(managed(root, 'verifiers'), { recursive: true });
+      const exec = runner ?? (cmdArgs => spawnSync('coda-agent', cmdArgs, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }));
+      const run = exec(args);
+      try { rmIfExists(promptFile); } catch {}
+      if (run.error) throw run.error;
+      requireValue(run.status === 0, `Refine 重构工单「${item.title}」执行失败（退出码 ${run.status}），保留原归档未消费`);
+      let reply = null;
+      try { reply = JSON.parse(run.stdout); } catch {}
+      requireValue(reply?.head, `Refine 重构工单「${item.title}」未返回有效交付提交 SHA，保留原归档未消费`);
+      const noNewCommit = spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', reply.head, currentHead]).status === 0;
+      requireValue(!noNewCommit, `Refine 重构工单「${item.title}」未产生新提交（${reply.head}），保留原归档未消费`);
+      git(root, 'checkout', '-B', refineBranch, reply.head);
+      currentHead = reply.head;
+    }
+  }
+
+  applyProseRefinements(root, diagnosis);
+  consumeBackup(root, archive);
+  git(root, 'add', '-A', '.dickda');
+  requireValue(Boolean(git(root, 'status', '--porcelain', '--', '.dickda')), 'Refine 消费归档后未检测到 .dickda 变更');
+  git(root, 'commit', '-m', `chore(dickda): refine ${archive} (${diagnosis.layers.join(',')})`);
+  currentHead = git(root, 'rev-parse', 'HEAD');
+
+  const verifyOutcome = runCodeVerifiers(root);
+  requireValue(verifyOutcome.passed, `Refine 后的 L2/L3 验证未通过，拒绝持久化并保留原分支归档：\n${verifyOutcome.summary}`);
+  return { head: currentHead, verifySummary: verifyOutcome.summary };
+}
+
+function rmIfExists(file) {
+  if (existsSync(file)) writeFileSync(file, '');
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const env = process.env;
     const action = process.argv[2];
     const stateFile = join(env.CODA_ARTIFACTS, 'refine.json');
-    const state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, 'utf8')) : {};
+    const state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, 'utf8')) : null;
     const saveState = next => writeFileSync(stateFile, `${JSON.stringify(next, null, 2)}\n`);
     const settings = loadSettings(env.CODA_PLUGIN_SETTINGS);
 
     switch (action) {
       case 'collect': {
-        const root = repo(env.ROOT || process.cwd());
+        if (state) {
+          appendGithubOutput({ group: state.group, hasArchive: state.hasArchive, archive: state.archive ?? '' });
+          break;
+        }
+        const root = repo();
+        const repoInfo = JSON.parse(gh('repo', 'view', '--json', 'nameWithOwner,defaultBranchRef'));
+        const defaultBranch = repoInfo.defaultBranchRef.name;
+        const base = (env.BASE || '').trim() || defaultBranch;
+        const remote = `https://github.com/${repoInfo.nameWithOwner}.git`;
+        git(root, 'fetch', '--quiet', remote, base);
+        const baseCommit = git(root, 'rev-parse', 'FETCH_HEAD');
+
+        let startHead = (env.RUN_COMMIT || '').trim() || baseCommit;
+        if (env.BRANCH && env.BRANCH.trim() && env.BRANCH.trim() !== base) {
+          const b = env.BRANCH.trim();
+          const hasLocal = spawnSync('git', ['-C', root, 'rev-parse', '--verify', `refs/heads/${b}^{commit}`]).status === 0;
+          if (hasLocal) {
+            startHead = git(root, 'rev-parse', '--verify', `refs/heads/${b}^{commit}`);
+          } else {
+            git(root, 'fetch', '--quiet', remote, b);
+            startHead = git(root, 'rev-parse', 'FETCH_HEAD');
+          }
+        }
+        git(root, 'checkout', '--detach', '--force', '--quiet', startHead);
+
         const ctx = buildRefineContext(root);
-        const next = { root, group: projectGroup(root), ...ctx };
-        saveState(next);
+        const refineBranch = `dickda/refine-${env.GITHUB_RUN_ID}`;
+        if (ctx.hasArchive) {
+          git(root, 'push', '--quiet', '--force', '--no-follow-tags', remote, `${startHead}:refs/heads/${refineBranch}`);
+        }
+        const initial = {
+          remote,
+          base,
+          refineBranch,
+          head: startHead,
+          group: projectGroup(root),
+          ...ctx,
+        };
+        saveState(initial);
         appendGithubOutput({
-          group: next.group,
+          group: initial.group,
           hasArchive: ctx.hasArchive,
           archive: ctx.archive ?? '',
         });
@@ -77,7 +195,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       }
 
       case 'diagnose': {
-        const root = state.root || repo();
+        const root = repo();
+        git(root, 'fetch', '--quiet', state.remote, state.refineBranch);
+        const head = git(root, 'rev-parse', 'FETCH_HEAD');
+        git(root, 'checkout', '--detach', '--force', '--quiet', head);
+
         const promptFile = join(env.RUNNER_TEMP, 'refine-thinker.md');
         const archiveText = (state.files ?? []).map(f => `### ${f.name}\n\n${f.body}`).join('\n\n');
         const prompt = [
@@ -89,6 +211,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         writeFileSync(promptFile, prompt);
 
         const res = spawnSync('coda-agent', [
+          '--commit', head,
           '--title', `思考者 Refine 诊断：${state.archive}`,
           ...agentArgs(settings.thinker),
           '--json',
@@ -98,7 +221,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         requireValue(res.status === 0, `思考者 Refine 诊断退出码 ${res.status}`);
         const reply = JSON.parse(res.stdout);
         const diagnosis = normalizeDiagnosis(extractJsonBlock(reply.answer ?? '') ?? {});
-        saveState({ ...state, diagnosis });
+        saveState({ ...state, head, diagnosis });
         appendGithubOutput({
           needsRefactor: diagnosis.needsRefactor,
           layers: diagnosis.layers.join('、'),
@@ -117,30 +240,51 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       }
 
       case 'execute': {
-        const root = state.root || repo();
+        const root = repo();
+        git(root, 'fetch', '--quiet', state.remote, state.refineBranch);
+        const startHead = git(root, 'rev-parse', 'FETCH_HEAD');
         const diagnosis = state.diagnosis ?? normalizeDiagnosis({});
-        if (state.choice === 'refactor' && diagnosis.actions.length) {
-          for (const [idx, item] of diagnosis.actions.entries()) {
-            const trade = ['architect', 'builder', 'verifier'].includes(item.trade) ? item.trade : 'architect';
-            const resolved = resolveEngineer(trade, { difficulty: item.difficulty === 'hard' ? 'hard' : 'normal' }, settings);
-            const promptFile = join(env.RUNNER_TEMP, `refine-exec-${idx}.md`);
-            mkdirSync(env.RUNNER_TEMP, { recursive: true });
-            writeFileSync(promptFile, `${rolePrompt(trade)}\n\n## Refine 落层重构任务（目标层级：${item.layer}）\n标题：${item.title}\n\n${item.task}\n${state.decisionNote ? `\n交互者补充要求：\n${state.decisionNote}\n` : ''}`);
-            const run = spawnSync('coda-agent', [
-              '--title', `[Refine/${item.layer}] ${item.title}`,
-              ...agentArgs(resolved.agent),
-              '--json',
-              '--prompt-file', promptFile,
-            ], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
-            if (run.error) throw run.error;
-            requireValue(run.status === 0, `Refine 重构工单 ${item.title} 执行失败`);
-          }
-        }
-        applyProseRefinements(root, diagnosis);
-        consumeBackup(root, state.archive);
+
+        const executed = executeRefinePlan(root, {
+          startHead,
+          refineBranch: state.refineBranch,
+          archive: state.archive,
+          choice: state.choice,
+          decisionNote: state.decisionNote,
+          diagnosis,
+          settings,
+        });
+
+        git(root, 'push', '--quiet', '--force', '--no-follow-tags', state.remote, `${executed.head}:refs/heads/${state.refineBranch}`);
+        saveState({ ...state, head: executed.head, verifySummary: executed.verifySummary });
+        appendGithubOutput({ head: executed.head });
+        break;
+      }
+
+      case 'deliver': {
+        const diagnosis = state.diagnosis ?? normalizeDiagnosis({});
+        const bodyFile = join(env.CODA_ARTIFACTS, 'refine-pr.md');
+        const body = [
+          `## Dickda 五层提纯与重构（消费归档 \`${state.archive}\`）`,
+          `- **落点层级**：${diagnosis.layers.join('、')}`,
+          `- **诊断摘要**：${diagnosis.summary}`,
+          state.verifySummary ? `### 验证结果\n${state.verifySummary}` : '',
+        ].filter(Boolean).join('\n\n');
+        writeFileSync(bodyFile, body);
+
+        const existing = JSON.parse(privateGh('pr', 'list', '--repo', state.remote, '--head', state.refineBranch, '--base', state.base, '--state', 'open', '--json', 'url'));
+        const pr = existing[0]?.url || privateGh(
+          'pr', 'create', '--repo', state.remote,
+          '--base', state.base, '--head', state.refineBranch,
+          '--title', `refactor(dickda): refine ${state.archive} (${diagnosis.layers.join(',')})`,
+          '--body-file', bodyFile
+        );
+        saveState({ ...state, pr });
         appendGithubOutput({
           consumed: state.archive,
-          summary: `已完成 ${state.archive} 的五层提纯（落点：${diagnosis.layers.join('、')}）。`,
+          commit: state.head,
+          pr,
+          summary: `已完成 ${state.archive} 的五层提纯（落点：${diagnosis.layers.join('、')}，提交 ${state.head}，PR ${pr}）。`,
         });
         break;
       }

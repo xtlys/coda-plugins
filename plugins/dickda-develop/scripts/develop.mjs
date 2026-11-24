@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { checkSpecLock, remember, runLints } from './assets.mjs';
 import { enabledGuidelinesDigest } from './prompts.mjs';
 import { TRADES, agentArgs, formatAgent, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
-import { appendGithubOutput, atomic, init, inside, managed, projectGroup, repo, requireValue } from './store.mjs';
+import { appendGithubOutput, atomic, init, managed, projectGroup, repo, requireValue } from './store.mjs';
 import { extractJsonBlock } from './verify.mjs';
 
 function runCmd(bin, args, options = {}) {
@@ -83,6 +83,30 @@ export function enrichDispatchBatch(rawJobs, ledger = {}, settings = loadSetting
   });
 }
 
+export function evaluateVerifierAnswer(answerText = '') {
+  const verdict = extractJsonBlock(answerText);
+  if (!verdict || typeof verdict.passed !== 'boolean') {
+    return {
+      valid: false,
+      passed: false,
+      summary: '',
+      findings: [],
+      error: '验证工程师未输出含布尔值 passed 的结构化 JSON 结论',
+    };
+  }
+  const findings = Array.isArray(verdict.findings) ? verdict.findings : [];
+  const hasMust = findings.some(f => f?.level === 'must');
+  const passed = verdict.passed === true && !hasMust;
+  const summary = String(verdict.summary ?? '').trim();
+  return {
+    valid: true,
+    passed,
+    summary,
+    findings,
+    ...(passed ? {} : { error: summary || (hasMust ? '验证发现必须修（must）缺陷' : '验证结论为未通过（passed=false）') }),
+  };
+}
+
 // Merge multiple parallel worker commits cleanly onto baseTip using git merge-tree --write-tree.
 export function integrateWorkerResults(cwd, baseTip, workerResults, ledger = {}, settings = loadSettings()) {
   const order = { architect: 0, builder: 1, verifier: 2 };
@@ -95,15 +119,20 @@ export function integrateWorkerResults(cwd, baseTip, workerResults, ledger = {},
   for (const w of sorted) {
     const entry = ledger[w.id] ?? { id: w.id, trade: w.trade, title: w.title, rejections: 0, status: 'pending' };
     if (w.trade === 'verifier') {
-      if (w.status === 'succeeded') {
+      for (const f of w.findings ?? []) findings.push({ ...f, sourceJob: w.id, verifier: w.agentSummary });
+      if (w.status === 'succeeded' && w.passed === true) {
         entry.status = 'verified';
+        entry.tier = w.tier;
+        entry.agentSummary = w.agentSummary;
         entry.lastAnswer = w.summary ?? '';
-        for (const f of w.findings ?? []) findings.push({ ...f, sourceJob: w.id, verifier: w.agentSummary });
+        entry.lastFeedback = '';
       } else {
         entry.rejections = (entry.rejections ?? 0) + 1;
         entry.status = 'rejected';
-        entry.lastFeedback = w.error || '验证会话执行失败';
-        rejected.push({ id: w.id, reason: entry.lastFeedback, rejections: entry.rejections });
+        entry.lastFeedback = w.error || w.summary || '验证工单未通过或结论缺失';
+        const next = resolveEngineer('verifier', { difficulty: w.difficulty, rejections: entry.rejections }, settings);
+        entry.nextTier = next.tier;
+        rejected.push({ id: w.id, reason: entry.lastFeedback, rejections: entry.rejections, nextTier: next.tier });
       }
       ledger[w.id] = entry;
       continue;
@@ -165,6 +194,53 @@ export function integrateWorkerResults(cwd, baseTip, workerResults, ledger = {},
   return { tip, changed: tip !== baseTip, landed, rejected, findings, ledger };
 }
 
+export function evaluateVerificationGate({ head, verifyCommit, verifyPassed, verifyReport = '', review = null }) {
+  if (!verifyPassed || verifyCommit !== head) {
+    const detail = verifyCommit && verifyCommit !== head
+      ? `双轨验证提交（${verifyCommit}）与当前交付 HEAD（${head}）不一致，需重新验证。`
+      : verifyReport;
+    const extraReview = review && review.head === head && review.decision === 'REQUEST_CHANGES'
+      ? `\n\n### 独立代码审查（Sol）结论：REQUEST_CHANGES\n${review.line ?? ''}\n${review.report ?? ''}`
+      : '';
+    return {
+      route: 'lead',
+      reason: `### 双轨验证未通过\n${detail}${extraReview}`,
+    };
+  }
+
+  if (!review || typeof review !== 'object' || !review.decision) {
+    return {
+      route: 'retry',
+      reason: `提交 ${head} 的独立代码审查调用失败或未返回结论，不能放行交付。`,
+    };
+  }
+  if (review.head !== head) {
+    return {
+      route: 'retry',
+      reason: `独立代码审查返回的提交（${review.head || '空'}）与当前交付 HEAD（${head}）不一致，不能放行交付。`,
+    };
+  }
+  if (review.decision === 'INCOMPLETE') {
+    return {
+      route: 'retry',
+      reason: `提交 ${head} 的独立代码审查未完成（INCOMPLETE）：${review.line ?? '未知原因'}`,
+    };
+  }
+  if (review.decision === 'REQUEST_CHANGES') {
+    return {
+      route: 'lead',
+      reason: `### 独立代码审查（Sol）结论：REQUEST_CHANGES\n${review.line ?? ''}\n${review.report ?? ''}`,
+    };
+  }
+  if (review.decision === 'APPROVE' || review.decision === 'COMMENT') {
+    return { route: 'pr', reason: '' };
+  }
+  return {
+    route: 'retry',
+    reason: `未知的独立代码审查结论：${review.decision}`,
+  };
+}
+
 function callCodaAgent(args, cwd = process.cwd()) {
   const res = spawnSync('coda-agent', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
   if (res.error) throw res.error;
@@ -194,6 +270,7 @@ export function buildPrSummary(state) {
     state.review?.head === state.head ? `#### 独立代码评审（Sol）\n${state.review.line}\n${state.review.report ?? ''}` : '',
     landedLines.length ? `#### 已合入工单\n${landedLines.join('\n')}` : '',
     ignoredLines.length ? `#### 主控裁定忽略的非阻塞项及依据\n${ignoredLines.join('\n')}` : '',
+    state.lastArchive ? `#### 调查归档\n已持久化至 \`${state.lastArchive}\`（待后续 \`dickda-refine\` 提纯）` : '',
     state.acceptedHead === state.head ? `#### 设备人工验收\n${state.acceptance ?? '已确认通过'}` : '',
   ].filter(Boolean).join('\n\n');
 }
@@ -267,6 +344,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           pendingFeedback: '',
           pr: '',
           acceptedHead: '',
+          lastArchive: '',
         };
         saveState(initial);
         appendGithubOutput({
@@ -286,8 +364,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           appendGithubOutput({ route: 'again', feedback: '请在备注第一行写需求标题，换行写清需求目标与验收标准。' });
           break;
         }
-        const next = { ...state, title, goal };
-        saveState(next);
+        saveState({ ...state, title, goal });
         appendGithubOutput({ route: 'ok', feedback: '' });
         break;
       }
@@ -299,13 +376,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         init(root);
         atomic(managed(root, 'tasks/TODO_TASK.md'), `# ${state.title}\n\n${state.goal}\n`);
         git('add', '.dickda');
+        let head = state.head;
         if (git('status', '--porcelain', '--', '.dickda')) {
           git('commit', '-m', `chore(dickda): initialize .dickda assets for ${state.title}`);
-          const head = git('rev-parse', 'HEAD');
+          head = git('rev-parse', 'HEAD');
           git('push', '--quiet', '--no-follow-tags', state.remote, `${head}:refs/heads/${state.reqBranch}`);
           saveState({ ...state, head });
         }
-        appendGithubOutput({ head: state.head });
+        appendGithubOutput({ head });
         break;
       }
 
@@ -338,7 +416,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       case 'lead-plan': {
         const root = repo();
         git('fetch', '--quiet', state.remote, state.reqBranch);
-        git('checkout', '-B', state.reqBranch, 'FETCH_HEAD');
+        const fetchedHead = git('rev-parse', 'FETCH_HEAD');
+        git('checkout', '-B', state.reqBranch, fetchedHead);
         const round = (state.round ?? 0) + 1;
         const planBody = existsSync(managed(root, 'tasks/PLAN_5L.md')) ? readFileSync(managed(root, 'tasks/PLAN_5L.md'), 'utf8') : '';
         const ledgerSummary = Object.values(state.ledger ?? {}).map(item =>
@@ -349,7 +428,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const prompt = [
           ...(state.leadSession ? [] : [rolePrompt('lead')]),
           `## 第 ${round} 轮主控决策上下文`,
-          `- 需求分支：\`${state.reqBranch}\`，当前 HEAD：\`${state.head}\``,
+          `- 需求分支：\`${state.reqBranch}\`，当前 HEAD：\`${fetchedHead}\``,
           `- 自动升级阈值：常规工程师连续被打回 >= ${settings.escalationThreshold} 次自动升级高级工程师`,
           `- 可用工种级别：\n  - architect：常规 ${formatAgent(settings.architect.standard)} ｜ 高级 ${formatAgent(settings.architect.senior)}\n  - builder：常规 ${formatAgent(settings.builder.standard)} ｜ 高级 ${formatAgent(settings.builder.senior)}\n  - verifier：常规 ${formatAgent(settings.verifier.standard)} ｜ 高级 ${formatAgent(settings.verifier.senior)}`,
           ...(state.leadSession ? [] : [`## 需求原文\n${state.goal}`, `## 五层技术方案（PLAN_5L.md）\n${planBody}`]),
@@ -361,10 +440,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
         const args = state.leadSession
           ? ['--continue', state.leadSession, '--json', '--prompt-file', promptFile]
-          : ['--commit', state.head, '--title', `执行主控：${state.title}`, ...agentArgs(settings.lead), '--json', '--prompt-file', promptFile];
+          : ['--commit', fetchedHead, '--title', `执行主控：${state.title}`, ...agentArgs(settings.lead), '--json', '--prompt-file', promptFile];
         let call = callCodaAgent(args, root);
         if (call.status !== 0 && state.leadSession && !call.parsed?.session) {
-          call = callCodaAgent(['--commit', state.head, '--title', `执行主控：${state.title}`, ...agentArgs(settings.lead), '--json', '--prompt-file', promptFile], root);
+          call = callCodaAgent(['--commit', fetchedHead, '--title', `执行主控：${state.title}`, ...agentArgs(settings.lead), '--json', '--prompt-file', promptFile], root);
         }
         requireValue(call.status === 0 && call.parsed?.session, `执行主控会话调用失败（退出码 ${call.status}）`);
 
@@ -374,6 +453,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const mergedIgnored = [...(state.ignoredFindings ?? []), ...(decision.ignoredFindings ?? [])];
         const nextState = {
           ...state,
+          head: fetchedHead,
           round,
           leadSession: call.parsed.session,
           ignoredFindings: mergedIgnored,
@@ -404,11 +484,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           const question = String(decision.question || decision.reason || '需要决策层确认方案边界').trim();
           nextState.escalation = question;
           saveState(nextState);
-          appendGithubOutput({ route: 'escalate', jobs: '[]', jobIds: '', escalation: question });
+          appendGithubOutput({ route: 'escalate', jobs: '[]', jobIds: '', milestone: '', escalation: question });
         } else {
           nextState.abortReason = String(decision.reason || '主控中止执行').trim();
           saveState(nextState);
-          appendGithubOutput({ route: 'abort', jobs: '[]', jobIds: '', escalation: nextState.abortReason });
+          appendGithubOutput({ route: 'abort', jobs: '[]', jobIds: '', milestone: '', escalation: nextState.abortReason });
         }
         break;
       }
@@ -434,7 +514,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           job.previousFeedback ? `## 前序打回原因（第 ${job.rejections} 次打回）\n${job.previousFeedback}` : '',
           `## 任务书\n${job.task}`,
           job.trade === 'verifier'
-            ? `完成后在最后附上 \`\`\`json 块：\`{"passed": true, "summary": "结论", "findings": [{"level": "must", "title": "...", "detail": "..."}]}\``
+            ? `完成后必须在回复最后附上结构化 \`\`\`json 块：\`{"passed": true, "summary": "结论", "findings": [{"level": "must", "title": "...", "detail": "..."}]}\`（未通过必须写 "passed": false）`
             : `完成后确保改动已提交到当前分支（不要推送或开 PR），并以单独一行「交付说明」汇报完成情况与自检命令。`,
         ].filter(Boolean).join('\n\n');
         writeFileSync(promptFile, prompt);
@@ -449,16 +529,17 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
         let record;
         if (call.status !== 0 || !call.parsed?.session) {
-          record = { ...job, status: 'failed', error: `coda-agent 退出码 ${call.status}` };
+          record = { ...job, status: 'failed', passed: false, error: `coda-agent 退出码 ${call.status}` };
         } else if (job.trade === 'verifier') {
-          const verdict = extractJsonBlock(call.parsed.answer ?? '') ?? { passed: true, summary: (call.parsed.answer ?? '').slice(-600), findings: [] };
+          const evaluated = evaluateVerifierAnswer(call.parsed.answer ?? '');
           record = {
             ...job,
-            status: 'succeeded',
+            status: !evaluated.valid ? 'failed' : evaluated.passed ? 'succeeded' : 'rejected',
             session: call.parsed.session,
-            passed: Boolean(verdict.passed),
-            summary: verdict.summary ?? '',
-            findings: verdict.findings ?? [],
+            passed: evaluated.passed,
+            summary: evaluated.summary,
+            findings: evaluated.findings,
+            ...(evaluated.error ? { error: evaluated.error } : {}),
           };
         } else {
           const workerHead = call.parsed.head;
@@ -466,9 +547,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           if (isAncestor) {
             record = { ...job, status: 'rejected', head: workerHead, error: '工单未产生新的 Git 提交' };
           } else {
-            const tempWork = root;
             git('checkout', '--quiet', workerHead);
-            const lockCheck = job.lockSpec ? checkSpecLock(tempWork, baseHead, workerHead) : { ok: true, violations: [] };
+            const lockCheck = job.lockSpec ? checkSpecLock(root, baseHead, workerHead) : { ok: true, violations: [] };
             if (!lockCheck.ok) {
               record = {
                 ...job,
@@ -477,7 +557,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
                 error: `违反规约锁定：实现工单不得擅自修改 ${lockCheck.violations.join('、')}`,
               };
             } else {
-              const lintRes = runLints(tempWork);
+              const lintRes = runLints(root);
               if (!lintRes.passed) {
                 const detail = lintRes.results.filter(r => !r.passed).map(r => `${r.path}: ${r.output}`).join('; ');
                 record = { ...job, status: 'rejected', head: workerHead, error: `L2 Executable Lint 未通过：${detail}` };
@@ -533,16 +613,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
         const feedbackParts = [];
         if (merged.landed.length) feedbackParts.push(`已合入工单：${merged.landed.map(l => `${l.id}(${l.trade}/${l.tier})`).join('、')}`);
-        if (merged.rejected.length) feedbackParts.push(`被打回工单：\n${merged.rejected.map(r => `- ${r.id}（累计打回 ${r.rejections} 次${r.nextTier === 'senior' ? '，建议/自动升级 senior' : ''}）：${r.reason}`).join('\n')}`);
+        if (merged.rejected.length) feedbackParts.push(`未通过工单：\n${merged.rejected.map(r => `- ${r.id}（累计未通过 ${r.rejections} 次${r.nextTier === 'senior' ? '，下次派单自动升级 senior' : ''}）：${r.reason}`).join('\n')}`);
         if (merged.findings.length) feedbackParts.push(`验证工种（Sol）报告的问题：\n${merged.findings.map((f, idx) => `- #${idx + 1} [${f.level ?? 'must'}] ${f.title ?? ''}：${f.detail ?? ''}`).join('\n')}`);
 
-        const next = {
+        saveState({
           ...state,
           head: merged.tip,
           ledger: merged.ledger,
           pendingFeedback: feedbackParts.join('\n\n'),
-        };
-        saveState(next);
+        });
         appendGithubOutput({ head: merged.tip, changed: merged.changed });
         break;
       }
@@ -572,6 +651,33 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         break;
       }
 
+      case 'archive-delivery': {
+        const root = repo();
+        git('fetch', '--quiet', state.remote, state.reqBranch);
+        let head = git('rev-parse', 'FETCH_HEAD');
+        git('checkout', '-B', state.reqBranch, head);
+
+        let lastArchive = state.lastArchive || '';
+        if (existsSync(managed(root, 'tasks/logs/investigate.md'))) {
+          const archived = remember(root);
+          if (archived.archived) {
+            git('add', '.dickda/learning', '.dickda/tasks/logs/investigate.md');
+            git('commit', '-m', `chore(dickda): archive investigation log (${archived.path})`);
+            head = git('rev-parse', 'HEAD');
+            git('push', '--quiet', '--no-follow-tags', state.remote, `${head}:refs/heads/${state.reqBranch}`);
+            lastArchive = archived.path;
+          }
+        }
+
+        const nextState = { ...state, head, lastArchive };
+        saveState(nextState);
+        appendGithubOutput({
+          head,
+          needChecks: nextState.checks?.head !== head,
+        });
+        break;
+      }
+
       case 'prepare-verify': {
         const resolved = resolveEngineer('verifier', {
           difficulty: Object.values(state.ledger ?? {}).some(i => i.tier === 'senior') ? 'hard' : 'normal',
@@ -587,24 +693,45 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         break;
       }
 
-      case 'verified': {
-        const dualPassed = env.VERIFY_PASSED === 'true';
-        const verifyReport = env.VERIFY_REPORT || '';
-        const review = env.REVIEW ? JSON.parse(env.REVIEW) : null;
-        const reviewFailed = review && (review.decision === 'REQUEST_CHANGES' || review.decision === 'INCOMPLETE');
+      case 'review-lost': {
+        const reason = `提交 ${state.head} 调用 review-commit 能力异常失败（运行 coda://workflow-runs/${env.GITHUB_RUN_ID}），尚未完成独立代码审查，不能放行交付。`;
+        saveState({ ...state, reviewRetryReason: reason });
+        appendGithubOutput({ reason });
+        break;
+      }
 
-        const next = { ...state, verifyReport, ...(review ? { review: { ...review, head: state.head } } : {}) };
-        if (!dualPassed || reviewFailed) {
-          const reasons = [];
-          if (!dualPassed) reasons.push(`### 双轨验证未通过\n${verifyReport}`);
-          if (reviewFailed) reasons.push(`### 独立代码审查（Sol）结论：${review.decision}\n${review.line ?? ''}\n${review.report ?? ''}`);
-          next.pendingFeedback = reasons.join('\n\n');
+      case 'verified': {
+        let review = null;
+        if (env.REVIEW && env.REVIEW.trim()) {
+          try { review = JSON.parse(env.REVIEW); } catch { review = null; }
+        }
+        const gate = evaluateVerificationGate({
+          head: state.head,
+          verifyCommit: (env.VERIFY_COMMIT || '').trim(),
+          verifyPassed: env.VERIFY_PASSED === 'true',
+          verifyReport: env.VERIFY_REPORT || '',
+          review,
+        });
+
+        const next = {
+          ...state,
+          verifyReport: env.VERIFY_REPORT || '',
+          ...(review && review.head ? { review } : {}),
+        };
+        if (gate.route === 'lead') {
+          next.pendingFeedback = gate.reason;
           saveState(next);
-          appendGithubOutput({ route: 'lead' });
+          appendGithubOutput({ route: 'lead', reason: gate.reason });
+          break;
+        }
+        if (gate.route === 'retry') {
+          next.reviewRetryReason = gate.reason;
+          saveState(next);
+          appendGithubOutput({ route: 'retry', reason: gate.reason });
           break;
         }
         saveState(next);
-        appendGithubOutput({ route: 'pr' });
+        appendGithubOutput({ route: 'pr', reason: '' });
         break;
       }
 
@@ -679,10 +806,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         if (done.error) throw done.error;
         const after = JSON.parse(privateGh('pr', 'view', state.pr, '--json', 'state,mergeable,mergeCommit'));
         if (after.state === 'MERGED') {
-          const root = repo();
-          try {
-            if (existsSync(managed(root, 'tasks/logs/investigate.md'))) remember(root);
-          } catch {}
           appendGithubOutput({ route: 'merged', commit: after.mergeCommit.oid });
         } else if (after.state === 'OPEN' && after.mergeable === 'CONFLICTING') {
           saveState({ ...state, pendingFeedback: `PR ${state.pr} 与 ${state.base} 存在合并冲突，请同步目标分支并解决冲突后重验。` });

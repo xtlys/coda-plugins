@@ -123,7 +123,7 @@
     <sequenceFlow id="lead-to-route" sourceRef="lead-plan" targetRef="lead-route" />
 
     <exclusiveGateway id="lead-route" name="主控决策去向" default="route-dispatch" />
-    <sequenceFlow id="route-verify" sourceRef="lead-route" targetRef="prepare-verify">
+    <sequenceFlow id="route-verify" sourceRef="lead-route" targetRef="archive-delivery">
       <conditionExpression xsi:type="tFormalExpression">=lead-plan.route = "verify"</conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="route-escalate" sourceRef="lead-route" targetRef="escalate-task">
@@ -216,6 +216,41 @@
     </sequenceFlow>
     <sequenceFlow id="escalate-continue" sourceRef="escalate-route" targetRef="lead-plan" />
 
+    <scriptTask id="archive-delivery" name="持久化调查归档至交付分支" scriptFormat="bash" coda:timeout="5">
+      <extensionElements>
+        <coda:output name="head" />
+        <coda:output name="needChecks" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" archive-delivery</script>
+    </scriptTask>
+    <sequenceFlow id="archive-to-check-gate" sourceRef="archive-delivery" targetRef="verify-checks-gate" />
+
+    <exclusiveGateway id="verify-checks-gate" name="交付提交是否需补跑检查" default="to-prepare-verify" />
+    <sequenceFlow id="need-verify-checks" sourceRef="verify-checks-gate" targetRef="verify-checks">
+      <conditionExpression xsi:type="tFormalExpression">=archive-delivery.needChecks = true</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="to-prepare-verify" sourceRef="verify-checks-gate" targetRef="prepare-verify" />
+
+    <serviceTask id="verify-checks" name="验证交付提交（hook=check）" coda:action="run-workflows" coda:status="运行交付提交检查">
+      <extensionElements>
+        <coda:param name="hook" value="check" />
+        <coda:param name="commit" value="=archive-delivery.head" />
+      </extensionElements>
+    </serviceTask>
+    <boundaryEvent id="verify-checks-err" attachedToRef="verify-checks">
+      <errorEventDefinition />
+    </boundaryEvent>
+    <sequenceFlow id="verify-checks-err-flow" sourceRef="verify-checks-err" targetRef="record-checks-failed" />
+    <sequenceFlow id="verify-checks-ok-flow" sourceRef="verify-checks" targetRef="record-verify-checks" />
+
+    <scriptTask id="record-verify-checks" name="保存交付提交检查证据" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
+      <extensionElements>
+        <coda:env name="RUNS" value="=verify-checks.runs" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" checks-passed</script>
+    </scriptTask>
+    <sequenceFlow id="record-verify-to-prepare" sourceRef="record-verify-checks" targetRef="prepare-verify" />
+
     <scriptTask id="prepare-verify" name="准备双轨验证与独立审查参数" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
       <extensionElements>
         <coda:env name="VERIFIER" value="=inputs.verifier" />
@@ -233,6 +268,8 @@
 
     <callActivity id="dual-verify" name="L3 结果导向双轨验证" calledElement="dickda-verify">
       <extensionElements>
+        <coda:param name="commit" value="=prepare-verify.head" />
+        <coda:param name="branch" value="=lane.reqBranch" />
         <coda:param name="tier" value="=prepare-verify.tier" />
         <coda:param name="ui" value="true" />
         <coda:param name="device" value="=inputs.device" />
@@ -254,25 +291,56 @@
     <boundaryEvent id="final-review-failed" attachedToRef="final-review">
       <errorEventDefinition />
     </boundaryEvent>
-    <sequenceFlow id="final-review-err-flow" sourceRef="final-review-failed" targetRef="verified-check" />
+    <sequenceFlow id="final-review-err-flow" sourceRef="final-review-failed" targetRef="review-call-lost" />
     <sequenceFlow id="final-review-ok-flow" sourceRef="final-review" targetRef="verified-check" />
+
+    <scriptTask id="review-call-lost" name="记录独立审查调用失败" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
+      <extensionElements>
+        <coda:output name="reason" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" review-lost</script>
+    </scriptTask>
+    <sequenceFlow id="lost-to-retry" sourceRef="review-call-lost" targetRef="review-retry" />
 
     <scriptTask id="verified-check" name="核对验证与审查结论" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
       <extensionElements>
+        <coda:env name="VERIFY_COMMIT" value="=dual-verify.commit" />
         <coda:env name="VERIFY_PASSED" value="=dual-verify.passed" />
         <coda:env name="VERIFY_REPORT" value="=dual-verify.report" />
         <coda:env name="REVIEW" value="=final-review" />
         <coda:output name="route" />
+        <coda:output name="reason" />
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" verified</script>
     </scriptTask>
     <sequenceFlow id="verified-to-gate" sourceRef="verified-check" targetRef="verified-gate" />
 
     <exclusiveGateway id="verified-gate" name="验证与审查是否全部放行" default="to-pr" />
+    <sequenceFlow id="verified-retry-review" sourceRef="verified-gate" targetRef="review-retry">
+      <conditionExpression xsi:type="tFormalExpression">=verified-check.route = "retry"</conditionExpression>
+    </sequenceFlow>
     <sequenceFlow id="verified-back-lead" sourceRef="verified-gate" targetRef="lead-plan">
       <conditionExpression xsi:type="tFormalExpression">=verified-check.route = "lead"</conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="to-pr" sourceRef="verified-gate" targetRef="pr" />
+
+    <userTask id="review-retry" name="独立代码审查未完成" coda:noteLabel="处理说明" coda:status="独立代码审查未完成：等待重试或停止">
+      <documentation>当前交付提交 {{prepare-verify.head}} 尚未获得完整有效的独立代码审查结论，不能当作通过放行。
+{{if verified-check.reason = null or verified-check.reason = "" then review-call-lost.reason else verified-check.reason}}
+
+请排查评审会话或能力异常后选择「重试独立审查」，或选择「停止本次交付」。</documentation>
+      <extensionElements>
+        <coda:choice id="retry" name="重试独立审查" primary="true" note="required" />
+        <coda:choice id="stop" name="停止本次交付" note="required" />
+      </extensionElements>
+    </userTask>
+    <sequenceFlow id="retry-to-gate" sourceRef="review-retry" targetRef="review-retry-gate" />
+
+    <exclusiveGateway id="review-retry-gate" default="retry-final-review" />
+    <sequenceFlow id="retry-stop" sourceRef="review-retry-gate" targetRef="stopped">
+      <conditionExpression xsi:type="tFormalExpression">=review-retry.chose.stop</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="retry-final-review" sourceRef="review-retry-gate" targetRef="final-review" />
 
     <scriptTask id="pr" name="创建或更新专属交付 PR" scriptFormat="bash" coda:timeout="5" coda:retry="2">
       <extensionElements>
@@ -504,7 +572,7 @@
     </scriptTask>
     <sequenceFlow id="parse-to-merge" sourceRef="approval-parse" targetRef="merge" />
 
-    <scriptTask id="merge" name="合并批准的提交并归档" scriptFormat="bash" coda:timeout="10" coda:status="合并中">
+    <scriptTask id="merge" name="合并批准的提交" scriptFormat="bash" coda:timeout="10" coda:status="合并中">
       <extensionElements>
         <coda:output name="route" />
         <coda:output name="commit" />

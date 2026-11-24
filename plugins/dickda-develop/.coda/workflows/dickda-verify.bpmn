@@ -3,6 +3,8 @@
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="dickda-verify-definitions" targetNamespace="https://coda.pub/plugins/dickda-develop">
   <process id="dickda-verify" name="Dickda 双轨验证" isExecutable="true" coda:title="Dickda 双轨验证">
     <extensionElements>
+      <coda:input name="commit" label="待验证提交" type="string" default="" description="显式指定待验证的提交 SHA；留空使用本次运行的提交 (run.commit)" />
+      <coda:input name="branch" label="待拉取分支" type="string" default="" description="可选：若待验证提交在远端需求分支上，先从 origin 拉取该分支" />
       <coda:input name="tier" label="验证级别" type="string" default="standard" description="standard（默认 sol-high）或 senior（sol-max）" />
       <coda:input name="ui" label="启用 Agent / UI 实证验收" type="boolean" default="true" description="是否调用验证工种（Sol）运行 .dickda/verifiers 中的实证与 UI 规约" />
       <coda:input name="device" label="验收设备锁" type="string" default="" description="可选测试机名称；填写后在 Agent/UI 验收期间独占该设备" />
@@ -18,6 +20,10 @@
 
     <scriptTask id="code-verify" name="轨道 A：确定性代码与 Lint 验证" scriptFormat="bash" coda:timeout="30" coda:status="运行 L2 Lint 与 L3 代码验证器">
       <extensionElements>
+        <coda:env name="COMMIT" value="=inputs.commit" />
+        <coda:env name="RUN_COMMIT" value="=run.commit" />
+        <coda:env name="BRANCH" value="=inputs.branch" />
+        <coda:output name="commit" />
         <coda:output name="passed" />
         <coda:output name="summary" />
       </extensionElements>
@@ -60,9 +66,12 @@
         <extensionElements>
           <coda:env name="UI" value="=inputs.ui" />
           <coda:env name="TIER" value="=inputs.tier" />
-          <coda:env name="COMMIT" value="=run.commit" />
+          <coda:env name="COMMIT" value="=inputs.commit" />
+          <coda:env name="RUN_COMMIT" value="=run.commit" />
+          <coda:env name="BRANCH" value="=inputs.branch" />
           <coda:env name="DEVICE" value="=inputs.device" />
           <coda:env name="TASK" value="=inputs.task" />
+          <coda:output name="commit" />
           <coda:output name="passed" />
           <coda:output name="summary" />
         </extensionElements>
@@ -78,6 +87,7 @@
 
     <scriptTask id="verify-summary" name="汇总双轨验证报告" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
       <extensionElements>
+        <coda:output name="commit" />
         <coda:output name="passed" />
         <coda:output name="report" />
         <coda:output name="evidence" />
@@ -89,6 +99,7 @@
 
     <endEvent id="done" name="双轨验证结束">
       <extensionElements>
+        <coda:output name="commit" value="=verify-summary.commit" />
         <coda:output name="passed" value="=verify-summary.passed" />
         <coda:output name="report" value="=verify-summary.report" />
         <coda:output name="evidence" value="=verify-summary.evidence" />

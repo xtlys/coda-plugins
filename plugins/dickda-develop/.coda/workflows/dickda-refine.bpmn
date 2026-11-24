@@ -3,15 +3,18 @@
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="dickda-refine-definitions" targetNamespace="https://coda.pub/plugins/dickda-develop">
   <process id="dickda-refine" name="Dickda 五层提纯与重构" isExecutable="true" coda:title="Dickda 五层提纯（Refine）">
     <extensionElements>
-      <coda:input name="root" label="项目目录" type="string" default="" description="可选；留空使用当前运行检出目录" />
+      <coda:input name="branch" label="起始分支" type="branch" defaultFrom="session.branch" description="从此分支读取待消费归档；留空从目标分支开始" />
+      <coda:input name="base" label="目标分支" type="string" default="" description="提纯与重构 PR 的目标分支；留空使用仓库默认分支" />
     </extensionElements>
 
     <startEvent id="start" />
     <sequenceFlow id="start-collect" sourceRef="start" targetRef="collect" />
 
-    <scriptTask id="collect" name="读取最早未消费归档" scriptFormat="bash" coda:timeout="5">
+    <scriptTask id="collect" name="读取最早未消费归档" scriptFormat="bash" coda:timeout="5" coda:retry="2">
       <extensionElements>
-        <coda:env name="ROOT" value="=inputs.root" />
+        <coda:env name="BRANCH" value="=inputs.branch" />
+        <coda:env name="BASE" value="=inputs.base" />
+        <coda:env name="RUN_COMMIT" value="=run.commit" />
         <coda:output name="group" />
         <coda:output name="hasArchive" />
         <coda:output name="archive" />
@@ -64,8 +67,8 @@
 {{diagnose.plan}}
 
 你是顶层交互者（Neon）：涉及对外契约或较大重构时向用户图文说明并确认；小范围 L2 Lint / L3 Verifier 硬化可直接拍板。
-- 选「执行五层重构与提纯」：调用对应工种落地 L1–L3 改动、精简 L4 旧条文并消费归档；
-- 选「仅更新 L4 知识经验」：只更新 .dickda/learning 并消费归档；
+- 选「执行五层重构与提纯」：串联执行对应工种提交 L1–L3 改动、精简 L4 旧条文、验证通过后持久化至远端交付分支并开 PR；
+- 选「仅更新 L4 知识经验」：更新 .dickda/learning 并消费归档提交 PR；
 - 选「暂不处理」：保留原归档退出。</documentation>
       <extensionElements>
         <coda:choice id="refactor" name="执行五层重构与提纯" primary="true" />
@@ -96,19 +99,39 @@
       </extensionElements>
     </endEvent>
 
-    <scriptTask id="execute" name="落地重构并精简 L4 文档" scriptFormat="bash" coda:timeout="60" coda:status="执行层正在落地五层提纯">
+    <scriptTask id="execute" name="串联提交重构改动、精简 L4 并运行验证" scriptFormat="bash" coda:timeout="60" coda:status="执行层正在串联落地五层提纯">
       <extensionElements>
-        <coda:output name="consumed" />
-        <coda:output name="summary" />
+        <coda:output name="head" />
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/refine.mjs" execute</script>
     </scriptTask>
-    <sequenceFlow id="execute-done" sourceRef="execute" targetRef="done" />
+    <sequenceFlow id="execute-to-checks" sourceRef="execute" targetRef="checks" />
 
-    <endEvent id="done" name="五层提纯完成" coda:notify="true">
+    <serviceTask id="checks" name="验证提纯提交（hook=check）" coda:action="run-workflows" coda:status="验证提纯与重构提交">
       <extensionElements>
-        <coda:output name="consumed" value="=execute.consumed" />
-        <coda:output name="summary" value="=execute.summary" />
+        <coda:param name="hook" value="check" />
+        <coda:param name="commit" value="=execute.head" />
+      </extensionElements>
+    </serviceTask>
+    <sequenceFlow id="checks-to-deliver" sourceRef="checks" targetRef="deliver" />
+
+    <scriptTask id="deliver" name="创建或更新提纯交付 PR" scriptFormat="bash" coda:timeout="5" coda:retry="2">
+      <extensionElements>
+        <coda:output name="consumed" />
+        <coda:output name="commit" />
+        <coda:output name="pr" />
+        <coda:output name="summary" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/refine.mjs" deliver</script>
+    </scriptTask>
+    <sequenceFlow id="deliver-done" sourceRef="deliver" targetRef="done" />
+
+    <endEvent id="done" name="五层提纯已验证并持久化" coda:notify="true">
+      <extensionElements>
+        <coda:output name="consumed" value="=deliver.consumed" />
+        <coda:output name="commit" value="=deliver.commit" />
+        <coda:output name="pr" value="=deliver.pr" />
+        <coda:output name="summary" value="=deliver.summary" />
       </extensionElements>
     </endEvent>
   </process>

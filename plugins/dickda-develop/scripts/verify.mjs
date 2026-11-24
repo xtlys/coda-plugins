@@ -4,7 +4,26 @@ import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { assetsByKind, runLints } from './assets.mjs';
 import { agentArgs, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
-import { appendGithubOutput, config, listFiles, managed, repo, requireValue } from './store.mjs';
+import { appendGithubOutput, config, git, listFiles, managed, repo, requireValue } from './store.mjs';
+
+export function checkoutTargetCommit(root, { commit = '', runCommit = '', branch = '', remote = 'origin' } = {}) {
+  const requested = String(commit || '').trim() || String(runCommit || '').trim();
+  const branchRef = String(branch || '').trim();
+  if (branchRef) {
+    git(root, 'fetch', '--quiet', remote, branchRef);
+  }
+  if (!requested) {
+    return git(root, 'rev-parse', 'HEAD');
+  }
+  const hasLocal = spawnSync('git', ['-C', root, 'cat-file', '-e', `${requested}^{commit}`]).status === 0;
+  if (!hasLocal) {
+    git(root, 'fetch', '--quiet', remote, requested);
+  }
+  const resolved = git(root, 'rev-parse', '--verify', `${requested}^{commit}`);
+  requireValue(resolved === requested, `目标验证提交不匹配：预期 ${requested}，实际 ${resolved}`);
+  git(root, 'checkout', '--detach', '--force', '--quiet', resolved);
+  return resolved;
+}
 
 export function runCodeVerifiers(root) {
   const lintOutcome = runLints(root);
@@ -80,6 +99,7 @@ export function runAgentVerifiers(root, { tier, difficulty = 'normal', rejection
       skipped: true,
       summary: 'L3 Agent/UI 验证器：当前 .dickda/verifiers/ 无 Agent/UI 规约文件，跳过。',
       findings: [],
+      evidence: [],
     };
   }
 
@@ -90,7 +110,7 @@ export function runAgentVerifiers(root, { tier, difficulty = 'normal', rejection
 
   const prompt = [
     rolePrompt('verifier'),
-    `## 本次实证 / UI 验收上下文\n- 工作目录：${root}\n${device ? `- 已分配独占测试设备：${device}\n` : ''}${task ? `- 关联需求摘要：\n${task}\n` : ''}`,
+    `## 本次实证 / UI 验收上下文\n- 工作目录：${root}\n${commit ? `- 验证提交：${commit}\n` : ''}${device ? `- 已分配独占测试设备：${device}\n` : ''}${task ? `- 关联需求摘要：\n${task}\n` : ''}`,
     `## 待逐项执行的验证规约（共 ${specs.length} 份）`,
     ...specs.map(s => `### ${s.path}\n\n${s.body}`),
     `## 输出契约\n完成真实运行与截图/日志取证后，在最后一条回复末尾附上 \`\`\`json 块（包含 passed 布尔值、summary 字符串、evidence 数组、findings 数组，每项含 level: "must"|"nit", title, detail）：\n\`\`\`json\n{"passed": true, "summary": "全部场景实证通过", "evidence": [], "findings": []}\n\`\`\``,
@@ -112,16 +132,19 @@ export function runAgentVerifiers(root, { tier, difficulty = 'normal', rejection
     const payload = JSON.parse(res.stdout);
     const verdict = extractJsonBlock(payload.answer ?? '');
     requireValue(verdict && typeof verdict.passed === 'boolean', '验证工程师未返回包含 passed 布尔值的结构化 JSON 结论');
+    const findings = Array.isArray(verdict.findings) ? verdict.findings : [];
+    const hasMust = findings.some(f => f.level === 'must');
+    const passed = verdict.passed === true && !hasMust;
     return {
-      passed: verdict.passed,
+      passed,
       skipped: false,
       tier: resolved.tier,
       escalated: resolved.escalated,
       agent: resolved.summary,
       session: payload.session,
-      summary: `L3 Agent/UI 验证（${resolved.summary}）：${verdict.passed ? '通过' : '未通过'} — ${verdict.summary ?? ''}`,
+      summary: `L3 Agent/UI 验证（${resolved.summary}）：${passed ? '通过' : '未通过'} — ${verdict.summary ?? ''}`,
       evidence: verdict.evidence ?? [],
-      findings: verdict.findings ?? [],
+      findings,
     };
   } finally {
     try { writeFileSync(promptFile, ''); } catch {}
@@ -134,39 +157,53 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const artifacts = process.env.CODA_ARTIFACTS;
     if (action === 'code') {
       const root = repo();
-      const result = runCodeVerifiers(root);
+      const verifiedCommit = checkoutTargetCommit(root, {
+        commit: process.env.COMMIT,
+        runCommit: process.env.RUN_COMMIT,
+        branch: process.env.BRANCH,
+      });
+      const result = { ...runCodeVerifiers(root), commit: verifiedCommit };
       if (artifacts) writeFileSync(join(artifacts, 'code-verify.json'), JSON.stringify(result, null, 2));
-      appendGithubOutput({ passed: result.passed, summary: result.summary });
+      appendGithubOutput({ passed: result.passed, summary: result.summary, commit: verifiedCommit });
     } else if (action === 'agent') {
       const root = repo();
+      const verifiedCommit = checkoutTargetCommit(root, {
+        commit: process.env.COMMIT,
+        runCommit: process.env.RUN_COMMIT,
+        branch: process.env.BRANCH,
+      });
       const uiEnabled = process.env.UI !== 'false';
-      const result = uiEnabled
+      const baseResult = uiEnabled
         ? runAgentVerifiers(root, {
             tier: process.env.TIER || undefined,
-            commit: process.env.COMMIT || undefined,
+            commit: verifiedCommit,
             device: process.env.DEVICE || '',
             task: process.env.TASK || '',
           })
         : { passed: true, skipped: true, summary: 'L3 Agent/UI 验证已按参数跳过。', findings: [], evidence: [] };
+      const result = { ...baseResult, commit: verifiedCommit };
       if (artifacts) writeFileSync(join(artifacts, 'agent-verify.json'), JSON.stringify(result, null, 2));
-      appendGithubOutput({ passed: result.passed, summary: result.summary });
+      appendGithubOutput({ passed: result.passed, summary: result.summary, commit: verifiedCommit });
     } else if (action === 'summary') {
       const codeRes = artifacts && existsSync(join(artifacts, 'code-verify.json'))
         ? JSON.parse(readFileSync(join(artifacts, 'code-verify.json'), 'utf8'))
-        : { passed: true, summary: '无代码验证记录' };
+        : null;
+      requireValue(codeRes && typeof codeRes.passed === 'boolean' && codeRes.commit, '缺少代码验证轨道结果或提交 SHA');
       const agentRes = artifacts && existsSync(join(artifacts, 'agent-verify.json'))
         ? JSON.parse(readFileSync(join(artifacts, 'agent-verify.json'), 'utf8'))
-        : { passed: true, summary: '无 Agent 验证记录', evidence: [], findings: [] };
+        : { passed: true, skipped: true, commit: codeRes.commit, summary: 'L3 Agent/UI 验证未启用。', evidence: [], findings: [] };
+      requireValue(agentRes.commit === codeRes.commit, `双轨验证提交不一致：代码轨道 ${codeRes.commit} vs 实证轨道 ${agentRes.commit}`);
       const passed = Boolean(codeRes.passed && agentRes.passed);
-      const report = [codeRes.summary, agentRes.summary].filter(Boolean).join('\n\n');
+      const report = [`验证提交：\`${codeRes.commit}\``, codeRes.summary, agentRes.summary].filter(Boolean).join('\n\n');
       appendGithubOutput({
+        commit: codeRes.commit,
         passed,
         report,
         evidence: JSON.stringify(agentRes.evidence ?? []),
         findings: JSON.stringify(agentRes.findings ?? []),
       });
       if (process.env.GITHUB_STEP_SUMMARY) {
-        writeFileSync(process.env.GITHUB_STEP_SUMMARY, `## Dickda 双轨验证：${passed ? '通过' : '未通过'}\n\n${report}\n`, { flag: 'a' });
+        writeFileSync(process.env.GITHUB_STEP_SUMMARY, `## Dickda 双轨验证（${codeRes.commit.slice(0, 12)}）：${passed ? '通过' : '未通过'}\n\n${report}\n`, { flag: 'a' });
       }
     } else {
       throw new Error(`未知 verify 动作：${action}`);
