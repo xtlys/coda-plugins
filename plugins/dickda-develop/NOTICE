@@ -1,0 +1,22 @@
+dickda-develop Coda plugin
+
+Built-in engineering guideline excerpts in prompts/general.json and prompts/cpp.json
+are derived from shared guideline excerpts in vczh-libraries/Tools, Copilot/, by
+vczh and contributors, at commit 493f3fe00b4a48831c1cc0612184fde709bafcb2.
+
+Upstream: https://github.com/vczh-libraries/Tools
+Licensing statement: https://github.com/vczh-libraries/License/blob/master/README.md
+
+Modifications: classify guideline excerpts into general and C++ packs; remove
+library-specific examples and toolchain prerequisites; record source line ranges,
+edit markers and SHA-256 hashes in prompts/general.json, prompts/cpp.json and
+prompts/manifest.json.
+
+The five-layer agentic architecture, three-role / four-trade workflow orchestration,
+.dickda unified asset layout, HTML console generator, and Coda BPMN/panel integration
+are independent features of dickda-develop and are not upstream projects or
+endorsements by the original authors.
+
+GitHub check waiting in scripts/checks.mjs and post-merge hook helpers in
+scripts/approval.mjs are adapted from @coda-console/review and @coda-console/composer
+(coda-console/coda-plugins), MIT License. See LICENSE-CODA for the license text.
