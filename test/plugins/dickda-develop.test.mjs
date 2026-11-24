@@ -483,6 +483,39 @@ test('dickda-refine chains refactor commits across ephemeral step worktrees, per
   git(failClone, 'checkout', '-f', 'main');
   assert.equal(backups(failClone, 5).length, 1, 'archive on main remains intact when refactor worker fails');
 
+  // 1b) Diverged sibling commits across two refactor actions MUST fail and preserve archive instead of dropping action 1's commit
+  git(failClone, 'checkout', '-b', 'sibling-1', startSha);
+  writeFileSync(join(failClone, 'first-refactor.mjs'), 'export const first = 1;\n');
+  const siblingHead1 = commit(failClone, 'refactor 1');
+  git(failClone, 'checkout', '-b', 'sibling-2', startSha);
+  writeFileSync(join(failClone, 'second-refactor.mjs'), 'export const second = 2;\n');
+  const siblingHead2 = commit(failClone, 'diverged sibling refactor 2');
+  git(failClone, 'checkout', '-f', 'main');
+
+  let callIdx = 0;
+  const twoActionDiag = normalizeDiagnosis({
+    needsRefactor: true,
+    layers: ['L1', 'L2'],
+    summary: 'Two refactors',
+    actions: [
+      { layer: 'L1', trade: 'builder', title: 'First refactor', task: 'step 1' },
+      { layer: 'L2', trade: 'architect', title: 'Second refactor', task: 'step 2' },
+    ],
+  });
+  assert.throws(() => executeRefinePlan(failClone, {
+    startHead: startSha,
+    refineBranch: 'dickda/refine-diverged',
+    archive: archived.path,
+    choice: 'refactor',
+    diagnosis: twoActionDiag,
+    runner: () => ({
+      status: 0,
+      stdout: JSON.stringify({ session: `sib-${++callIdx}`, head: callIdx === 1 ? siblingHead1 : siblingHead2, answer: 'done' }),
+    }),
+  }), /严格后代/);
+  git(failClone, 'checkout', '-f', 'main');
+  assert.equal(backups(failClone, 5).length, 1, 'archive remains unconsumed when second worker returns a diverged commit');
+
   // 2) Full multi-step ephemeral BPMN refine flow chains two engineer commits + L4 prose cleanup + archive removal and pushes to remote PR
   const fakeGh = join(dir, 'bin/gh');
   writeFileSync(fakeGh, `#!${process.execPath}

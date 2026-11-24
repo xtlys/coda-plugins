@@ -150,7 +150,9 @@ export function integrateWorkerResults(cwd, baseTip, workerResults, ledger = {},
       continue;
     }
 
-    if (tip === baseTip) {
+    const isFastForward = tip === baseTip
+      && spawnSync('git', ['-C', cwd, 'merge-base', '--is-ancestor', baseTip, w.head]).status === 0;
+    if (isFastForward) {
       tip = w.head;
       entry.status = 'landed';
       entry.commit = tip;
@@ -390,7 +392,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       case 'think': {
         const root = repo();
         git('fetch', '--quiet', state.remote, state.reqBranch);
-        git('checkout', '-B', state.reqBranch, 'FETCH_HEAD');
+        const thinkBase = git('rev-parse', 'FETCH_HEAD');
+        git('checkout', '-B', state.reqBranch, thinkBase);
         const promptFile = join(env.RUNNER_TEMP, 'thinker.md');
         const prompt = [
           rolePrompt('thinker'),
@@ -400,16 +403,20 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         ].join('\n\n');
         writeFileSync(promptFile, prompt);
         const call = callCodaAgent([
-          '--commit', state.head,
+          '--commit', thinkBase,
           '--title', `思考者规划：${state.title}`,
           ...agentArgs(settings.thinker),
           '--json',
           '--prompt-file', promptFile,
         ], root);
         requireValue(call.status === 0 && call.parsed?.head, `思考者会话未成功产出五层方案提交（退出码 ${call.status}）`);
-        git('push', '--quiet', '--force', '--no-follow-tags', state.remote, `${call.parsed.head}:refs/heads/${state.reqBranch}`);
-        saveState({ ...state, head: call.parsed.head, planAnswer: call.parsed.answer ?? '' });
-        appendGithubOutput({ head: call.parsed.head });
+        const thoughtHead = git('rev-parse', '--verify', `${call.parsed.head}^{commit}`);
+        const validDescendant = thoughtHead !== thinkBase
+          && spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', thinkBase, thoughtHead]).status === 0;
+        requireValue(validDescendant, `思考者返回的提交（${thoughtHead}）不是当前需求分支基线（${thinkBase}）的严格后代`);
+        git('push', '--quiet', '--no-follow-tags', state.remote, `${thoughtHead}:refs/heads/${state.reqBranch}`);
+        saveState({ ...state, head: thoughtHead, planAnswer: call.parsed.answer ?? '' });
+        appendGithubOutput({ head: thoughtHead });
         break;
       }
 
@@ -544,8 +551,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         } else {
           const workerHead = call.parsed.head;
           const isAncestor = !workerHead || spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', workerHead, baseHead]).status === 0;
+          const isDescendant = Boolean(workerHead)
+            && spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', baseHead, workerHead]).status === 0;
           if (isAncestor) {
             record = { ...job, status: 'rejected', head: workerHead, error: '工单未产生新的 Git 提交' };
+          } else if (!isDescendant) {
+            record = { ...job, status: 'rejected', head: workerHead, error: `工单返回的提交（${workerHead}）不是需求分支基线（${baseHead}）的严格后代` };
           } else {
             git('checkout', '--quiet', workerHead);
             const lockCheck = job.lockSpec ? checkSpecLock(root, baseHead, workerHead) : { ok: true, violations: [] };

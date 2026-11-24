@@ -113,10 +113,13 @@ export function executeRefinePlan(root, {
       let reply = null;
       try { reply = JSON.parse(run.stdout); } catch {}
       requireValue(reply?.head, `Refine 重构工单「${item.title}」未返回有效交付提交 SHA，保留原归档未消费`);
-      const noNewCommit = spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', reply.head, currentHead]).status === 0;
-      requireValue(!noNewCommit, `Refine 重构工单「${item.title}」未产生新提交（${reply.head}），保留原归档未消费`);
-      git(root, 'checkout', '-B', refineBranch, reply.head);
-      currentHead = reply.head;
+      const delivered = git(root, 'rev-parse', '--verify', `${reply.head}^{commit}`);
+      const noNewCommit = spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', delivered, currentHead]).status === 0;
+      requireValue(!noNewCommit, `Refine 重构工单「${item.title}」未产生新提交（${delivered}），保留原归档未消费`);
+      const isDescendant = spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', currentHead, delivered]).status === 0;
+      requireValue(isDescendant, `Refine 重构工单「${item.title}」返回的提交（${delivered}）不是前序基线（${currentHead}）的严格后代，拒绝丢弃前序改动并保留原归档未消费`);
+      git(root, 'checkout', '-B', refineBranch, delivered);
+      currentHead = delivered;
     }
   }
 
