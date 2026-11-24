@@ -1,0 +1,42 @@
+{
+  "repository": "https://github.com/vczh-libraries/Tools",
+  "commit": "493f3fe00b4a48831c1cc0612184fde709bafcb2",
+  "root": "Copilot",
+  "conventionSources": [
+    {
+      "path": "Guidelines/Coding.md",
+      "sha256": "28644d40d8a197a1788d3b06bb764a3a56543c1735aa2c389ac2471bcb3995b0",
+      "lineCount": 267
+    },
+    {
+      "path": "Guidelines/Coding_MultiThreading.md",
+      "sha256": "4b5ed431621577b64bc296db999443aa81aa785551d0fdd42f55d7163f3b2ff8",
+      "lineCount": 58
+    },
+    {
+      "path": "Guidelines/GacUIMVVM.md",
+      "sha256": "821bb34d005dd5aff84e09ddcb33d8ec5204cfe5a9abb531671ccfb0fdb1b51c",
+      "lineCount": 30
+    },
+    {
+      "path": "Guidelines/Building.md",
+      "sha256": "5d104ddf23bd53826b027eb7b7492bdf432cf037c8b78541b4ed0c905d539bfb",
+      "lineCount": 73
+    },
+    {
+      "path": "Guidelines/Debugging.md",
+      "sha256": "25f35a13b456724264bbf9ecb49f1730349ea952c15707e0ebb12f1db58c75f5",
+      "lineCount": 102
+    },
+    {
+      "path": "Guidelines/Running-UnitTest.md",
+      "sha256": "46fd1b72a4d7c8ef002640c0a07f03f5cf9bcf5cc803f9b529d298d1a5dab749",
+      "lineCount": 100
+    },
+    {
+      "path": "Guidelines/Running-CLI.md",
+      "sha256": "bd39503a37663916edb6db4ee2b5df43f627325ba1256e83ce9a33510dc6c316",
+      "lineCount": 54
+    }
+  ]
+}

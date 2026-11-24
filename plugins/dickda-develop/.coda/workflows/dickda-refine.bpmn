@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:coda="https://coda.pub/schema/bpmn/1.0"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="dickda-refine-definitions" targetNamespace="https://coda.pub/plugins/dickda-develop">
+  <process id="dickda-refine" name="Dickda 五层提纯与重构" isExecutable="true" coda:title="Dickda 五层提纯（Refine）">
+    <extensionElements>
+      <coda:input name="branch" label="起始分支" type="branch" defaultFrom="session.branch" description="从此分支读取待消费归档；留空从目标分支开始" />
+      <coda:input name="base" label="目标分支" type="string" default="" description="提纯与重构 PR 的目标分支；留空使用仓库默认分支" />
+    </extensionElements>
+
+    <startEvent id="start" />
+    <sequenceFlow id="start-collect" sourceRef="start" targetRef="collect" />
+
+    <scriptTask id="collect" name="读取最早未消费归档" scriptFormat="bash" coda:timeout="5" coda:retry="2">
+      <extensionElements>
+        <coda:env name="BRANCH" value="=inputs.branch" />
+        <coda:env name="BASE" value="=inputs.base" />
+        <coda:env name="RUN_COMMIT" value="=run.commit" />
+        <coda:output name="group" />
+        <coda:output name="hasArchive" />
+        <coda:output name="archive" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/refine.mjs" collect</script>
+    </scriptTask>
+    <sequenceFlow id="collect-gate" sourceRef="collect" targetRef="has-archive" />
+
+    <exclusiveGateway id="has-archive" name="是否存在待消费归档" default="no-archive" />
+    <sequenceFlow id="archive-found" sourceRef="has-archive" targetRef="hold">
+      <conditionExpression xsi:type="tFormalExpression">=collect.hasArchive = true</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="no-archive" sourceRef="has-archive" targetRef="empty-done" />
+
+    <endEvent id="empty-done" name="无待提纯归档">
+      <extensionElements>
+        <coda:output name="summary" value="当前 .dickda/learning/ 下没有未消费的调查归档。" />
+      </extensionElements>
+    </endEvent>
+
+    <serviceTask id="hold" name="独占项目资产锁" coda:action="hold-group">
+      <extensionElements>
+        <coda:param name="group" value="=collect.group" />
+        <coda:param name="exclusive" value="true" />
+        <coda:param name="borrow" value="no" />
+      </extensionElements>
+    </serviceTask>
+    <sequenceFlow id="hold-diagnose" sourceRef="hold" targetRef="diagnose" />
+
+    <scriptTask id="diagnose" name="思考者诊断五层落点" scriptFormat="bash" coda:timeout="30" coda:status="思考者（Carbon）正在分析归档落层">
+      <extensionElements>
+        <coda:output name="needsRefactor" />
+        <coda:output name="layers" />
+        <coda:output name="summary" />
+        <coda:output name="plan" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/refine.mjs" diagnose</script>
+    </scriptTask>
+    <sequenceFlow id="diagnose-decide" sourceRef="diagnose" targetRef="decide" />
+
+    <userTask id="decide" name="决策层拍板重构落层" coda:noteLabel="补充指示（可选）" coda:status="等待交互者确认五层演进方案">
+      <documentation>归档批次：{{collect.archive}}
+思考者（Carbon）五层落点诊断：{{diagnose.layers}}
+是否建议结构重构 / 规则硬化：{{if diagnose.needsRefactor = true then "是" else "否（仅文档沉淀）"}}
+
+诊断摘要：
+{{diagnose.summary}}
+
+拟执行动作清单：
+{{diagnose.plan}}
+
+你是顶层交互者（Neon）：涉及对外契约或较大重构时向用户图文说明并确认；小范围 L2 Lint / L3 Verifier 硬化可直接拍板。
+- 选「执行五层重构与提纯」：串联执行对应工种提交 L1–L3 改动、精简 L4 旧条文、验证通过后持久化至远端交付分支并开 PR；
+- 选「仅更新 L4 知识经验」：更新 .dickda/learning 并消费归档提交 PR；
+- 选「暂不处理」：保留原归档退出。</documentation>
+      <extensionElements>
+        <coda:choice id="refactor" name="执行五层重构与提纯" primary="true" />
+        <coda:choice id="prose" name="仅更新 L4 知识经验" />
+        <coda:choice id="skip" name="暂不处理" />
+      </extensionElements>
+    </userTask>
+    <sequenceFlow id="decide-parse" sourceRef="decide" targetRef="parse-decision" />
+
+    <scriptTask id="parse-decision" name="解析拍板结果" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
+      <extensionElements>
+        <coda:env name="DECISION" value="=decide" />
+        <coda:output name="route" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/refine.mjs" decide</script>
+    </scriptTask>
+    <sequenceFlow id="parse-route" sourceRef="parse-decision" targetRef="after-decide" />
+
+    <exclusiveGateway id="after-decide" name="执行路径" default="run-execute" />
+    <sequenceFlow id="route-skip" sourceRef="after-decide" targetRef="skipped-done">
+      <conditionExpression xsi:type="tFormalExpression">=parse-decision.route = "skip"</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="run-execute" sourceRef="after-decide" targetRef="execute" />
+
+    <endEvent id="skipped-done" name="保留归档退出">
+      <extensionElements>
+        <coda:output name="summary" value="已按决策保留归档暂不消费。" />
+      </extensionElements>
+    </endEvent>
+
+    <scriptTask id="execute" name="串联提交重构改动、精简 L4 并运行验证" scriptFormat="bash" coda:timeout="60" coda:status="执行层正在串联落地五层提纯">
+      <extensionElements>
+        <coda:output name="head" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/refine.mjs" execute</script>
+    </scriptTask>
+    <sequenceFlow id="execute-to-checks" sourceRef="execute" targetRef="checks" />
+
+    <serviceTask id="checks" name="验证提纯提交（hook=check）" coda:action="run-workflows" coda:status="验证提纯与重构提交">
+      <extensionElements>
+        <coda:param name="hook" value="check" />
+        <coda:param name="commit" value="=execute.head" />
+      </extensionElements>
+    </serviceTask>
+    <sequenceFlow id="checks-to-deliver" sourceRef="checks" targetRef="deliver" />
+
+    <scriptTask id="deliver" name="创建或更新提纯交付 PR" scriptFormat="bash" coda:timeout="5" coda:retry="2">
+      <extensionElements>
+        <coda:output name="consumed" />
+        <coda:output name="commit" />
+        <coda:output name="pr" />
+        <coda:output name="summary" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/refine.mjs" deliver</script>
+    </scriptTask>
+    <sequenceFlow id="deliver-done" sourceRef="deliver" targetRef="done" />
+
+    <endEvent id="done" name="五层提纯已验证并持久化" coda:notify="true">
+      <extensionElements>
+        <coda:output name="consumed" value="=deliver.consumed" />
+        <coda:output name="commit" value="=deliver.commit" />
+        <coda:output name="pr" value="=deliver.pr" />
+        <coda:output name="summary" value="=deliver.summary" />
+      </extensionElements>
+    </endEvent>
+  </process>
+</definitions>

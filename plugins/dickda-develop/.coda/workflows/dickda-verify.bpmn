@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:coda="https://coda.pub/schema/bpmn/1.0"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="dickda-verify-definitions" targetNamespace="https://coda.pub/plugins/dickda-develop">
+  <process id="dickda-verify" name="Dickda 双轨验证" isExecutable="true" coda:title="Dickda 双轨验证">
+    <extensionElements>
+      <coda:input name="commit" label="待验证提交" type="string" default="" description="显式指定待验证的提交 SHA；留空使用本次运行的提交 (run.commit)" />
+      <coda:input name="branch" label="待拉取分支" type="string" default="" description="可选：若待验证提交在远端需求分支上，先从 origin 拉取该分支" />
+      <coda:input name="tier" label="验证级别" type="string" default="standard" description="standard（默认 sol-high）或 senior（sol-max）" />
+      <coda:input name="ui" label="启用 Agent / UI 实证验收" type="boolean" default="true" description="是否调用验证工种（Sol）运行 .dickda/verifiers 中的实证与 UI 规约" />
+      <coda:input name="device" label="验收设备锁" type="string" default="" description="可选测试机名称；填写后在 Agent/UI 验收期间独占该设备" />
+      <coda:input name="task" label="任务说明" type="string" default="" description="本次需求与验收背景摘要" />
+    </extensionElements>
+
+    <startEvent id="start" />
+    <sequenceFlow id="start-fork" sourceRef="start" targetRef="tracks-fork" />
+
+    <parallelGateway id="tracks-fork" name="并行双轨验证" />
+    <sequenceFlow id="fork-to-code" sourceRef="tracks-fork" targetRef="code-verify" />
+    <sequenceFlow id="fork-to-agent-gate" sourceRef="tracks-fork" targetRef="agent-gate" />
+
+    <scriptTask id="code-verify" name="轨道 A：确定性代码与 Lint 验证" scriptFormat="bash" coda:timeout="30" coda:status="运行 L2 Lint 与 L3 代码验证器">
+      <extensionElements>
+        <coda:env name="COMMIT" value="=inputs.commit" />
+        <coda:env name="RUN_COMMIT" value="=run.commit" />
+        <coda:env name="BRANCH" value="=inputs.branch" />
+        <coda:output name="commit" />
+        <coda:output name="passed" />
+        <coda:output name="summary" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/verify.mjs" code</script>
+    </scriptTask>
+    <sequenceFlow id="code-to-join" sourceRef="code-verify" targetRef="tracks-join" />
+
+    <exclusiveGateway id="agent-gate" name="是否运行 Agent / UI 实证" default="agent-skip" />
+    <sequenceFlow id="agent-needed" sourceRef="agent-gate" targetRef="agent-sub">
+      <conditionExpression xsi:type="tFormalExpression">=inputs.ui = true</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="agent-skip" sourceRef="agent-gate" targetRef="tracks-join" />
+
+    <subProcess id="agent-sub" name="轨道 B：Sol 独立黑盒与 UI 实证">
+      <startEvent id="agent-sub-start" />
+      <sequenceFlow id="sub-start-to-device" sourceRef="agent-sub-start" targetRef="device-gate" />
+
+      <exclusiveGateway id="device-gate" name="是否占用测试设备" default="device-skip" />
+      <sequenceFlow id="device-needed" sourceRef="device-gate" targetRef="device-resolve">
+        <conditionExpression xsi:type="tFormalExpression">=inputs.device != ""</conditionExpression>
+      </sequenceFlow>
+      <sequenceFlow id="device-skip" sourceRef="device-gate" targetRef="agent-verify" />
+
+      <callActivity id="device-resolve" name="解析验收设备" calledElement="resolve-testbed">
+        <extensionElements>
+          <coda:param name="device" value="=inputs.device" />
+        </extensionElements>
+      </callActivity>
+      <sequenceFlow id="device-resolved" sourceRef="device-resolve" targetRef="device-hold" />
+
+      <serviceTask id="device-hold" name="独占验收设备" coda:action="hold-group" coda:status="等待设备 {{inputs.device}}">
+        <extensionElements>
+          <coda:param name="group" value="=device-resolve.group" />
+          <coda:param name="capacity" value="1" />
+        </extensionElements>
+      </serviceTask>
+      <sequenceFlow id="device-held" sourceRef="device-hold" targetRef="agent-verify" />
+
+      <scriptTask id="agent-verify" name="执行 Sol 实证与 UI 验收" scriptFormat="bash" coda:timeout="60" coda:status="验证工种（Sol）实证验收中">
+        <extensionElements>
+          <coda:env name="UI" value="=inputs.ui" />
+          <coda:env name="TIER" value="=inputs.tier" />
+          <coda:env name="COMMIT" value="=inputs.commit" />
+          <coda:env name="RUN_COMMIT" value="=run.commit" />
+          <coda:env name="BRANCH" value="=inputs.branch" />
+          <coda:env name="DEVICE" value="=inputs.device" />
+          <coda:env name="TASK" value="=inputs.task" />
+          <coda:output name="commit" />
+          <coda:output name="passed" />
+          <coda:output name="summary" />
+        </extensionElements>
+        <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/verify.mjs" agent</script>
+      </scriptTask>
+      <sequenceFlow id="agent-verify-done" sourceRef="agent-verify" targetRef="agent-sub-end" />
+      <endEvent id="agent-sub-end" />
+    </subProcess>
+    <sequenceFlow id="agent-sub-to-join" sourceRef="agent-sub" targetRef="tracks-join" />
+
+    <parallelGateway id="tracks-join" name="汇合双轨结论" />
+    <sequenceFlow id="join-to-summary" sourceRef="tracks-join" targetRef="verify-summary" />
+
+    <scriptTask id="verify-summary" name="汇总双轨验证报告" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
+      <extensionElements>
+        <coda:output name="commit" />
+        <coda:output name="passed" />
+        <coda:output name="report" />
+        <coda:output name="evidence" />
+        <coda:output name="findings" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/verify.mjs" summary</script>
+    </scriptTask>
+    <sequenceFlow id="summary-to-end" sourceRef="verify-summary" targetRef="done" />
+
+    <endEvent id="done" name="双轨验证结束">
+      <extensionElements>
+        <coda:output name="commit" value="=verify-summary.commit" />
+        <coda:output name="passed" value="=verify-summary.passed" />
+        <coda:output name="report" value="=verify-summary.report" />
+        <coda:output name="evidence" value="=verify-summary.evidence" />
+        <coda:output name="findings" value="=verify-summary.findings" />
+      </extensionElements>
+    </endEvent>
+  </process>
+</definitions>
