@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';
-import { basename, relative } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, relative } from 'node:path';
 import { INVESTIGATE_MARKER, atomic, base, git, hash, inside, listFiles, lock, managed, requireValue } from './store.mjs';
 
 const ARCHIVE_DIR = /^\d{4}(-\d{2}){5}$/;
@@ -19,7 +19,7 @@ export function readMarkdownAsset(file, relPath) {
   };
 }
 
-function walkMarkdown(root, folder) {
+export function walkMarkdown(root, folder) {
   const dir = inside(root, folder);
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true })
@@ -64,6 +64,10 @@ export function assetsByKind(root, kind) {
   });
 }
 
+export function hasAgentVerifiers(root) {
+  return assetsByKind(root, 'verifiers').some(spec => spec.track === 'agent');
+}
+
 export function backups(root, count = 10) {
   requireValue(Number.isInteger(count) && count > 0 && count <= 10000, 'earliest 数量须为 1–10000');
   const folder = managed(root, 'learning');
@@ -77,10 +81,16 @@ export function backups(root, count = 10) {
 
 export function remember(root, time = new Date()) {
   return lock(root, 'remember', () => {
-    const logPath = managed(root, 'tasks/logs/investigate.md');
-    if (!existsSync(logPath)) return { archived: false };
-    const content = readFileSync(logPath, 'utf8');
-    if (content.replace(/^\uFEFF/, '').trim() === INVESTIGATE_MARKER.trim()) return { archived: false };
+    const logDir = managed(root, 'tasks/logs');
+    const logs = listFiles(root, 'tasks/logs', '.md').map(file => ({
+      file,
+      name: relative(logDir, file).split('\\').join('/'),
+      content: readFileSync(file, 'utf8'),
+    })).filter(({ content }) => {
+      const body = content.trim();
+      return body && body !== INVESTIGATE_MARKER.trim();
+    });
+    if (!logs.length) return { archived: false };
 
     let date = new Date(time);
     requireValue(Number.isFinite(date.getTime()), '归档时间无效');
@@ -92,12 +102,32 @@ export function remember(root, time = new Date()) {
       date = new Date(date.getTime() + 1000);
     } while (existsSync(inside(root, dirRel)));
 
-    atomic(inside(root, `${dirRel}/investigate.md`), content);
-    for (const extra of ['TODO_TASK.md', 'PLAN_5L.md']) {
-      const src = managed(root, `tasks/${extra}`);
-      if (existsSync(src)) atomic(inside(root, `${dirRel}/${extra}`), readFileSync(src, 'utf8'));
+    const target = inside(root, dirRel);
+    mkdirSync(dirname(target), { recursive: true });
+    const draft = mkdtempSync(`${target}.tmp-`);
+    try {
+      for (const { name, content } of logs) {
+        if (name === 'investigate.md') {
+          writeFileSync(join(draft, name), content);
+        } else {
+          // Encoding the separator keeps a/b.md distinct from a-b.md in the flat archive.
+          const encoded = `log-${encodeURIComponent(name)}`;
+          const filename = encoded.length <= 255 ? encoded : `log.${hash(name)}.md`;
+          writeFileSync(join(draft, filename), `# ${name}\n\n${content}`);
+        }
+      }
+      for (const extra of ['TODO_TASK.md', 'PLAN_5L.md']) {
+        const src = managed(root, `tasks/${extra}`);
+        if (existsSync(src)) copyFileSync(src, join(draft, extra));
+      }
+      renameSync(draft, target);
+    } finally {
+      rmSync(draft, { recursive: true, force: true });
     }
-    atomic(logPath, INVESTIGATE_MARKER);
+    atomic(managed(root, 'tasks/logs/investigate.md'), INVESTIGATE_MARKER);
+    for (const { name, file } of logs) {
+      if (name !== 'investigate.md') rmSync(file);
+    }
     return { archived: true, path: dirRel };
   });
 }
@@ -140,11 +170,25 @@ export function runLints(root) {
 }
 
 // Builder jobs with lockSpec=true must never delete or weaken locked .dickda/lints or .dickda/verifiers.
-export function checkSpecLock(root, baseCommit, headCommit) {
-  const changed = git(root, 'diff', '--name-only', `${baseCommit}...${headCommit}`)
-    .split(/\r?\n/)
-    .filter(Boolean);
-  const violations = changed.filter(path => path.startsWith('.dickda/lints/') || path.startsWith('.dickda/verifiers/'));
+export function checkSpecLock(root, baseCommit, headCommit, { upstreamCommit = '' } = {}) {
+  const mergedUpstream = upstreamCommit && spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', upstreamCommit, headCommit]).status === 0;
+  // For entry comparisons a rename changes two paths, including the one that disappeared.
+  const diffOptions = mergedUpstream ? ['--no-renames'] : [];
+  let violations = git(root, 'diff', '--name-only', '-z', ...diffOptions, `${baseCommit}...${headCommit}`)
+    .split('\0').filter(path => path.startsWith('.dickda/lints/') || path.startsWith('.dickda/verifiers/'));
+  if (mergedUpstream && violations.length) {
+    const entries = commit => {
+      const tree = git(root, 'ls-tree', '-rzt', commit, '--', '.dickda/lints', '.dickda/verifiers');
+      return new Map(tree.split('\0').filter(Boolean).map(entry => {
+        const tab = entry.indexOf('\t');
+        return [entry.slice(tab + 1), entry.slice(0, tab)];
+      }));
+    };
+    const baseTree = entries(baseCommit);
+    const upstreamTree = entries(upstreamCommit);
+    const headTree = entries(headCommit);
+    violations = violations.filter(path => headTree.get(path) !== baseTree.get(path) && headTree.get(path) !== upstreamTree.get(path));
+  }
   return {
     ok: violations.length === 0,
     violations,

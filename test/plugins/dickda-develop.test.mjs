@@ -1,19 +1,19 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
-import { backups, checkSpecLock, consumeBackup, layerHealth, remember, runLints } from '../../plugins/dickda-develop/scripts/assets.mjs';
+import { assetsByKind, backups, checkSpecLock, consumeBackup, hasAgentVerifiers, layerHealth, remember, runLints } from '../../plugins/dickda-develop/scripts/assets.mjs';
 import { writeDashboard } from '../../plugins/dickda-develop/scripts/dashboard.mjs';
 import { enrichDispatchBatch, evaluateVerificationGate, evaluateVerifierAnswer, integrateWorkerResults } from '../../plugins/dickda-develop/scripts/develop.mjs';
 import { panel, readPanel } from '../../plugins/dickda-develop/scripts/panel.mjs';
 import { builtinPrompts, enablePrompt, promptTemplate, prompts, putPrompt, renderPrompt } from '../../plugins/dickda-develop/scripts/prompts.mjs';
 import { applyProseRefinements, buildRefineContext, executeRefinePlan, normalizeDiagnosis } from '../../plugins/dickda-develop/scripts/refine.mjs';
 import { ROLES, loadSettings, resolveEngineer, rolePrompt } from '../../plugins/dickda-develop/scripts/roles.mjs';
-import { init, inside, runtime } from '../../plugins/dickda-develop/scripts/store.mjs';
+import { INVESTIGATE_MARKER, init, inside, runtime } from '../../plugins/dickda-develop/scripts/store.mjs';
 import { checkoutTargetCommit, runAgentVerifiers, runCodeVerifiers } from '../../plugins/dickda-develop/scripts/verify.mjs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -35,6 +35,12 @@ function createGitRepo(t) {
   const work = join(dir, 'work');
   const origin = join(dir, 'origin.git');
   const stateDir = join(dir, 'plugin-state');
+  const previousState = process.env.CODA_PLUGIN_STATE;
+  process.env.CODA_PLUGIN_STATE = stateDir;
+  t.after(() => {
+    if (previousState === undefined) delete process.env.CODA_PLUGIN_STATE;
+    else process.env.CODA_PLUGIN_STATE = previousState;
+  });
   const artifacts = join(dir, 'artifacts');
   for (const p of [work, stateDir, artifacts, join(dir, 'bin'), join(dir, 'tmp')]) mkdirSync(p, { recursive: true });
 
@@ -122,8 +128,7 @@ test('three roles and four trades default to exact requested models and escalate
 });
 
 test('unified .dickda asset directory initializes cleanly, rejects symlinks, and isolates runtime state in git-dir', t => {
-  const { work, env, commit, git, dir } = createGitRepo(t);
-  process.env.CODA_PLUGIN_STATE = env.CODA_PLUGIN_STATE;
+  const { work, commit, git, dir } = createGitRepo(t);
   const cfg = init(work);
   assert.deepEqual(cfg.enabledPrompts, ['general']);
 
@@ -150,7 +155,59 @@ test('unified .dickda asset directory initializes cleanly, rejects symlinks, and
 
   symlinkSync('/tmp', join(work, '.dickda/escape-link'));
   assert.throws(() => inside(work, '.dickda/escape-link/secret'), /符号链接/);
-  rmSync(join(work, '.dickda/escape-link'));
+  unlinkSync(join(work, '.dickda/escape-link'));
+});
+
+test('init keeps the default dashboard out of the Git index and upgrades existing ignore rules once', t => {
+  const { work, git, env } = createGitRepo(t);
+  init(work);
+  execFileSync(process.execPath, [cliScript, 'dashboard', '--root', work], { env });
+  assert.ok(existsSync(join(work, '.dickda/dashboard.tmp.html')));
+  writeFileSync(join(work, '.dickda/scratch.tmp'), 'scratch');
+  git(work, 'add', '.dickda');
+  assert.equal(git(work, 'ls-files', '--', '.dickda/dashboard.tmp.html', '.dickda/scratch.tmp'), '');
+
+  const ignore = join(work, '.dickda/.gitignore');
+  const custom = '# local files\r\n/*.tmp\r\n/private.md';
+  writeFileSync(ignore, custom);
+  init(work);
+  init(work);
+  assert.equal(readFileSync(ignore, 'utf8'), `${custom}\r\n/*.tmp.html\r\n`);
+  assert.equal(git(work, 'check-ignore', '.dickda/dashboard.tmp.html'), '.dickda/dashboard.tmp.html');
+
+  writeFileSync(ignore, '*.tmp.html\n/private.md\n');
+  init(work);
+  assert.equal(readFileSync(ignore, 'utf8'), '*.tmp.html\n/private.md\n');
+});
+
+test('nested lints, code and agent verifiers, and project prompts are discovered in path order', t => {
+  const { work } = createGitRepo(t);
+  init(work);
+  for (const folder of ['lints', 'verifiers', 'prompts']) mkdirSync(join(work, '.dickda', folder, 'nested'));
+  const rule = '.dickda/lints/nested/rule.mjs';
+  const top = '.dickda/lints/nested.mjs';
+  const code = '.dickda/verifiers/nested/check.mjs';
+  const spec = '.dickda/verifiers/nested/spec.md';
+  writeFileSync(join(work, rule), 'console.log("nested lint");\n');
+  writeFileSync(join(work, top), '');
+  writeFileSync(join(work, code), 'console.log("nested verifier");\n');
+  assert.equal(hasAgentVerifiers(work), false);
+  writeFileSync(join(work, spec), '# UI scenario\n');
+  assert.equal(hasAgentVerifiers(work), true);
+
+  assert.deepEqual(assetsByKind(work, 'lints').map(a => a.path), [top, rule]);
+  assert.deepEqual(assetsByKind(work, 'verifiers').map(a => [a.path, a.track]), [[code, 'code'], [spec, 'agent']]);
+  assert.deepEqual(runLints(work).results.map(r => [r.path, r.passed, r.output]), [[top, true, ''], [rule, true, 'nested lint']]);
+  const outcome = runCodeVerifiers(work);
+  assert.equal(outcome.passed, true);
+  assert.deepEqual(outcome.verifiers.map(v => [v.id, v.output]), [[code, 'nested verifier']]);
+
+  writeFileSync(join(work, '.dickda/prompts/nested/team.json'), JSON.stringify(promptTemplate('nested-team')));
+  assert.ok(prompts(work).some(p => p.id === 'nested-team' && p.origin === 'project'));
+  symlinkSync(join(work, top), join(work, '.dickda/lints/nested/link.mjs'));
+  assert.throws(() => runLints(work), /符号链接/);
+  symlinkSync(join(work, '.dickda/lints'), join(work, '.dickda/verifiers/nested/link'));
+  assert.throws(() => hasAgentVerifiers(work), /符号链接/);
 });
 
 test('dual-track verification checks out explicit delivery commit even when main has no .dickda assets', t => {
@@ -327,6 +384,140 @@ test('concurrent multi-trade dispatch integrates non-conflicting commits, checks
   assert.equal(nextWave[0].agent.effort, 'max');
 });
 
+test('spec lock accepts a merged upstream tree entry or the base entry, and reports only worker edits', t => {
+  const { work, git, commit } = createGitRepo(t);
+  init(work);
+  const lint = '.dickda/lints/upstream.mjs';
+  const removed = '.dickda/verifiers/old.md';
+  writeFileSync(join(work, removed), '# Old spec\n');
+  const base = commit(work, 'shared specs');
+  git(work, 'checkout', '-b', 'worker');
+  writeFileSync(join(work, 'job.mjs'), 'export const ready = true;\n');
+  const worker = commit(work, 'worker implementation');
+  git(work, 'checkout', 'main');
+  writeFileSync(join(work, lint), '// upstream rule\n');
+  rmSync(join(work, removed));
+  const upstream = commit(work, 'upstream adds a lint and removes an old verifier');
+
+  const strict = { ok: false, violations: [lint, removed] };
+  assert.deepEqual(checkSpecLock(work, base, upstream, { upstreamCommit: worker }), strict);
+  git(work, 'checkout', 'worker');
+  git(work, 'merge', '--no-ff', '-m', 'merge upstream', upstream);
+  const merged = git(work, 'rev-parse', 'HEAD');
+  assert.deepEqual(checkSpecLock(work, base, merged), strict);
+  assert.deepEqual(checkSpecLock(work, base, merged, { upstreamCommit: upstream }), { ok: true, violations: [] });
+
+  writeFileSync(join(work, lint), '// different rule\n');
+  const changed = commit(work, 'worker edits upstream rule');
+  assert.deepEqual(checkSpecLock(work, base, changed, { upstreamCommit: upstream }), { ok: false, violations: [lint] });
+
+  git(work, 'checkout', '-b', 'other-base', base);
+  git(work, 'checkout', changed, '--', lint);
+  const otherBase = commit(work, 'base independently carries the same rule');
+  assert.deepEqual(checkSpecLock(work, otherBase, changed, { upstreamCommit: upstream }), { ok: true, violations: [] });
+});
+
+test('per-job logs merge cleanly and remember archives all valid Markdown for Refine', t => {
+  const { work, git, commit } = createGitRepo(t);
+  init(work);
+  const logDir = join(work, '.dickda/tasks/logs');
+  const shared = join(logDir, 'investigate.md');
+  const base = commit(work, 'seed project assets');
+  git(work, 'checkout', '-b', 'impl-a', base);
+  writeFileSync(join(logDir, 'impl-a.md'), 'Found A.\n');
+  const headA = commit(work, 'record experiment A');
+  git(work, 'checkout', '-b', 'impl-b', base);
+  writeFileSync(join(logDir, 'impl-b.md'), 'Found B.\n');
+  const headB = commit(work, 'record experiment B');
+  const mergedTree = git(work, 'merge-tree', '--write-tree', headA, headB);
+  git(work, 'checkout', mergedTree, '--', '.dickda/tasks/logs');
+
+  mkdirSync(join(logDir, 'impl'));
+  writeFileSync(join(logDir, 'impl/a.md'), 'Nested A.\n');
+  writeFileSync(join(logDir, 'empty.md'), ' \n');
+  writeFileSync(join(logDir, 'template.md'), INVESTIGATE_MARKER);
+  writeFileSync(shared, `\uFEFF  ${INVESTIGATE_MARKER} \n`);
+  const time = new Date(2026, 10, 24, 12, 0, 0);
+  const archived = remember(work, time);
+  assert.equal(archived.archived, true);
+  const ctx = buildRefineContext(work);
+  assert.equal(ctx.archive, archived.path);
+  const files = Object.fromEntries(ctx.files.map(f => [f.name, f.body]));
+  assert.equal(files['log-impl-a.md'], '# impl-a.md\n\nFound A.\n');
+  assert.equal(files['log-impl-b.md'], '# impl-b.md\n\nFound B.\n');
+  assert.ok(ctx.files.some(f => !f.name.includes('/') && f.name.endsWith('.md') && f.body === '# impl/a.md\n\nNested A.\n'));
+  for (const name of ['TODO_TASK.md', 'PLAN_5L.md']) {
+    assert.equal(files[name], readFileSync(join(work, '.dickda/tasks', name), 'utf8'));
+  }
+  assert.equal(ctx.files.length, 5);
+  for (const name of ['impl-a.md', 'impl-b.md', 'impl/a.md']) assert.ok(!existsSync(join(logDir, name)));
+  assert.equal(readFileSync(shared, 'utf8'), INVESTIGATE_MARKER);
+  assert.equal(readFileSync(join(logDir, 'empty.md'), 'utf8'), ' \n');
+  assert.equal(readFileSync(join(logDir, 'template.md'), 'utf8'), INVESTIGATE_MARKER);
+  writeFileSync(shared, ' \n');
+  assert.deepEqual(remember(work), { archived: false });
+
+  const legacy = '\uFEFF# Investigation\nA later experiment.\n';
+  writeFileSync(shared, legacy);
+  const later = remember(work, time);
+  assert.notEqual(later.path, archived.path);
+  assert.equal(readFileSync(join(work, later.path, 'investigate.md'), 'utf8'), legacy);
+  assert.equal(readFileSync(shared, 'utf8'), INVESTIGATE_MARKER);
+});
+
+test('remember rejects linked logs and Refine reads nested archive Markdown without following links', t => {
+  const { work } = createGitRepo(t);
+  init(work);
+  const logs = join(work, '.dickda/tasks/logs');
+  const job = join(logs, 'job.md');
+  writeFileSync(job, 'Experiment\n');
+  symlinkSync(job, join(logs, 'link.md'));
+  assert.throws(() => remember(work), /符号链接/);
+  assert.deepEqual(backups(work), []);
+  assert.equal(readFileSync(job, 'utf8'), 'Experiment\n');
+  unlinkSync(join(logs, 'link.md'));
+
+  const archive = remember(work).path;
+  const nested = join(work, archive, 'legacy');
+  mkdirSync(nested);
+  writeFileSync(join(nested, 'job.md'), 'Historical log\n');
+  symlinkSync(join(work, '.dickda/knowledge/Index.md'), join(nested, 'linked.md'));
+  symlinkSync(join(work, '.dickda/knowledge'), join(nested, 'linked-dir'));
+  const nestedFiles = buildRefineContext(work).files.filter(f => f.name.startsWith('legacy/'));
+  assert.deepEqual(nestedFiles, [{ name: 'legacy/job.md', body: 'Historical log\n' }]);
+});
+
+test('prose refinement removes obsolete lines across learning files and applies targeted notes and knowledge', t => {
+  const { work } = createGitRepo(t);
+  init(work);
+  const learning = join(work, '.dickda/learning');
+  const names = ['Learning_General.md', 'Learning_Coding.md', 'Learning_Testing.md', 'Learning_Team.md'];
+  const keep = '# Rules\n- Keep this [4]\n';
+  for (const name of names) writeFileSync(join(learning, name), `${keep}- Obsolete manual check [3]\n`);
+  const knowledge = { path: 'knowledge/architecture/boundaries.md', content: '# Module boundaries\n' };
+  const diagnosis = normalizeDiagnosis({
+    obsoleteProse: ['Obsolete manual check'],
+    learningUpdates: [
+      'Common practice', { text: 'Common practice' }, 'Keep this',
+      { file: 'Learning_Coding.md', text: 'Coding practice' },
+      { file: 'Learning_Testing.md', text: 'Testing practice' },
+    ],
+    knowledgeUpdates: [knowledge],
+  });
+  applyProseRefinements(work, diagnosis);
+  applyProseRefinements(work, diagnosis);
+  assert.deepEqual(names.map(name => readFileSync(join(learning, name), 'utf8')), [
+    `${keep}- Common practice [1]\n`, `${keep}- Coding practice [1]\n`, `${keep}- Testing practice [1]\n`, keep,
+  ]);
+  assert.equal(readFileSync(join(work, '.dickda', knowledge.path), 'utf8'), knowledge.content);
+
+  symlinkSync(learning, join(work, '.dickda/knowledge/link'));
+  for (const path of ['learning/Learning_Team.md', 'knowledge/../learning/Learning_Team.md', 'knowledge/link/Learning_Team.md']) {
+    assert.throws(() => applyProseRefinements(work, { knowledgeUpdates: [{ path, content: 'invalid' }] }), /知识更新|相对路径|符号链接/);
+  }
+  assert.equal(readFileSync(join(learning, 'Learning_Team.md'), 'utf8'), keep);
+});
+
 test('full dickda-develop lifecycle persists investigation archive onto delivery branch across ephemeral step worktrees', t => {
   const { dir, origin, env, git } = createGitRepo(t);
 
@@ -376,8 +567,10 @@ if (prompt.includes('思考者（Thinker）')) {
   console.log(JSON.stringify({ session: 'lead-1', branch: 'b', head: git('rev-parse', 'HEAD'), answer: '\`\`\`json\\n' + JSON.stringify(action) + '\\n\`\`\`' }));
 } else {
   fs.writeFileSync('feature.mjs', 'export const feature = true;\\n');
-  fs.writeFileSync('.dickda/tasks/logs/investigate.md', '# Investigation Log\\nConfirmed proposal A.\\n');
-  git('add', 'feature.mjs', '.dickda/tasks/logs/investigate.md');
+  // Exercise delivery with a job log as the only investigation file.
+  fs.rmSync('.dickda/tasks/logs/investigate.md');
+  fs.writeFileSync('.dickda/tasks/logs/impl-1.md', '# Investigation Log\\nConfirmed proposal A.\\n');
+  git('add', 'feature.mjs', '.dickda/tasks/logs');
   git('commit', '-m', 'feat: implement feature');
   console.log(JSON.stringify({ session: 'worker-1', branch: 'b', head: git('rev-parse', 'HEAD'), answer: '交付说明\\n1. 已完成\\n2. node --test 通过' }));
 }
@@ -444,7 +637,9 @@ if (prompt.includes('思考者（Thinker）')) {
   const inspectDir = join(dir, 'inspect-remote');
   git(dir, 'clone', '-q', '-b', lane.reqBranch, origin, inspectDir);
   assert.equal(backups(inspectDir, 5).length, 1, 'archive must be persisted in Git on the delivered commit');
-  assert.equal(readFileSync(join(inspectDir, '.dickda/tasks/logs/investigate.md'), 'utf8').trim(), '# !!!DICKDA_INVESTIGATE!!!');
+  assert.equal(readFileSync(join(inspectDir, '.dickda/tasks/logs/investigate.md'), 'utf8'), INVESTIGATE_MARKER);
+  assert.ok(!existsSync(join(inspectDir, '.dickda/tasks/logs/impl-1.md')));
+  assert.ok(buildRefineContext(inspectDir).files.some(f => f.body.includes('Confirmed proposal A.')));
 
   const ghCalls = readFileSync(ghCallsFile, 'utf8').trim().split('\n').map(l => JSON.parse(l));
   assert.ok(ghCalls.filter(c => c.args[0] === 'pr').every(c => c.thread === null));
@@ -613,7 +808,6 @@ if (prompt.includes('Refine 归档复盘输入')) {
 
 test('custom prompts, sidebar panel, and interactive HTML dashboard work cohesively', t => {
   const { work, env, dir } = createGitRepo(t);
-  process.env.CODA_PLUGIN_STATE = env.CODA_PLUGIN_STATE;
   init(work);
 
   assert.deepEqual(builtinPrompts().map(p => p.id), ['general', 'cpp']);

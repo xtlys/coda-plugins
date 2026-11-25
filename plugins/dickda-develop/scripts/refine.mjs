@@ -2,9 +2,9 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { backups, consumeBackup, layerHealth } from './assets.mjs';
+import { backups, consumeBackup, layerHealth, walkMarkdown } from './assets.mjs';
 import { agentArgs, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
-import { appendGithubOutput, atomic, git, inside, managed, projectGroup, repo, requireValue } from './store.mjs';
+import { appendGithubOutput, atomic, git, managed, projectGroup, repo, requireValue } from './store.mjs';
 import { extractJsonBlock, runCodeVerifiers } from './verify.mjs';
 
 function runCmd(bin, args, options = {}) {
@@ -24,11 +24,10 @@ function privateGh(...args) {
 export function buildRefineContext(root) {
   const earliest = backups(root, 1)[0] ?? null;
   if (!earliest) return { hasArchive: false, archive: null, files: [], health: layerHealth(root) };
-  const dir = inside(root, earliest);
-  const files = readdirSync(dir)
-    .filter(name => name.endsWith('.md'))
-    .sort()
-    .map(name => ({ name, body: readFileSync(join(dir, name), 'utf8') }));
+  const files = walkMarkdown(root, earliest).map(({ path, body }) => ({
+    name: path.slice(earliest.length + 1),
+    body,
+  }));
   return {
     hasArchive: true,
     archive: earliest,
@@ -47,24 +46,40 @@ export function normalizeDiagnosis(raw = {}) {
     actions: Array.isArray(raw.actions) ? raw.actions : [],
     obsoleteProse: Array.isArray(raw.obsoleteProse) ? raw.obsoleteProse : [],
     learningUpdates: Array.isArray(raw.learningUpdates) ? raw.learningUpdates : [],
+    knowledgeUpdates: Array.isArray(raw.knowledgeUpdates) ? raw.knowledgeUpdates : [],
   };
 }
 
 export function applyProseRefinements(root, diagnosis) {
-  const target = managed(root, 'learning/Learning_General.md');
-  if (!existsSync(target)) return;
-  let content = readFileSync(target, 'utf8');
-  for (const obsolete of diagnosis.obsoleteProse ?? []) {
-    if (typeof obsolete === 'string' && obsolete.trim()) {
-      content = content.split(/\r?\n/).filter(line => !line.includes(obsolete.trim())).join('\n');
+  const edits = new Map();
+  const obsolete = (diagnosis.obsoleteProse ?? []).filter(s => typeof s === 'string' && s.trim()).map(s => s.trim());
+  const learning = managed(root, 'learning');
+  if (obsolete.length && existsSync(learning)) {
+    for (const entry of readdirSync(learning, { withFileTypes: true })) {
+      if (!entry.isFile() || !/^Learning_.*\.md$/.test(entry.name)) continue;
+      const file = managed(root, `learning/${entry.name}`);
+      const content = readFileSync(file, 'utf8');
+      const kept = content.split('\n').filter(line => !obsolete.some(rule => line.includes(rule))).join('\n');
+      if (kept !== content) edits.set(file, kept);
     }
   }
   for (const note of diagnosis.learningUpdates ?? []) {
-    if (typeof note === 'string' && note.trim() && !content.includes(note.trim())) {
-      content = `${content.trimEnd()}\n- ${note.trim()} [1]\n`;
+    const { file = 'Learning_General.md', text } = typeof note === 'string' ? { text: note } : note ?? {};
+    if (typeof text !== 'string' || !text.trim()) continue;
+    requireValue(['Learning_General.md', 'Learning_Coding.md', 'Learning_Testing.md'].includes(file), `无效的经验文档：${file}`);
+    const target = managed(root, `learning/${file}`);
+    const content = edits.get(target) ?? (existsSync(target) ? readFileSync(target, 'utf8') : '');
+    const bullet = `- ${text.trim()}`;
+    const recorded = new RegExp(`^${RegExp.escape(bullet)}(?: \\[\\d+\\])?[ \\t]*$`, 'm');
+    if (!recorded.test(content)) edits.set(target, `${content}${content && !content.endsWith('\n') ? '\n' : ''}${bullet} [1]\n`);
+  }
+  if (Array.isArray(diagnosis.knowledgeUpdates)) {
+    for (const { path, content } of diagnosis.knowledgeUpdates) {
+      requireValue(typeof path === 'string' && path.startsWith('knowledge/') && path.endsWith('.md') && typeof content === 'string', '知识更新须包含 knowledge/ 下的 Markdown 路径和正文');
+      edits.set(managed(root, path), content);
     }
   }
-  atomic(target, `${content.trimEnd()}\n`);
+  for (const [file, content] of edits) atomic(file, content);
 }
 
 // Chain refactor engineer commits sequentially onto startHead, then commit L4 prose updates + archive consumption,
@@ -209,7 +224,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           rolePrompt('thinker'),
           `## Refine 归档复盘输入（归档目录：${state.archive}）\n${archiveText}`,
           `## 当前项目五层健康度\n\`\`\`json\n${JSON.stringify(state.health, null, 2)}\n\`\`\``,
-          `## 输出要求\n评估该归档暴露的痛点是否需要结构性演进或重构，并确定应落实到哪几个层次（L1 架构/接口重构、L2 .dickda/lints 可执行规则、L3 .dickda/verifiers 结果验证器、L4 知识/经验文档更新与旧口头规则瘦身）。在末尾输出 \`\`\`json 块：\n\`\`\`json\n{\n  "needsRefactor": true,\n  "layers": ["L2", "L4"],\n  "summary": "诊断结论摘要",\n  "actions": [{"layer": "L2", "trade": "architect", "difficulty": "normal", "title": "...", "task": "..."}],\n  "obsoleteProse": [],\n  "learningUpdates": []\n}\n\`\`\``,
+          'learningUpdates 中的字符串写入 Learning_General.md。也可用 {"file":"Learning_Coding.md","text":"经验条文"} 指定 General、Coding 或 Testing 文档。knowledgeUpdates 每项用 {"path":"knowledge/<name>.md","content":"完整正文"} 更新知识文档。',
+          `## 输出要求\n评估该归档暴露的痛点是否需要结构性演进或重构，并确定应落实到哪几个层次（L1 架构/接口重构、L2 .dickda/lints 可执行规则、L3 .dickda/verifiers 结果验证器、L4 知识/经验文档更新与旧口头规则瘦身）。在末尾输出 \`\`\`json 块：\n\`\`\`json\n{\n  "needsRefactor": true,\n  "layers": ["L2", "L4"],\n  "summary": "诊断结论摘要",\n  "actions": [{"layer": "L2", "trade": "architect", "difficulty": "normal", "title": "...", "task": "..."}],\n  "obsoleteProse": [],\n  "learningUpdates": [],\n  "knowledgeUpdates": []\n}\n\`\`\``,
         ].join('\n\n');
         writeFileSync(promptFile, prompt);
 

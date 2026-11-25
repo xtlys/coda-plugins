@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -133,7 +133,7 @@ export function init(root) {
 
   const learningSeed = '# !!!LEARNING!!!\n\n## Orders\n\n## Refinements\n';
   const defaults = {
-    '.gitignore': '# Local temporary scratch only; runtime state lives in git-dir/dickda/\n/*.tmp\n',
+    '.gitignore': '# Local temporary scratch only; runtime state lives in git-dir/dickda/\n/*.tmp\n/*.tmp.html\n',
     'project.md': '# Project Facts\n\n## Build & Static Check Commands\n\n## Verification & UI Preview Commands\n\n## Protected / Do-Not-Modify Paths\n',
     'tasks/TODO_TASK.md': '# TODO TASK\n',
     'tasks/PLAN_5L.md': '# 五层技术方案\n\n## L1 · Codebase\n\n## L2 · Static Analysis\n\n## L3 · Verification\n\n## L4 · Work Graph & Prose\n\n## L5 · Human Review\n',
@@ -148,6 +148,13 @@ export function init(root) {
     const target = managed(root, name);
     mkdirSync(dirname(target), { recursive: true });
     if (!existsSync(target)) writeFileSync(target, content, { flag: 'wx' });
+    else if (name === '.gitignore') {
+      const rules = readFileSync(target, 'utf8');
+      if (!/^\/?\*\.tmp\.html[ \t]*$/m.test(rules)) {
+        const newline = rules.includes('\r\n') ? '\r\n' : '\n';
+        appendFileSync(target, `${rules && !rules.endsWith('\n') ? newline : ''}/*.tmp.html${newline}`);
+      }
+    }
   }
 
   register(root);
@@ -158,11 +165,17 @@ export function listFiles(root, folder, suffixes) {
   const dir = managed(root, folder);
   if (!existsSync(dir)) return [];
   const allowed = Array.isArray(suffixes) ? suffixes : [suffixes];
-  return readdirSync(dir, { withFileTypes: true })
-    .filter(entry => entry.isFile() && !entry.isSymbolicLink() && allowed.some(s => entry.name.endsWith(s)))
-    .map(entry => entry.name)
-    .sort()
-    .map(name => managed(root, `${folder}/${name}`));
+  const files = [];
+  function visit(directory, prefix) {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const name = `${prefix}/${entry.name}`;
+      const path = managed(root, name);
+      if (entry.isDirectory()) visit(path, name);
+      else if (entry.isFile() && allowed.some(suffix => entry.name.endsWith(suffix))) files.push(path);
+    }
+  }
+  visit(dir, folder);
+  return files.sort();
 }
 
 export function appendGithubOutput(values, file = process.env.GITHUB_OUTPUT) {
