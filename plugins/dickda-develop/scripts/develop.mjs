@@ -669,15 +669,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         git('checkout', '-B', state.reqBranch, head);
 
         let lastArchive = state.lastArchive || '';
-        if (existsSync(managed(root, 'tasks/logs/investigate.md'))) {
-          const archived = remember(root);
-          if (archived.archived) {
-            git('add', '.dickda/learning', '.dickda/tasks/logs/investigate.md');
-            git('commit', '-m', `chore(dickda): archive investigation log (${archived.path})`);
-            head = git('rev-parse', 'HEAD');
-            git('push', '--quiet', '--no-follow-tags', state.remote, `${head}:refs/heads/${state.reqBranch}`);
-            lastArchive = archived.path;
-          }
+        const archived = remember(root);
+        if (archived.archived) {
+          git('add', '-A', '.dickda/learning', '.dickda/tasks/logs');
+          git('commit', '-m', `chore(dickda): archive investigation log (${archived.path})`);
+          head = git('rev-parse', 'HEAD');
+          git('push', '--quiet', '--no-follow-tags', state.remote, `${head}:refs/heads/${state.reqBranch}`);
+          lastArchive = archived.path;
         }
 
         const nextState = { ...state, head, lastArchive };
