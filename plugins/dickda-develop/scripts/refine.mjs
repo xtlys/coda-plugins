@@ -1,24 +1,21 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { checkApprovalPr, mergeApprovedPr, privateGh } from './approval.mjs';
 import { backups, consumeBackup, layerHealth, walkMarkdown } from './assets.mjs';
-import { agentArgs, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
-import { appendGithubOutput, atomic, git, managed, projectGroup, repo, requireValue } from './store.mjs';
+import { checkRunsText, jsonList, openMusts, reviewRange, reviewVerdict } from './review.mjs';
+import { agentArgs, effectiveSettings, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
+import { appendGithubOutput, atomic, git, inside, managed, projectGroup, remoteGit, repo, requireValue, save } from './store.mjs';
 import { extractJsonBlock, runCodeVerifiers } from './verify.mjs';
 
-function runCmd(bin, args, options = {}) {
-  return execFileSync(bin, args, {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'inherit'],
-    ...options,
-  }).trim();
+function fetchHead(root, remote, branch) {
+  remoteGit(root, 'fetch', '--quiet', remote, `refs/heads/${branch}`);
+  return git(root, 'rev-parse', 'FETCH_HEAD');
 }
 
-const gh = (...args) => runCmd('gh', args);
-function privateGh(...args) {
-  const { CODA_THREAD_ID: _thread, ...privateEnv } = process.env;
-  return runCmd('gh', args, { env: privateEnv });
+function isAncestor(root, ancestor, head) {
+  return spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', ancestor, head]).status === 0;
 }
 
 export function buildRefineContext(root) {
@@ -91,6 +88,7 @@ export function executeRefinePlan(root, {
   choice,
   decisionNote = '',
   diagnosis,
+  repair,
   settings = loadSettings(),
   runner,
   tempDir = process.env.RUNNER_TEMP || join(root, '.dickda'),
@@ -98,16 +96,24 @@ export function executeRefinePlan(root, {
   git(root, 'checkout', '-B', refineBranch, startHead);
   let currentHead = startHead;
 
-  if (choice === 'refactor' && diagnosis.actions?.length) {
+  // A failed initial execution has published no candidate. Replay its selected actions and consume the archive once.
+  const consume = !repair || existsSync(inside(root, archive));
+  let jobs = consume && choice === 'refactor' ? diagnosis.actions ?? [] : [];
+  if (repair && !jobs.length) {
+    const owner = choice === 'refactor' ? diagnosis.actions?.at(-1) : null;
+    jobs = [{ trade: owner?.trade || 'builder', difficulty: owner?.difficulty, layer: diagnosis.layers.join('、'), title: '修复提纯提交', task: diagnosis.summary }];
+  }
+  if (jobs.length) {
     mkdirSync(tempDir, { recursive: true });
-    for (const [idx, item] of diagnosis.actions.entries()) {
+    for (const [idx, item] of jobs.entries()) {
       const trade = ['architect', 'builder', 'verifier'].includes(item.trade) ? item.trade : 'architect';
-      const resolved = resolveEngineer(trade, { difficulty: item.difficulty === 'hard' ? 'hard' : 'normal' }, settings);
+      const resolved = resolveEngineer(trade, { difficulty: item.difficulty === 'hard' ? 'hard' : 'normal', rejections: repair?.attempts }, settings);
       const promptFile = join(tempDir, `refine-exec-${idx}.tmp`);
       writeFileSync(promptFile, [
         rolePrompt(trade),
         `## Refine 落层重构任务（目标层级：${item.layer}）\n标题：${item.title}\n\n${item.task}`,
         decisionNote ? `交互者补充要求：\n${decisionNote}` : '',
+        repair ? `## 修复要求\n${repair.reason}\n保留已采纳的提纯改动，归档目录由流程管理。\n${repair.syncInstruction || ''}` : '',
         '完成后必须在当前分支产生 Git 提交（不要自行推送远端或开 PR）。',
       ].filter(Boolean).join('\n\n'));
 
@@ -129,21 +135,23 @@ export function executeRefinePlan(root, {
       try { reply = JSON.parse(run.stdout); } catch {}
       requireValue(reply?.head, `Refine 重构工单「${item.title}」未返回有效交付提交 SHA，保留原归档未消费`);
       const delivered = git(root, 'rev-parse', '--verify', `${reply.head}^{commit}`);
-      const noNewCommit = spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', delivered, currentHead]).status === 0;
-      requireValue(!noNewCommit, `Refine 重构工单「${item.title}」未产生新提交（${delivered}），保留原归档未消费`);
-      const isDescendant = spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', currentHead, delivered]).status === 0;
-      requireValue(isDescendant, `Refine 重构工单「${item.title}」返回的提交（${delivered}）不是前序基线（${currentHead}）的严格后代，拒绝丢弃前序改动并保留原归档未消费`);
+      requireValue(delivered !== currentHead, `Refine 重构工单「${item.title}」未产生新提交（${delivered}），保留原归档未消费`);
+      requireValue(isAncestor(root, currentHead, delivered), `Refine 重构工单「${item.title}」返回的提交（${delivered}）不是前序基线（${currentHead}）的严格后代，拒绝丢弃前序改动并保留原归档未消费`);
       git(root, 'checkout', '-B', refineBranch, delivered);
       currentHead = delivered;
     }
   }
 
-  applyProseRefinements(root, diagnosis);
-  consumeBackup(root, archive);
-  git(root, 'add', '-A', '.dickda');
-  requireValue(Boolean(git(root, 'status', '--porcelain', '--', '.dickda')), 'Refine 消费归档后未检测到 .dickda 变更');
-  git(root, 'commit', '-m', `chore(dickda): refine ${archive} (${diagnosis.layers.join(',')})`);
-  currentHead = git(root, 'rev-parse', 'HEAD');
+  if (consume) {
+    applyProseRefinements(root, diagnosis);
+    consumeBackup(root, archive);
+    git(root, 'add', '-A', '.dickda');
+    requireValue(Boolean(git(root, 'status', '--porcelain', '--', '.dickda')), 'Refine 消费归档后未检测到 .dickda 变更');
+    git(root, 'commit', '-m', `chore(dickda): refine ${archive} (${diagnosis.layers.join(',')})`);
+    currentHead = git(root, 'rev-parse', 'HEAD');
+  } else {
+    requireValue(!existsSync(inside(root, archive)), '修复提交恢复了已消费的归档');
+  }
 
   const verifyOutcome = runCodeVerifiers(root);
   requireValue(verifyOutcome.passed, `Refine 后的 L2/L3 验证未通过，拒绝持久化并保留原分支归档：\n${verifyOutcome.summary}`);
@@ -154,14 +162,27 @@ function rmIfExists(file) {
   if (existsSync(file)) writeFileSync(file, '');
 }
 
+function refineSummary(state) {
+  const verdict = reviewVerdict(state.head, state.review);
+  const kept = Object.entries(state.kept ?? {});
+  requireValue(verdict.route === 'pr' || (verdict.route === 'changes' && state.kept?.[state.head]), verdict.reason);
+  return [
+    `## Dickda 五层提纯 · ${state.archive}`,
+    `落点层级：${state.choice === 'prose' ? 'L4' : state.diagnosis.layers.join('、')}\n\n${state.diagnosis.summary}`,
+    `### 验证结果（${state.head}）\n${state.verifySummary}\n${checkRunsText(state.checks, state.head)}`,
+    `### 独立审查 · ${state.review.decision}（${state.reviewer}）\n${state.review.line || ''}\n${state.review.report || ''}`,
+    kept.length ? `### 交互者不采纳审查意见的依据，交用户最终裁决\n${kept.map(([head, reason]) => `- ${head}（REQUEST_CHANGES）：${reason}`).join('\n')}` : '',
+  ].filter(Boolean).join('\n\n');
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const env = process.env;
     const action = process.argv[2];
     const stateFile = join(env.CODA_ARTIFACTS, 'refine.json');
     const state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, 'utf8')) : null;
-    const saveState = next => writeFileSync(stateFile, `${JSON.stringify(next, null, 2)}\n`);
-    const settings = loadSettings(env.CODA_PLUGIN_SETTINGS);
+    const saveState = next => save(stateFile, next);
+    const settings = effectiveSettings(env);
 
     switch (action) {
       case 'collect': {
@@ -170,12 +191,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           break;
         }
         const root = repo();
-        const repoInfo = JSON.parse(gh('repo', 'view', '--json', 'nameWithOwner,defaultBranchRef'));
+        const repoInfo = JSON.parse(privateGh('repo', 'view', '--json', 'nameWithOwner,defaultBranchRef'));
         const defaultBranch = repoInfo.defaultBranchRef.name;
         const base = (env.BASE || '').trim() || defaultBranch;
         const remote = `https://github.com/${repoInfo.nameWithOwner}.git`;
-        git(root, 'fetch', '--quiet', remote, base);
-        const baseCommit = git(root, 'rev-parse', 'FETCH_HEAD');
+        const baseCommit = fetchHead(root, remote, base);
 
         let startHead = (env.RUN_COMMIT || '').trim() || baseCommit;
         if (env.BRANCH && env.BRANCH.trim() && env.BRANCH.trim() !== base) {
@@ -184,8 +204,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           if (hasLocal) {
             startHead = git(root, 'rev-parse', '--verify', `refs/heads/${b}^{commit}`);
           } else {
-            git(root, 'fetch', '--quiet', remote, b);
-            startHead = git(root, 'rev-parse', 'FETCH_HEAD');
+            startHead = fetchHead(root, remote, b);
           }
         }
         git(root, 'checkout', '--detach', '--force', '--quiet', startHead);
@@ -193,11 +212,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const ctx = buildRefineContext(root);
         const refineBranch = `dickda/refine-${env.GITHUB_RUN_ID}`;
         if (ctx.hasArchive) {
-          git(root, 'push', '--quiet', '--force', '--no-follow-tags', remote, `${startHead}:refs/heads/${refineBranch}`);
+          remoteGit(root, 'push', '--quiet', '--no-follow-tags', remote, `${startHead}:refs/heads/${refineBranch}`);
         }
         const initial = {
           remote,
           base,
+          baseCommit,
           refineBranch,
           head: startHead,
           group: projectGroup(root),
@@ -214,8 +234,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
       case 'diagnose': {
         const root = repo();
-        git(root, 'fetch', '--quiet', state.remote, state.refineBranch);
-        const head = git(root, 'rev-parse', 'FETCH_HEAD');
+        const head = fetchHead(root, state.remote, state.refineBranch);
         git(root, 'checkout', '--detach', '--force', '--quiet', head);
 
         const promptFile = join(env.RUNNER_TEMP, 'refine-thinker.md');
@@ -258,53 +277,136 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         break;
       }
 
-      case 'execute': {
+      case 'execute':
+      case 'repair': {
         const root = repo();
-        git(root, 'fetch', '--quiet', state.remote, state.refineBranch);
-        const startHead = git(root, 'rev-parse', 'FETCH_HEAD');
-        const diagnosis = state.diagnosis ?? normalizeDiagnosis({});
+        const attempts = state.repairAttempts || 0;
+        const repairing = action === 'repair';
+        const reason = state.failure || `提纯执行中断，请查看 coda://workflow-runs/${env.GITHUB_RUN_ID} 中的执行日志。`;
+        try {
+          let repair;
+          let baseCommit = state.baseCommit;
+          if (repairing) {
+            requireValue(attempts < settings.escalationThreshold + 1, `自动修复已达 ${attempts} 次`);
+            state.repairAttempts = attempts + 1;
+            saveState(state);
+            repair = { reason, attempts };
+            if (state.syncBase) {
+              baseCommit = fetchHead(root, state.remote, state.base);
+              repair.syncInstruction = `执行 git fetch ${state.remote} refs/heads/${state.base}，将默认分支提交 ${baseCommit} 合入提纯分支并解决冲突。`;
+            }
+          }
+          const startHead = fetchHead(root, state.remote, state.refineBranch);
+          requireValue(isAncestor(root, state.head, startHead), '提纯分支历史已改变，请核对并恢复前序提交');
+          const executed = executeRefinePlan(root, { ...state, startHead, settings, repair });
+          if (state.syncBase) requireValue(isAncestor(root, baseCommit, executed.head), `修复提交尚未合入默认分支提交 ${baseCommit}`);
+          remoteGit(root, 'push', '--quiet', '--no-follow-tags', state.remote, `${executed.head}:refs/heads/${state.refineBranch}`);
+          saveState({ ...state, ...executed, baseCommit, failure: '', syncBase: false });
+          appendGithubOutput({ head: executed.head });
+        } catch (error) {
+          saveState({ ...state, failure: [repairing ? reason : '', error.message].filter(Boolean).join('\n') });
+          throw error;
+        }
+        break;
+      }
 
-        const executed = executeRefinePlan(root, {
-          startHead,
-          refineBranch: state.refineBranch,
-          archive: state.archive,
-          choice: state.choice,
-          decisionNote: state.decisionNote,
-          diagnosis,
-          settings,
+      case 'failed': {
+        const failure = `${env.STEP}未通过（提交 ${state.head}，运行 coda://workflow-runs/${env.GITHUB_RUN_ID}）`;
+        saveState({ ...state, failure: [failure, env.LINES].filter(Boolean).join('\n') });
+        break;
+      }
+
+      case 'repair-status': {
+        appendGithubOutput({ reason: state.failure, head: state.head });
+        break;
+      }
+
+      case 'continue-repair': {
+        saveState({ ...state, failure: `${state.failure}\n交互者指示：${env.NOTE}`, repairAttempts: 0 });
+        break;
+      }
+
+      case 'prepare-review': {
+        const checks = { head: state.head, runs: JSON.parse(env.RUNS || '[]') };
+        const hard = state.choice === 'refactor' && state.diagnosis.actions.some(job => job.difficulty === 'hard');
+        const reviewer = resolveEngineer('verifier', { difficulty: hard ? 'hard' : 'normal', rejections: state.repairAttempts }, settings);
+        saveState({ ...state, checks, reviewer: reviewer.summary });
+        appendGithubOutput({
+          ...reviewRange(state),
+          head: state.head,
+          tier: reviewer.tier,
+          task: `消费归档 ${state.archive}，交互者选择 ${state.choice}。\n${JSON.stringify(state.diagnosis)}\n${state.decisionNote}`,
+          evidence: `${state.verifySummary}\n${checkRunsText(checks, state.head)}`,
         });
+        break;
+      }
 
-        git(root, 'push', '--quiet', '--force', '--no-follow-tags', state.remote, `${executed.head}:refs/heads/${state.refineBranch}`);
-        saveState({ ...state, head: executed.head, verifySummary: executed.verifySummary });
-        appendGithubOutput({ head: executed.head });
+      case 'reviewed': {
+        let review;
+        try { review = JSON.parse(env.REVIEW || 'null'); } catch { review = null; }
+        const verdict = reviewVerdict(state.head, review);
+        const kept = { ...state.kept };
+        delete kept[state.head];
+        if (verdict.route === 'retry') {
+          saveState({ ...state, review: null, kept });
+        } else {
+          // review-commit can return unnumbered new findings. Keep the same id for each upheld finding on re-review.
+          const openReviewFindings = openMusts(review, jsonList(env.PREVIOUS) ?? []).map((f, index) =>
+            ({ ...f, id: f.id ?? `${review.head.slice(0, 12)}-${index + 1}` }));
+          saveState({ ...state, review, lastReviewedHead: review.head, openReviewFindings, kept });
+        }
+        appendGithubOutput(verdict);
+        break;
+      }
+
+      case 'review-decision': {
+        const { choice, note } = JSON.parse(env.DECISION);
+        const verdict = reviewVerdict(state.head, state.review);
+        requireValue(verdict.route === 'changes', '当前提交没有待裁决的审查意见');
+        if (choice === 'kept') {
+          requireValue(note?.trim(), '不采纳审查意见须写明客观依据');
+          saveState({ ...state, kept: { ...state.kept, [state.head]: note.trim() } });
+        } else {
+          requireValue(choice === 'repair', '请选择修复或记录不采纳依据');
+          const issues = state.openReviewFindings.map(f => `- ${f.title}（${f.location}）：${f.detail}`);
+          saveState({ ...state, failure: [verdict.reason, ...issues, note].filter(Boolean).join('\n') });
+        }
+        appendGithubOutput({ route: choice });
         break;
       }
 
       case 'deliver': {
-        const diagnosis = state.diagnosis ?? normalizeDiagnosis({});
         const bodyFile = join(env.CODA_ARTIFACTS, 'refine-pr.md');
-        const body = [
-          `## Dickda 五层提纯与重构（消费归档 \`${state.archive}\`）`,
-          `- **落点层级**：${diagnosis.layers.join('、')}`,
-          `- **诊断摘要**：${diagnosis.summary}`,
-          state.verifySummary ? `### 验证结果\n${state.verifySummary}` : '',
-        ].filter(Boolean).join('\n\n');
-        writeFileSync(bodyFile, body);
-
-        const existing = JSON.parse(privateGh('pr', 'list', '--repo', state.remote, '--head', state.refineBranch, '--base', state.base, '--state', 'open', '--json', 'url'));
-        const pr = existing[0]?.url || privateGh(
-          'pr', 'create', '--repo', state.remote,
-          '--base', state.base, '--head', state.refineBranch,
-          '--title', `refactor(dickda): refine ${state.archive} (${diagnosis.layers.join(',')})`,
-          '--body-file', bodyFile
-        );
+        const summary = refineSummary(state);
+        writeFileSync(bodyFile, summary);
+        let pr = state.pr || JSON.parse(privateGh('pr', 'list', '--repo', state.remote, '--head', state.refineBranch, '--base', state.base, '--state', 'open', '--json', 'url'))[0]?.url;
+        if (pr) privateGh('pr', 'edit', pr, '--body-file', bodyFile);
+        else pr = privateGh('pr', 'create', '--repo', state.remote, '--base', state.base, '--head', state.refineBranch,
+          '--title', `refactor(dickda): refine ${state.archive}`, '--body-file', bodyFile);
         saveState({ ...state, pr });
-        appendGithubOutput({
-          consumed: state.archive,
-          commit: state.head,
-          pr,
-          summary: `已完成 ${state.archive} 的五层提纯（落点：${diagnosis.layers.join('、')}，提交 ${state.head}，PR ${pr}）。`,
-        });
+        appendGithubOutput({ commit: state.head, pr, summary });
+        break;
+      }
+
+      case 'approval-check': {
+        checkApprovalPr(state);
+        appendGithubOutput({ summary: refineSummary(state) });
+        break;
+      }
+
+      case 'merge': {
+        const result = mergeApprovedPr(state, settings.mergeMethod);
+        if (result.route === 'conflict') {
+          saveState({ ...state, syncBase: true, failure: `PR ${state.pr} 与默认分支 ${state.base} 有合并冲突，请同步并解冲突后重验。` });
+        }
+        appendGithubOutput(result);
+        break;
+      }
+
+      case 'stopped': {
+        const reason = env.REASON || '暂不合并，保留原归档。';
+        saveState({ ...state, stopReason: reason });
+        appendGithubOutput({ reason, branch: state.refineBranch, pr: state.pr || '' });
         break;
       }
 

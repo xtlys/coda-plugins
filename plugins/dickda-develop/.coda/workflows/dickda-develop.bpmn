@@ -333,7 +333,6 @@
         <coda:output name="previous" />
         <coda:output name="skipReview" />
         <coda:output name="tier" />
-        <coda:output name="reviewer" />
         <coda:output name="task" />
         <coda:output name="evidence" />
       </extensionElements>
@@ -351,6 +350,8 @@
         <coda:param name="commit" value="=prepare-verify.head" />
         <coda:param name="branch" value="=lane.reqBranch" />
         <coda:param name="tier" value="=prepare-verify.tier" />
+        <coda:param name="verifier" value="=inputs.verifier" />
+        <coda:param name="verifierSenior" value="=inputs.verifierSenior" />
         <coda:param name="ui" value="true" />
         <coda:param name="device" value="=inputs.device" />
         <coda:param name="task" value="=prepare-verify.task" />
@@ -372,13 +373,15 @@
     </sequenceFlow>
     <sequenceFlow id="dual-to-review" sourceRef="dual-result" targetRef="final-review" />
 
-    <callActivity id="final-review" name="Sol 独立代码审查（review-commit）" calledElement="review-commit">
+    <callActivity id="final-review" name="独立代码审查（review-commit）" calledElement="review-commit">
       <extensionElements>
         <coda:param name="base" value="=prepare-verify.base" />
         <coda:param name="previous" value="=prepare-verify.previous" />
         <coda:param name="head" value="=prepare-verify.head" />
         <coda:param name="task" value="=prepare-verify.task" />
-        <coda:param name="reviewer" value="=prepare-verify.reviewer" />
+        <coda:param name="reviewer" value='=if prepare-verify.tier = "senior"
+          then (if inputs.verifierSenior != null then inputs.verifierSenior else vars.dickda-develop.verifierSenior)
+          else (if inputs.verifier != null then inputs.verifier else vars.dickda-develop.verifierStandard)' />
         <coda:param name="evidence" value="=prepare-verify.evidence" />
         <coda:param name="focus" value="请对照 .dickda/tasks/TODO_TASK.md、PLAN_5L.md、.dickda/lints 与 .dickda/verifiers 审查真实可达缺陷与契约一致性。" />
       </extensionElements>

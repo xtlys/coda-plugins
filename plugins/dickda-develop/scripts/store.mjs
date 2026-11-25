@@ -34,6 +34,19 @@ export function git(root, ...args) {
   }).trim();
 }
 
+export function remoteGit(root, ...args) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    } catch (error) {
+      const transient = /\bEOF\b|SSL_ERROR_(?:SYSCALL|ZERO_RETURN)|SSL connect error|TLS connection was non-properly terminated|ECONNRESET|connection (?:was )?reset|timed?\s*out|HTTP(?:\/\S+)?\s+5\d\d\b|returned error: 5\d\d\b|curl (?:18|28|35|52|55|56|92)\b/i.test(error.stderr);
+      if (!transient || attempt === 3) throw error;
+      console.error(`git ${args[0]} 网络中断，第 ${attempt + 1} 次尝试`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250 * 2 ** (attempt - 1));
+    }
+  }
+}
+
 export function repo(cwd = process.cwd()) {
   return realpathSync(git(resolve(cwd), 'rev-parse', '--show-toplevel'));
 }

@@ -31,7 +31,8 @@ description: 采用 Dickda 五层倒金字塔开发工作流：以交互者-思�
   tasks/
     TODO_TASK.md        # 当前需求逐字原文
     PLAN_5L.md          # 思考者产出的五层技术方案（见 references/blueprint.md）
-    logs/               # 实验调查与主控裁决记录
+    logs/<jobId>.md     # 每张并发工单独立记录，交付前聚合归档
+    logs/investigate.md # 无工单 ID 时使用
   lints/                # L2 可执行规约脚本（*.mjs / *.sh，由 dickda lint 执行）
   verifiers/            # L3 结果导向验证资产（代码测试脚本 + Agent/UI 验收规约 *.md/*.json）
   knowledge/            # L4 知识库（Index.md 与领域设计文档）
@@ -41,10 +42,10 @@ description: 采用 Dickda 五层倒金字塔开发工作流：以交互者-思�
 
 ## 3. 标准工作流入口
 
-1. **需求开发与交付（`dickda-develop`）**：
-   - 交互者与用户对齐需求后，可先生成交互看板（`dickda dashboard --output <path.html>` 配合 `visualize`），再用 `workflow_run`（`workflow: "dickda-develop"`, `confirm: true`）交用户开工；
-   - 流程自动串联：**思考者产出 `PLAN_5L.md` → 主控并发派发架构/实现/验证工单（支持自动升级高级工程师） → 双轨验证（`dickda-verify`） → 私有交付 PR 与批准合并 → 自动 `remember` 归档**。
-2. **独立双轨验证（`dickda-verify`）**：并行运行 L2/L3 确定性代码检查与 `verifier`（Sol）黑盒/UI 实证验收。
-3. **五层重构飞轮（`dickda-refine`）**：读取最早未消费的 `.dickda/learning/<timestamp>` 归档，先由**思考者 + 交互者**思考是否需要重构及落入 L1~L4 哪一层，再交执行层落地重构并精简过时口头规则。
+1. **需求开发与交付（`dickda-develop`）**。交互者对齐需求后，用 `workflow_run`（`workflow: "dickda-develop"`、`confirm: true`）发起流程。思考者提交 `PLAN_5L.md` 后默认暂停。交互者向用户讲解五层方案，说明是否建议开工及理由，用户点击「确认开工」后主控才开始派单。已有完整方案也需确认，显式选择 `fast` 才直接派工。
+   - 主控续跑时根据最新提交、提交列表与差异统计恢复代码视图。派工里程碑通过 `tell-session` 同步到交互者会话。打回后重派或升级须带上 `previousHead` 和原因。
+   - 每张工单写 `.dickda/tasks/logs/<jobId>.md`。交付前 `remember` 聚合日志、需求与方案到同一归档并提交，随后验证归档所在提交。终审要求修改时可派修，或对同一已验证提交逐条记录客观的不采纳依据，将原结论和依据交用户在批准卡裁决。
+2. **独立双轨验证（`dickda-verify`）**。代码轨运行 L2/L3 检查。启用 Agent/UI 轨时，先检出目标提交查找规约。无规约直接记录跳过，有规约且填写了设备才解析并独占设备。常规和高级验证者均支持本次流程覆盖。
+3. **归档提纯（`dickda-refine`）**。思考者诊断最早的归档，交互者选择 L1–L4 重构、仅更新 L4 或保留归档。工程师提交后运行代码验证、项目检查和独立审查。检查失败退回修复，审查未完成可重试或停止。要求修改由交互者派修或写明不采纳依据。私有 PR 通过合并前和 GitHub 检查后，用户批准固定提交合入默认分支。冲突解开后重新检查、审查和批准，暂不合并则保留 PR 与原归档。
 
 详见 [五层方案规范](references/blueprint.md) 与 [工作流编排说明](references/workflows.md)。

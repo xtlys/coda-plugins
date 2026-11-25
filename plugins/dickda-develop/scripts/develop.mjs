@@ -2,44 +2,34 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { checkApprovalPr, mergeApprovedPr, privateGh } from './approval.mjs';
 import { checkSpecLock, remember, runLints } from './assets.mjs';
 import { enabledGuidelinesDigest } from './prompts.mjs';
-import { TRADES, agentArgs, formatAgent, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
-import { appendGithubOutput, atomic, init, managed, projectGroup, repo, requireValue } from './store.mjs';
+import { checkRunsText, jsonList, openMusts, requestedChanges, reviewRange, reviewVerdict } from './review.mjs';
+import { TRADES, agentArgs, effectiveSettings, formatAgent, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
+import { appendGithubOutput, atomic, init, managed, projectGroup, remoteGit, repo, requireValue } from './store.mjs';
 import { extractJsonBlock } from './verify.mjs';
 
-function runCmd(bin, args, options = {}) {
+export { effectiveSettings };
+
+function runCmd(bin, args) {
   return execFileSync(bin, args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
-    ...options,
   }).trim();
 }
 
 const git = (...args) => runCmd('git', args);
 const gh = (...args) => runCmd('gh', args);
 
-function remoteGit(...args) {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return runCmd('git', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (error) {
-      const transient = /\bEOF\b|SSL_ERROR_(?:SYSCALL|ZERO_RETURN)|SSL connect error|TLS connection was non-properly terminated|ECONNRESET|connection (?:was )?reset|timed?\s*out|HTTP(?:\/\S+)?\s+5\d\d\b|returned error: 5\d\d\b|curl (?:18|28|35|52|55|56|92)\b/i.test(error.stderr);
-      if (!transient || attempt === 3) throw error;
-      console.error(`git ${args[0]} 网络中断，第 ${attempt + 1} 次尝试`);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250 * 2 ** (attempt - 1));
-    }
-  }
-}
-
 function fetchHead(remote, branch) {
-  remoteGit('fetch', '--quiet', remote, `refs/heads/${branch}`);
+  remoteGit('.', 'fetch', '--quiet', remote, `refs/heads/${branch}`);
   return git('rev-parse', 'FETCH_HEAD');
 }
 
 function retainWorkerHead(remote, id, head) {
   const ref = `refs/heads/dickda/prev-${process.env.GITHUB_RUN_ID}-${id}`;
-  remoteGit('push', '--quiet', '--force', '--no-follow-tags', remote, `${head}:${ref}`);
+  remoteGit('.', 'push', '--quiet', '--force', '--no-follow-tags', remote, `${head}:${ref}`);
   return ref;
 }
 
@@ -51,32 +41,7 @@ function releasePreviousRefs(ledger, all = false) {
 }
 
 function deleteRefs(remote, refs) {
-  if (refs.length) remoteGit('push', '--quiet', '--no-follow-tags', remote, ...refs.map(ref => `:${ref}`));
-}
-
-// Strip CODA_THREAD_ID so PR operations belong exclusively to dickda-develop and do not trigger duplicate PR lifecycles.
-function privateGh(...args) {
-  const { CODA_THREAD_ID: _thread, ...privateEnv } = process.env;
-  return runCmd('gh', args, { env: privateEnv });
-}
-
-function parseOverrideAgent(raw) {
-  if (!raw) return undefined;
-  const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  return parsed && typeof parsed === 'object' && parsed.agent ? parsed : undefined;
-}
-
-export function effectiveSettings(env = process.env) {
-  return loadSettings(env.CODA_PLUGIN_SETTINGS, {
-    'dickda-develop.thinker': parseOverrideAgent(env.THINKER),
-    'dickda-develop.lead': parseOverrideAgent(env.LEAD),
-    'dickda-develop.architectStandard': parseOverrideAgent(env.ARCHITECT),
-    'dickda-develop.architectSenior': parseOverrideAgent(env.ARCHITECT_SENIOR),
-    'dickda-develop.builderStandard': parseOverrideAgent(env.BUILDER),
-    'dickda-develop.builderSenior': parseOverrideAgent(env.BUILDER_SENIOR),
-    'dickda-develop.verifierStandard': parseOverrideAgent(env.VERIFIER),
-    'dickda-develop.verifierSenior': parseOverrideAgent(env.VERIFIER_SENIOR),
-  });
+  if (refs.length) remoteGit('.', 'push', '--quiet', '--no-follow-tags', remote, ...refs.map(ref => `:${ref}`));
 }
 
 export function enrichDispatchBatch(rawJobs, ledger = {}, settings = loadSettings()) {
@@ -276,37 +241,8 @@ export function evaluateVerificationGate({ head, verifyCommit, verifyPassed, ver
     };
   }
 
-  if (!review || typeof review !== 'object' || !review.decision) {
-    return {
-      route: 'retry',
-      reason: `提交 ${head} 的独立代码审查调用失败或未返回结论，不能放行交付。`,
-    };
-  }
-  if (review.head !== head) {
-    return {
-      route: 'retry',
-      reason: `独立代码审查返回的提交（${review.head || '空'}）与当前交付 HEAD（${head}）不一致，不能放行交付。`,
-    };
-  }
-  if (review.decision === 'INCOMPLETE') {
-    return {
-      route: 'retry',
-      reason: `提交 ${head} 的独立代码审查未完成（INCOMPLETE）：${review.line ?? '未知原因'}`,
-    };
-  }
-  if (review.decision === 'REQUEST_CHANGES') {
-    return {
-      route: 'lead',
-      reason: `### 独立代码审查（Sol）结论：REQUEST_CHANGES\n${review.line ?? ''}\n${review.report ?? ''}`,
-    };
-  }
-  if (review.decision === 'APPROVE' || review.decision === 'COMMENT') {
-    return { route: 'pr', reason: '' };
-  }
-  return {
-    route: 'retry',
-    reason: `未知的独立代码审查结论：${review.decision}`,
-  };
+  const verdict = reviewVerdict(head, review);
+  return verdict.route === 'changes' ? { ...verdict, route: 'lead' } : verdict;
 }
 
 function callCodaAgent(args, cwd = process.cwd()) {
@@ -315,12 +251,6 @@ function callCodaAgent(args, cwd = process.cwd()) {
   let parsed = null;
   try { parsed = JSON.parse(res.stdout); } catch {}
   return { status: res.status ?? 1, stdout: res.stdout, parsed };
-}
-
-function checkRunsText(record, head) {
-  if (!record || record.head !== head) return '当前提交尚未完成项目检查。';
-  const runs = typeof record.runs === 'string' ? JSON.parse(record.runs) : (record.runs ?? []);
-  return runs.map(r => `- ${r.workflow}：${r.state} coda://workflow-runs/${r.runId}`).join('\n') || '项目未声明 check 挂点流程。';
 }
 
 function dualReport(state) {
@@ -332,27 +262,6 @@ function dualReport(state) {
     sections.push(`**${label}**\n${detail || '无'}`);
   }
   return sections.filter(Boolean).join('\n\n');
-}
-
-function jsonList(value) {
-  if (typeof value === 'string') {
-    try { value = JSON.parse(value); } catch { return null; }
-  }
-  return Array.isArray(value) ? value : null;
-}
-
-function openMusts(review, previous) {
-  const findings = jsonList(review.findings);
-  const resolutions = jsonList(review.resolutions) ?? [];
-  if (!findings || previous.some(f => !resolutions.some(r => r?.id === f.id && ['resolved', 'withdrawn', 'upheld'].includes(r.status)))) return [];
-  return [
-    ...previous.filter(f => resolutions.some(r => r?.id === f.id && r.status === 'upheld')),
-    ...findings.filter(f => f?.level === 'must'),
-  ];
-}
-
-function requestedChanges(state, head) {
-  return state.review?.decision === 'REQUEST_CHANGES' && state.review.head === head && state.lastReviewedHead === head;
 }
 
 const ignoredLines = items => items.map((item, index) =>
@@ -450,7 +359,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           else if (branch !== base) startCommit = fetchHead(remote, branch);
         }
         const reqBranch = `dickda/req-${env.GITHUB_RUN_ID}`;
-        remoteGit('push', '--quiet', '--force', '--no-follow-tags', remote, `${startCommit}:refs/heads/${reqBranch}`);
+        remoteGit('.', 'push', '--quiet', '--force', '--no-follow-tags', remote, `${startCommit}:refs/heads/${reqBranch}`);
 
         let goal = (env.GOAL || '').trim();
         let title = (env.TITLE || '').trim() || goal.split(/\r?\n/)[0].slice(0, 80);
@@ -517,7 +426,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         if (git('status', '--porcelain', '--', '.dickda')) {
           git('commit', '-m', `chore(dickda): initialize .dickda assets for ${state.title}`);
           head = git('rev-parse', 'HEAD');
-          remoteGit('push', '--quiet', '--no-follow-tags', state.remote, `${head}:refs/heads/${state.reqBranch}`);
+          remoteGit('.', 'push', '--quiet', '--no-follow-tags', state.remote, `${head}:refs/heads/${state.reqBranch}`);
         }
         saveState({ ...state, head });
         appendGithubOutput({ head, hasPlan: Boolean(preview), preview });
@@ -551,7 +460,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         requireValue(validDescendant, `思考者返回的提交（${thoughtHead}）不是当前需求分支基线（${thinkBase}）的严格后代`);
         const preview = planPreview(git('show', `${thoughtHead}:.dickda/tasks/PLAN_5L.md`));
         requireValue(preview, '思考者提交的 PLAN_5L.md 须含 L1–L5 各层方案正文');
-        remoteGit('push', '--quiet', '--no-follow-tags', state.remote, `${thoughtHead}:refs/heads/${state.reqBranch}`);
+        remoteGit('.', 'push', '--quiet', '--no-follow-tags', state.remote, `${thoughtHead}:refs/heads/${state.reqBranch}`);
         saveState({ ...state, head: thoughtHead, planAnswer: call.parsed.answer ?? '', planFeedback: '' });
         appendGithubOutput({ head: thoughtHead, preview });
         break;
@@ -751,7 +660,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
                 record = { ...job, status: 'rejected', head: workerHead, error: `L2 Executable Lint 未通过：${detail}` };
               } else {
                 const jobRef = `dickda/job-${env.GITHUB_RUN_ID}-${job.id}`;
-                remoteGit('push', '--quiet', '--force', '--no-follow-tags', state.remote, `${workerHead}:refs/heads/${jobRef}`);
+                remoteGit('.', 'push', '--quiet', '--force', '--no-follow-tags', state.remote, `${workerHead}:refs/heads/${jobRef}`);
                 record = {
                   ...job,
                   status: 'succeeded',
@@ -801,7 +710,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           }
         }
         if (merged.changed) {
-          remoteGit('push', '--quiet', '--no-follow-tags', state.remote, `${merged.tip}:refs/heads/${state.reqBranch}`);
+          remoteGit('.', 'push', '--quiet', '--no-follow-tags', state.remote, `${merged.tip}:refs/heads/${state.reqBranch}`);
         }
         const cleanup = [...releasePreviousRefs(merged.ledger), ...results.filter(r => r.jobRef).map(r => `refs/heads/${r.jobRef}`)];
 
@@ -858,7 +767,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           git('add', '-A', '.dickda/learning', '.dickda/tasks/logs');
           git('commit', '-m', `chore(dickda): archive investigation log (${archived.path})`);
           head = git('rev-parse', 'HEAD');
-          remoteGit('push', '--quiet', '--no-follow-tags', state.remote, `${head}:refs/heads/${state.reqBranch}`);
+          remoteGit('.', 'push', '--quiet', '--no-follow-tags', state.remote, `${head}:refs/heads/${state.reqBranch}`);
           lastArchive = archived.path;
         }
 
@@ -875,18 +784,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const resolved = resolveEngineer('verifier', {
           difficulty: Object.values(state.ledger ?? {}).some(i => i.tier === 'senior') ? 'hard' : 'normal',
         }, settings);
-        const open = state.openReviewFindings ?? [];
-        const incremental = state.head !== state.lastReviewedHead && requestedChanges(state, state.lastReviewedHead)
-          && open.length > 0 && new Set(open.map(f => f.id)).size === open.length
-          && open.every(f => f.level === 'must' && ['id', 'kind', 'title'].every(key => typeof f[key] === 'string' && f[key].trim())
-            && typeof f.location === 'string' && typeof f.detail === 'string');
         appendGithubOutput({
           head: state.head,
-          base: incremental ? state.lastReviewedHead : state.baseCommit,
-          previous: incremental ? JSON.stringify(open.map(({ id, level, kind, title, location, detail }) => ({ id, level, kind, title, location, detail }))) : '',
+          ...reviewRange(state),
           skipReview: state.verifiedHead === state.head && state.rebuttedReviewHead === state.head && requestedChanges(state, state.head),
           tier: resolved.tier,
-          reviewer: JSON.stringify(resolved.agent),
           task: `# ${state.title}\n\n${state.goal}`,
           evidence: checkRunsText(state.checks, state.head),
         });
@@ -992,42 +894,18 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       }
 
       case 'approval-check': {
-        const live = JSON.parse(privateGh('pr', 'view', state.pr, '--json', 'headRefOid,baseRefName,state'));
-        const defaultBranch = gh('repo', 'view', state.remote, '--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name');
-        requireValue(live.state === 'OPEN' && live.headRefOid === state.head, 'PR 已关闭或提交发生变动，拒绝批准未经验证的提交');
-        requireValue(live.baseRefName === state.base && state.base === defaultBranch, '仅允许合入仓库默认分支');
+        checkApprovalPr(state);
         appendGithubOutput({ summary: buildPrSummary(state) });
         break;
       }
 
       case 'merge': {
         deleteRefs(state.remote, releasePreviousRefs(state.ledger, true));
-        const live = JSON.parse(privateGh('pr', 'view', state.pr, '--json', 'state,headRefOid,baseRefName,mergeCommit'));
-        const defaultBranch = gh('repo', 'view', state.remote, '--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name');
-        requireValue(live.headRefOid === state.head, '批准后 PR 提交已改变，拒绝合并');
-        requireValue(live.baseRefName === state.base && state.base === defaultBranch, '仅允许合入仓库默认分支');
-        if (live.state === 'MERGED') {
-          appendGithubOutput({ route: 'merged', commit: live.mergeCommit.oid });
-          break;
-        }
-        requireValue(live.state === 'OPEN', 'PR 已关闭但未合并');
-
-        const method = settings.mergeMethod;
-        const { CODA_THREAD_ID: _thread, ...privateEnv } = env;
-        const done = spawnSync('gh', ['pr', 'merge', state.pr, '--repo', state.remote, `--${method}`, '--match-head-commit', state.head, '--delete-branch'], {
-          encoding: 'utf8',
-          env: privateEnv,
-        });
-        if (done.error) throw done.error;
-        const after = JSON.parse(privateGh('pr', 'view', state.pr, '--json', 'state,mergeable,mergeCommit'));
-        if (after.state === 'MERGED') {
-          appendGithubOutput({ route: 'merged', commit: after.mergeCommit.oid });
-        } else if (after.state === 'OPEN' && after.mergeable === 'CONFLICTING') {
+        const result = mergeApprovedPr(state, settings.mergeMethod);
+        if (result.route === 'conflict') {
           saveState({ ...state, pendingFeedback: `PR ${state.pr} 与 ${state.base} 存在合并冲突，请同步目标分支并解决冲突后重验。` });
-          appendGithubOutput({ route: 'conflict', commit: '' });
-        } else {
-          throw new Error(`合并未完成：${after.state} ${done.stderr || done.stdout}`);
         }
+        appendGithubOutput(result);
         break;
       }
 
