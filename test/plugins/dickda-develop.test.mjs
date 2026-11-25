@@ -528,7 +528,37 @@ test('concurrent multi-trade dispatch integrates non-conflicting commits, checks
   assert.equal(nextWave[0].agent.effort, 'max');
 });
 
-test('spec lock accepts a merged upstream tree entry or the base entry, and reports only worker edits', t => {
+test('spec lock preserves requirement specs before and after merging new upstream specs', t => {
+  const { work, git, commit } = createGitRepo(t);
+  init(work);
+  const arch = '.dickda/lints/arch.mjs';
+  const verifier = '.dickda/verifiers/arch.md';
+  writeFileSync(join(work, verifier), '# Original checks\n');
+  const ancestor = commit(work, 'original verifier');
+  git(work, 'checkout', '-b', 'requirement');
+  writeFileSync(join(work, arch), '// architecture rule\n');
+  writeFileSync(join(work, verifier), '# Architecture checks\n');
+  const base = commit(work, 'architecture specs');
+
+  rmSync(join(work, arch));
+  git(work, 'checkout', ancestor, '--', verifier);
+  const reverted = commit(work, 'worker restores the old upstream specs');
+  assert.deepEqual(checkSpecLock(work, base, reverted, { upstreamCommit: ancestor }), { ok: false, violations: [arch, verifier] });
+
+  git(work, 'checkout', 'main');
+  writeFileSync(join(work, '.dickda/verifiers/upstream.md'), '# Upstream checks\n');
+  const upstream = commit(work, 'upstream adds a verifier');
+  git(work, 'checkout', '-b', 'worker', base);
+  git(work, 'merge', '--no-ff', '-m', 'merge upstream specs', upstream);
+  const merged = git(work, 'rev-parse', 'HEAD');
+  assert.deepEqual(checkSpecLock(work, base, merged, { upstreamCommit: upstream }), { ok: true, violations: [] });
+
+  rmSync(join(work, arch));
+  const dropped = commit(work, 'worker drops the architecture lint');
+  assert.deepEqual(checkSpecLock(work, base, dropped, { upstreamCommit: upstream }), { ok: false, violations: [arch] });
+});
+
+test('spec lock requires upstream changes and rejects conflicting edits to the same spec', t => {
   const { work, git, commit } = createGitRepo(t);
   init(work);
   const lint = '.dickda/lints/upstream.mjs';
@@ -556,9 +586,18 @@ test('spec lock accepts a merged upstream tree entry or the base entry, and repo
   assert.deepEqual(checkSpecLock(work, base, changed, { upstreamCommit: upstream }), { ok: false, violations: [lint] });
 
   git(work, 'checkout', '-b', 'other-base', base);
+  git(work, 'checkout', upstream, '--', lint);
+  const matching = commit(work, 'requirement adds the same lint as upstream');
   git(work, 'checkout', changed, '--', lint);
-  const otherBase = commit(work, 'base independently carries the same rule');
-  assert.deepEqual(checkSpecLock(work, otherBase, changed, { upstreamCommit: upstream }), { ok: true, violations: [] });
+  const conflicting = commit(work, 'requirement changes the lint differently');
+  git(work, 'merge', '-s', 'ours', '-m', 'keep requirement specs', upstream);
+  const keptBase = git(work, 'rev-parse', 'HEAD');
+  assert.deepEqual(checkSpecLock(work, conflicting, keptBase, { upstreamCommit: upstream }), strict);
+
+  git(work, 'restore', '--source', upstream, '--', lint, removed);
+  const keptUpstream = commit(work, 'use upstream specs');
+  assert.deepEqual(checkSpecLock(work, conflicting, keptUpstream, { upstreamCommit: upstream }), { ok: false, violations: [lint] });
+  assert.deepEqual(checkSpecLock(work, matching, keptUpstream, { upstreamCommit: upstream }), { ok: true, violations: [] });
 });
 
 test('per-job logs merge cleanly and remember archives all valid Markdown for Refine', t => {

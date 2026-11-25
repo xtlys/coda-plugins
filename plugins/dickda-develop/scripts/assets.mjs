@@ -171,23 +171,36 @@ export function runLints(root) {
 
 // Builder jobs with lockSpec=true must never delete or weaken locked .dickda/lints or .dickda/verifiers.
 export function checkSpecLock(root, baseCommit, headCommit, { upstreamCommit = '' } = {}) {
-  const mergedUpstream = upstreamCommit && spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', upstreamCommit, headCommit]).status === 0;
-  // For entry comparisons a rename changes two paths, including the one that disappeared.
-  const diffOptions = mergedUpstream ? ['--no-renames'] : [];
-  let violations = git(root, 'diff', '--name-only', '-z', ...diffOptions, `${baseCommit}...${headCommit}`)
-    .split('\0').filter(path => path.startsWith('.dickda/lints/') || path.startsWith('.dickda/verifiers/'));
-  if (mergedUpstream && violations.length) {
+  const mergeBase = upstreamCommit && spawnSync('git', ['-C', root, 'merge-base', baseCommit, upstreamCommit], { encoding: 'utf8' }).stdout.trim();
+  const mergedUpstream = mergeBase && mergeBase !== git(root, 'rev-parse', `${upstreamCommit}^{commit}`)
+    && spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', upstreamCommit, headCommit]).status === 0;
+  const specDirs = ['.dickda/lints/', '.dickda/verifiers/'];
+  const changedPaths = (from, to) => git(root, 'diff', '--name-only', '-z', '--no-renames', from, to, '--', ...specDirs)
+    .split('\0').filter(Boolean);
+  let violations = changedPaths(baseCommit, headCommit);
+  if (mergedUpstream) {
     const entries = commit => {
-      const tree = git(root, 'ls-tree', '-rzt', commit, '--', '.dickda/lints', '.dickda/verifiers');
+      const tree = git(root, 'ls-tree', '-rzt', commit, '--', ...specDirs);
       return new Map(tree.split('\0').filter(Boolean).map(entry => {
         const tab = entry.indexOf('\t');
         return [entry.slice(tab + 1), entry.slice(0, tab)];
       }));
     };
+    const ancestorTree = entries(mergeBase);
     const baseTree = entries(baseCommit);
     const upstreamTree = entries(upstreamCommit);
     const headTree = entries(headCommit);
-    violations = violations.filter(path => headTree.get(path) !== baseTree.get(path) && headTree.get(path) !== upstreamTree.get(path));
+    // A merge that keeps the base entry can silently drop an upstream change.
+    const candidates = new Set([...violations, ...changedPaths(mergeBase, upstreamCommit)]);
+    violations = [...candidates].filter(path => {
+      const ancestorEntry = ancestorTree.get(path);
+      const baseEntry = baseTree.get(path);
+      const upstreamEntry = upstreamTree.get(path);
+      const headEntry = headTree.get(path);
+      if (upstreamEntry === ancestorEntry) return headEntry !== baseEntry;
+      if (baseEntry === ancestorEntry) return headEntry !== upstreamEntry;
+      return baseEntry !== upstreamEntry || headEntry !== baseEntry;
+    }).sort();
   }
   return {
     ok: violations.length === 0,
