@@ -51,6 +51,7 @@ function createGitRepo(t) {
     CODA_ARTIFACTS: artifacts,
     RUNNER_TEMP: join(dir, 'tmp'),
     GITHUB_OUTPUT: join(dir, 'github-output'),
+    GITHUB_STEP_SUMMARY: join(dir, 'github-step-summary'),
     GITHUB_RUN_ID: 'run-101',
     CODA_THREAD_ID: 'interactor-session',
     FIXTURE_DIR: dir,
@@ -89,6 +90,72 @@ function parseOutputs(file) {
     [...readFileSync(file, 'utf8').matchAll(/(\w+)<<([^\n]+)\n([\s\S]*?)\n\2\n/g)]
       .map(([, k, , v]) => [k, v])
   );
+}
+
+const blueprint = ['架构边界', 'Lint 规则', '验证用例', '并发工单', '人工锚点']
+  .map((label, index) => `## L${index + 1}\n${label}`).join('\n\n');
+
+function developFixture(t) {
+  const fixture = createGitRepo(t);
+  const { dir, origin, env, git } = fixture;
+  const ghCallsFile = join(dir, 'gh-calls.jsonl');
+  writeFileSync(ghCallsFile, '');
+  const fakeGh = join(dir, 'bin/gh');
+  writeFileSync(fakeGh, `#!${process.execPath}
+const fs = require('node:fs');
+const dir = process.env.FIXTURE_DIR;
+const args = process.argv.slice(2);
+fs.appendFileSync(dir + '/gh-calls.jsonl', JSON.stringify({ args, thread: process.env.CODA_THREAD_ID ?? null }) + '\\n');
+const stateFile = process.env.CODA_ARTIFACTS + '/develop.json';
+const state = fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile, 'utf8')) : {};
+if (args[0] === 'repo') {
+  console.log(args.includes('--jq') ? 'main' : JSON.stringify({ nameWithOwner: 'fixture/dickda-demo', defaultBranchRef: { name: 'main' } }));
+} else if (args[0] === 'pr' && args[1] === 'list') {
+  console.log('[]');
+} else if (args[0] === 'pr' && args[1] === 'create') {
+  console.log('https://github.com/fixture/dickda-demo/pull/7');
+} else if (args[0] === 'pr' && args[1] === 'view') {
+  console.log(JSON.stringify({ state: fs.existsSync(dir + '/merged') ? 'MERGED' : 'OPEN', headRefOid: state.head, baseRefName: 'main', mergeable: 'MERGEABLE', mergeCommit: { oid: state.head } }));
+} else if (args[0] === 'pr' && args[1] === 'merge') {
+  fs.writeFileSync(dir + '/merged', '1');
+}
+`);
+  chmodSync(fakeGh, 0o755);
+
+  // Return a commit from the simulated agent's worktree without publishing it to origin.
+  writeFileSync(join(dir, 'bin/coda-agent'), `#!${process.execPath}
+const fs = require('node:fs');
+const reply = JSON.parse(process.env.AGENT_REPLY);
+fs.writeFileSync(process.env.FIXTURE_DIR + '/agent-args.json', JSON.stringify(process.argv.slice(2)));
+if (reply.head) require('node:child_process').execFileSync('git', ['fetch', process.env.FIXTURE_DIR + '/work', reply.head]);
+console.log(JSON.stringify(reply));
+`, { mode: 0o755 });
+
+  // Each step has its own checkout; only artifacts and published refs survive between steps.
+  let stepCounter = 0;
+  const run = (step, extra = {}, expectedError) => {
+    const stepDir = join(dir, `ephemeral-step-${++stepCounter}`);
+    git(dir, 'clone', '-q', origin, stepDir);
+    git(stepDir, 'config', 'user.name', 'Dickda Runner');
+    git(stepDir, 'config', 'user.email', 'runner@example.com');
+    writeFileSync(env.GITHUB_OUTPUT, '');
+    const res = spawnSync(process.execPath, [developScript, step], { cwd: stepDir, env: { ...env, ...extra }, encoding: 'utf8' });
+    rmSync(stepDir, { recursive: true, force: true });
+    if (expectedError) {
+      assert.equal(res.status, 1, res.stderr);
+      assert.match(res.stderr, expectedError);
+    } else {
+      assert.equal(res.status, 0, res.stderr || res.stdout);
+    }
+    return parseOutputs(env.GITHUB_OUTPUT);
+  };
+
+  const state = () => JSON.parse(readFileSync(join(fixture.artifacts, 'develop.json'), 'utf8'));
+  const lead = (decision, expectedError, extra = {}) => run('lead-plan', {
+    AGENT_REPLY: JSON.stringify({ session: 'lead', answer: '```json\n' + JSON.stringify(decision) + '\n```' }),
+    ...extra,
+  }, expectedError);
+  return { ...fixture, ghCallsFile, run, lead, state };
 }
 
 test('three roles and four trades default to exact requested models and escalate to senior on difficulty or rejections', () => {
@@ -518,32 +585,322 @@ test('prose refinement removes obsolete lines across learning files and applies 
   assert.equal(readFileSync(join(learning, 'Learning_Team.md'), 'utf8'), keep);
 });
 
-test('full dickda-develop lifecycle persists investigation archive onto delivery branch across ephemeral step worktrees', t => {
-  const { dir, origin, env, git } = createGitRepo(t);
+test('development workflow routes both plan decisions, milestones, dual failures and adjudicated reviews', () => {
+  const xml = readFileSync(join(pluginDir, '.coda/workflows/dickda-develop.bpmn'), 'utf8');
+  const flows = [...xml.matchAll(/<sequenceFlow id="[^"]+" sourceRef="([^"]+)" targetRef="([^"]+)"(?:\s*\/>|>\s*<conditionExpression[^>]*>([^<]+)<\/conditionExpression>\s*<\/sequenceFlow>)/g)];
+  const routes = source => Object.fromEntries(flows.filter(([, from]) => from === source).map(([, , to, when]) => [to, when || 'always']));
+  const card = id => xml.match(new RegExp(`<userTask id="${id}"[\\s\\S]*?</userTask>`))[0];
+  assert.deepEqual(routes('think-gate'), {
+    'lead-plan': '=inputs.fast = true', 'plan-present': '=inputs.fast = false and seed.hasPlan = true', think: 'always',
+  });
+  assert.deepEqual(routes('think'), { 'plan-present': 'always' });
+  assert.deepEqual(routes('plan-present'), { 'present-gate': 'always' });
+  assert.deepEqual(routes('present-gate'), { 'plan-feedback': '=plan-present.chose.revise', 'plan-confirm': 'always' });
+  assert.doesNotMatch(card('brief') + card('plan-present'), /coda:wake="false"|coda:assignee="user"/);
+  assert.match(card('plan-present'), /lane\.reqBranch[\s\S]*?think.head[\s\S]*?PLAN_5L\.md[\s\S]*?seed.preview[\s\S]*?think.preview/);
+  assert.match(card('plan-present'), /id="recommend"[^>]*primary="true" note="required"/);
+  assert.match(card('plan-present'), /id="revise"[^>]*note="required"/);
+  assert.match(card('plan-confirm'), /assignee="user"[\s\S]*plan-present.note[\s\S]*seed.preview[\s\S]*think.preview/);
+  assert.match(card('plan-confirm'), /id="start"[^>]*primary="true"/);
+  assert.match(card('plan-confirm'), /id="revise"[^>]*note="required"/);
+  assert.match(card('plan-confirm'), /id="stop" name="暂不开工"/);
+  assert.deepEqual(routes('confirm-gate'), {
+    'lead-plan': '=plan-confirm.chose.start', 'plan-feedback': '=plan-confirm.chose.revise', 'record-stop': 'always',
+  });
+  assert.match(xml, /name="FEEDBACK" value="=if plan-present.chose.revise then plan-present.note else plan-confirm.note"/);
+  assert.deepEqual(routes('plan-feedback'), { think: 'always' });
+  assert.deepEqual(routes('record-stop'), { stopped: 'always' });
+  assert.match(xml, /<coda:output name="reason" value="=record-stop.reason"/);
+  assert.deepEqual(routes('brief-valid'), { brief: '=brief-parse.route = "again"', seed: 'always' });
+  assert.equal(routes('lead-route')['milestone-gate'], 'always');
+  assert.deepEqual(routes('milestone-gate'), {
+    'tell-milestone': '=lead-plan.session != "" and lead-plan.milestone != ""', 'run-jobs': 'always',
+  });
+  assert.match(xml, /coda:action="tell-session">[\s\S]*?name="session" value="=lead-plan.session"[\s\S]*?name="text"[^>]+lead-plan.milestone/);
+  assert.deepEqual(routes('tell-milestone'), { 'run-jobs': 'always' });
+  assert.deepEqual(routes('prepare-verify'), { 'rebuttal-gate': 'always' });
+  assert.deepEqual(routes('rebuttal-gate'), { pr: '=prepare-verify.skipReview', 'dual-verify': 'always' });
+  assert.match(xml, /attachedToRef="dual-verify">\s*<errorEventDefinition/);
+  assert.deepEqual(routes('dual-verify-error'), { 'dual-call-lost': 'always' });
+  assert.deepEqual(routes('dual-call-lost'), { 'lead-plan': 'always' });
+  assert.deepEqual(routes('dual-verify'), { 'dual-result': 'always' });
+  assert.deepEqual(routes('dual-result'), { 'verified-check': '=not(dual-verify.passed)', 'final-review': 'always' });
+  assert.match(xml, /name="previous" value="=prepare-verify.previous"/);
+  assert.match(xml, /name="VERIFY_EVIDENCE" value="=dual-verify.evidence"/);
+  assert.match(xml, /name="VERIFY_FINDINGS" value="=dual-verify.findings"/);
+  assert.equal(routes('verified-gate')['lead-plan'], '=verified-check.route = "lead"');
+  assert.match(card('approve'), /approval-check.summary/);
+});
 
-  const ghCallsFile = join(dir, 'gh-calls.jsonl');
-  writeFileSync(ghCallsFile, '');
-  const fakeGh = join(dir, 'bin/gh');
-  writeFileSync(fakeGh, `#!${process.execPath}
+test('remote-only starting branch supplies the original task and a bounded preview of every plan layer', t => {
+  const { work, origin, dir, git, commit, run, state } = developFixture(t);
+  init(work);
+  const todo = '.dickda/tasks/TODO_TASK.md';
+  const plan = '.dickda/tasks/PLAN_5L.md';
+  const goal = '保留原换行和原边界。\n\n- 仅验收指定入口。';
+  const original = `# 原需求\n\n${goal}\n\n`;
+  writeFileSync(join(work, todo), original);
+  writeFileSync(join(work, plan), blueprint.replace('架构边界', '架构边界'.repeat(1500)));
+  const start = commit(work, 'existing task and five-layer plan');
+  git(work, 'push', 'origin', `${start}:refs/heads/planned`);
+  const lane = run('lane', { BRANCH: 'planned', GOAL: '', TITLE: '' });
+  assert.equal(lane.needBrief, 'false');
+  assert.equal(state().title, '原需求');
+  assert.equal(state().goal, goal);
+  const seed = run('seed');
+  assert.equal(seed.hasPlan, 'true');
+  assert.equal(seed.head, start);
+  assert.equal(git(origin, 'rev-parse', `${lane.reqBranch}:${todo}`), git(work, 'hash-object', todo));
+  assert.ok(seed.preview.length < 3600);
+  assert.match(seed.preview, /架构边界[\s\S]*…[\s\S]*Lint 规则[\s\S]*验证用例[\s\S]*并发工单[\s\S]*人工锚点/);
+
+  for (const note of ['交互者要求补充验收入口', '用户要求改动并发边界']) {
+    run('plan-feedback', { FEEDBACK: note });
+    assert.equal(state().planFeedback, note);
+    writeFileSync(join(work, plan), blueprint + '\n' + note);
+    const head = commit(work, 'revise plan');
+    const revised = run('think', { AGENT_REPLY: JSON.stringify({ session: 'think', head }) });
+    assert.equal(revised.head, head);
+    assert.ok(revised.preview.includes(note));
+    assert.ok(readFileSync(join(dir, 'tmp/thinker.md'), 'utf8').includes('交互者/用户修订意见\n' + note));
+    assert.equal(state().planFeedback, '');
+  }
+  const summary = join(dir, 'summary');
+  const stop = run('stopped', { REASON: '等产品确认范围', GITHUB_STEP_SUMMARY: summary });
+  assert.equal(state().stopReason, stop.reason);
+  assert.match(readFileSync(summary, 'utf8'), /等产品确认范围/);
+  assert.equal(git(origin, 'rev-parse', lane.reqBranch), state().head);
+  assert.match(run('stopped', { REASON: '' }).reason, /暂不开工/);
+});
+
+test('empty templates return to brief, and only a supplied brief overwrites a substantive task', t => {
+  const { work, origin, git, commit, run } = developFixture(t);
+  const todo = '.dickda/tasks/TODO_TASK.md';
+  init(work);
+  git(work, 'push', 'origin', `${commit(work, 'empty templates')}:main`);
+  const lane = run('lane', { GOAL: '', TITLE: '' });
+  assert.equal(lane.needBrief, 'true');
+  assert.equal(run('brief', { BRIEF: '{"note":" "}' }).route, 'again');
+  writeFileSync(join(work, todo), '# 分支原文\n\n已有边界\n');
+  git(work, 'push', 'origin', `${commit(work, 'task written on the branch')}:${lane.reqBranch}`);
+  const seed = run('seed');
+  assert.equal(seed.hasPlan, 'false');
+  assert.equal(git(origin, 'show', `${seed.head}:${todo}`), '# 分支原文\n\n已有边界');
+  assert.equal(run('brief', { BRIEF: '{"note":"新标题\\n新目标"}' }).route, 'ok');
+  const updated = run('seed');
+  assert.equal(git(origin, 'show', `${updated.head}:${todo}`), '# 新标题\n\n新目标');
+});
+
+test('a same-head review needs a reason per finding, then goes to the PR and approval card with both verdicts', t => {
+  const { run, lead, state, artifacts } = developFixture(t);
+  run('lane', { GOAL: '交付新入口' });
+  const { head } = run('seed');
+  const findings = [
+    { id: '#1', level: 'must', kind: 'contract', title: '入口覆盖', location: 'app.mjs:1', detail: '入口可能未检查' },
+    { id: '#2', level: 'must', kind: 'test-quality', title: '入口覆盖', location: 'test.mjs', detail: '未找到回归用例' },
+  ];
+  const dual = {
+    VERIFY_COMMIT: head, VERIFY_PASSED: 'true', VERIFY_REPORT: '双轨已完成',
+    VERIFY_EVIDENCE: '[{"path":"entry.png","step":3}]', VERIFY_FINDINGS: '[{"level":"nit","detail":"按钮文案"}]',
+  };
+  const review = { head, decision: 'REQUEST_CHANGES', line: 'Sol 要求修改', report: '检查入口并补测试', findings: JSON.stringify(findings) };
+  assert.equal(run('verified', { ...dual, REVIEW: JSON.stringify(review) }).route, 'lead');
+  assert.equal(run('prepare-verify').skipReview, 'false');
+  lead({ action: 'verify' }, /REQUEST_CHANGES.*ignoredFindings/);
+  lead({ action: 'verify', ignoredFindings: [{ id: '#1', reason: '  ' }] }, /ignoredFindings.*reason/);
+  const first = { id: '#1', title: '入口覆盖', reason: '入口统一调用 validateEntry，见 app.mjs:4' };
+  lead({ action: 'verify', ignoredFindings: [first] }, /缺少 #2/);
+  assert.equal(run('prepare-verify').skipReview, 'false');
+  const second = { title: '入口覆盖', reason: 'test.mjs:12 覆盖了入口回归' };
+  assert.equal(lead({ action: 'verify', ignoredFindings: [first, second] }).route, 'verify');
+  assert.equal(state().rebuttedReviewHead, head);
+  assert.equal(run('archive-delivery').head, head);
+  assert.equal(run('prepare-verify').skipReview, 'true');
+  const pr = run('pr');
+  assert.equal(pr.summary, readFileSync(join(artifacts, 'pull-request.md'), 'utf8'));
+  assert.equal(run('approval-check').summary, pr.summary);
+  for (const detail of ['REQUEST_CHANGES', review.line, review.report, first.reason, second.reason, '双轨已完成', 'entry.png', '按钮文案']) {
+    assert.ok(pr.summary.includes(detail), detail);
+  }
+
+  const failure = run('verified', { ...dual, VERIFY_PASSED: 'false', VERIFY_REPORT: '这次入口失败', REVIEW: JSON.stringify(review) });
+  assert.equal(failure.route, 'lead');
+  assert.doesNotMatch(failure.reason, /独立代码审查/);
+  for (const detail of ['这次入口失败', 'entry.png', '按钮文案']) assert.ok(state().pendingFeedback.includes(detail));
+  assert.equal(state().verifiedHead, '');
+  assert.equal(run('prepare-verify').skipReview, 'false');
+  const lost = run('verified', { VERIFY_REPORT: 'dickda-verify 调用异常，请查看子流程' });
+  assert.equal(lost.route, 'lead');
+  assert.match(state().pendingFeedback, /调用异常/);
+});
+
+test('incremental review carries only numbered open musts and falls back to a full review for incomplete findings', t => {
+  const { work, git, commit, run, lead } = developFixture(t);
+  const lane = run('lane', { GOAL: '增量复评' });
+  let { head } = run('seed');
+  git(work, 'fetch', 'origin', lane.reqBranch);
+  git(work, 'checkout', '--detach', 'FETCH_HEAD');
+  function advance() {
+    writeFileSync(join(work, 'fix.txt'), head);
+    head = commit(work, 'address review');
+    git(work, 'push', 'origin', `${head}:refs/heads/${lane.reqBranch}`);
+    assert.equal(lead({ action: 'verify' }).route, 'verify');
+    const prep = run('prepare-verify');
+    assert.equal(prep.head, head);
+    assert.equal(prep.skipReview, 'false');
+    return prep;
+  }
+  function reviewed(findings, previous = '', resolutions = []) {
+    assert.equal(run('verified', {
+      VERIFY_COMMIT: head, VERIFY_PASSED: 'true', PREVIOUS: previous,
+      REVIEW: JSON.stringify({ head, decision: 'REQUEST_CHANGES', findings: JSON.stringify(findings), resolutions: JSON.stringify(resolutions) }),
+    }).route, 'lead');
+  }
+  const must = { id: '#1', level: 'must', kind: 'contract', title: '入口', location: 'a:1', detail: '详情' };
+  const second = { ...must, id: '#2', title: '出口' };
+  const third = { ...must, id: '#3', title: '新增意见' };
+  const original = head;
+  reviewed([must, { level: 'nit', title: '风格' }, second]);
+  const first = advance();
+  assert.equal(first.base, original);
+  assert.deepEqual(JSON.parse(first.previous), [must, second]);
+  reviewed([third], first.previous, [{ id: '#1', status: 'resolved' }, { id: '#2', status: 'upheld', reason: '仍有触发路径' }]);
+  const next = advance();
+  assert.equal(next.base, first.head);
+  assert.deepEqual(JSON.parse(next.previous), [second, third]);
+  // Native reviews may omit ids. Dropping just the malformed must would lose its review scope.
+  const { id, ...unnumbered } = must;
+  reviewed([unnumbered, second]);
+  const full = advance();
+  assert.equal(full.base, lane.baseCommit);
+  assert.equal(full.previous, '');
+});
+
+test('lint rejection retains worker commits through replacement and senior retry, including a locked upstream merge', t => {
+  const { work, origin, git, commit, env, run, lead, state } = developFixture(t);
+  init(work);
+  writeFileSync(join(work, '.dickda/lints/check.sh'), 'test ! -f blocked.txt\n');
+  git(work, 'push', 'origin', `${commit(work, 'base lint')}:main`);
+  const { reqBranch } = run('lane', { GOAL: '实现入口' });
+  run('seed');
+  git(work, 'fetch', 'origin', reqBranch);
+  git(work, 'checkout', '--detach', 'FETCH_HEAD');
+
+  const original = { id: 'entry', trade: 'architect', title: '入口', task: '实现入口' };
+  const replacement = { ...original, id: 'entry-fix', trade: 'builder', replaces: original.id };
+  const worker = (id, head) => run('worker', { JOB_ID: id, AGENT_REPLY: JSON.stringify({ session: 'engineer', head }) });
+  const first = lead({ action: 'dispatch', jobs: [original], milestone: '   ' }, undefined, { CODA_THREAD_ID: '' });
+  assert.equal(first.milestone, '');
+  assert.equal(first.session, '');
+  writeFileSync(join(work, 'blocked.txt'), 'work in progress');
+  const failed = commit(work, 'partial implementation');
+  assert.equal(worker(original.id, failed).status, 'rejected');
+  const firstRef = 'refs/heads/dickda/prev-run-101-entry';
+  assert.equal(git(origin, 'rev-parse', firstRef), failed);
+  run('integrate');
+  assert.equal(state().ledger.entry.lastRejectedHead, failed);
+  lead({ action: 'verify' }, /被打回的编码工单：entry/);
+  lead({ action: 'verify', ignoredFindings: [{ id: 'other', reason: '无关项' }] }, /被打回的编码工单：entry/);
+  assert.equal(lead({ action: 'verify', ignoredFindings: [{ id: 'entry', reason: '验收范围已移除此入口' }] }).route, 'verify');
+
+  const [retry] = JSON.parse(lead({ action: 'dispatch', jobs: [replacement] }).jobs);
+  assert.equal(retry.rejections, 1);
+  assert.equal(retry.previousHead, failed);
+  assert.equal(retry.previousRef, firstRef);
+  assert.match(retry.previousFeedback, /L2.*未通过/);
+  writeFileSync(join(work, 'entry.mjs'), 'export const ready = true;\n');
+  const failedAgain = commit(work, 'partial fix');
+  assert.equal(worker(retry.id, failedAgain).status, 'rejected');
+  run('integrate');
+  assert.equal(state().ledger.entry.status, 'rejected');
+  assert.equal(state().ledger[retry.id].rejections, 2);
+  lead({ action: 'dispatch', jobs: [{ ...replacement, id: 'alternate' }] }, /最新打回记录在 entry-fix/);
+  const [senior] = JSON.parse(lead({ action: 'dispatch', jobs: [{ ...replacement, replaces: undefined }] }).jobs);
+  const secondRef = 'refs/heads/dickda/prev-run-101-entry-fix';
+  assert.equal(senior.tier, 'senior');
+  assert.equal(senior.replaces, original.id);
+  assert.equal(senior.previousHead, failedAgain);
+  assert.equal(git(origin, 'rev-parse', senior.previousRef), failedAgain);
+
+  git(work, 'checkout', 'main');
+  writeFileSync(join(work, '.dickda/lints/upstream.mjs'), '// target branch rule\n');
+  const upstream = commit(work, 'upstream spec');
+  git(work, 'push', 'origin', 'main');
+  git(work, 'fetch', 'origin', secondRef);
+  git(work, 'checkout', '--detach', 'FETCH_HEAD');
+  git(work, 'merge', '--no-ff', '-m', 'merge target specs', upstream);
+  unlinkSync(join(work, 'blocked.txt'));
+  const fixed = commit(work, 'finish retained implementation');
+  assert.equal(worker(senior.id, fixed).status, 'succeeded');
+  const prompt = readFileSync(join(env.RUNNER_TEMP, 'worker-entry-fix.md'), 'utf8');
+  for (const text of [failedAgain, secondRef, 'git fetch', 'git show', 'git cherry-pick', upstream]) assert.ok(prompt.includes(text), text);
+  assert.equal(run('integrate').head, fixed);
+  assert.deepEqual(run('integrate'), { head: fixed, changed: 'true' });
+  assert.equal(state().ledger[senior.id].status, 'landed');
+  assert.equal(state().ledger.entry.status, 'replaced');
+  assert.equal(state().ledger.entry.replacedBy, senior.id);
+  assert.equal(git(origin, 'for-each-ref', '--format=%(refname)', 'refs/heads/dickda/prev-*'), '');
+  assert.equal(lead({ action: 'verify' }).route, 'verify');
+});
+
+test('parallel conflict retains the rejected commit before removing the job ref and cleans it at PR or merge', t => {
+  const { work, origin, git, commit, run, lead, state } = developFixture(t);
+  const { reqBranch } = run('lane', { GOAL: '并发实现' });
+  run('seed');
+  for (const step of ['pr', 'merge']) {
+    git(work, 'fetch', 'origin', reqBranch);
+    const base = git(work, 'rev-parse', 'FETCH_HEAD');
+    const jobs = ['a', 'b'].map(id => ({ id: id + '-' + step, trade: 'builder', title: id, task: '更新入口' }));
+    lead({ action: 'dispatch', jobs });
+    let workerHead;
+    for (const job of jobs) {
+      git(work, 'checkout', '--detach', base);
+      writeFileSync(join(work, 'app.mjs'), `export const entry = '${job.id}';\n`);
+      workerHead = commit(work, job.id);
+      assert.equal(run('worker', { JOB_ID: job.id, AGENT_REPLY: JSON.stringify({ head: workerHead, session: 'engineer' }) }).status, 'succeeded');
+    }
+    run('integrate');
+    const entry = state().ledger[jobs[1].id];
+    assert.equal(entry.status, 'rejected');
+    assert.match(entry.lastFeedback, /合入冲突.*app\.mjs/);
+    assert.equal(entry.lastRejectedHead, workerHead);
+    assert.equal(git(origin, 'rev-parse', entry.lastRejectedRef), workerHead);
+    assert.equal(git(origin, 'for-each-ref', '--format=%(refname)', 'refs/heads/dickda/job-*'), '');
+    run(step);
+    assert.equal(git(origin, 'for-each-ref', '--format=%(refname)', 'refs/heads/dickda/prev-*'), '');
+  }
+});
+
+test('remote Git retries transient fetch and push failures, stops at three attempts, and surfaces permanent errors immediately', t => {
+  const { dir, run } = developFixture(t);
+  const count = join(dir, 'git-attempts');
+  writeFileSync(join(dir, 'bin/git'), `#!${process.execPath}
 const fs = require('node:fs');
-const dir = process.env.FIXTURE_DIR;
 const args = process.argv.slice(2);
-fs.appendFileSync(dir + '/gh-calls.jsonl', JSON.stringify({ args, thread: process.env.CODA_THREAD_ID ?? null }) + '\\n');
-const stateFile = process.env.CODA_ARTIFACTS + '/develop.json';
-const state = fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile, 'utf8')) : {};
-if (args[0] === 'repo') {
-  console.log(args.includes('--jq') ? 'main' : JSON.stringify({ nameWithOwner: 'fixture/dickda-demo', defaultBranchRef: { name: 'main' } }));
-} else if (args[0] === 'pr' && args[1] === 'list') {
-  console.log('[]');
-} else if (args[0] === 'pr' && args[1] === 'create') {
-  console.log('https://github.com/fixture/dickda-demo/pull/7');
-} else if (args[0] === 'pr' && args[1] === 'view') {
-  console.log(JSON.stringify({ state: fs.existsSync(dir + '/merged') ? 'MERGED' : 'OPEN', headRefOid: state.head, baseRefName: 'main', mergeable: 'MERGEABLE', mergeCommit: { oid: state.head } }));
-} else if (args[0] === 'pr' && args[1] === 'merge') {
-  fs.writeFileSync(dir + '/merged', '1');
+if (args[0] === process.env.FAIL_OP) {
+  const file = process.env.FIXTURE_DIR + '/git-attempts';
+  const attempt = Number(fs.readFileSync(file, 'utf8')) + 1;
+  fs.writeFileSync(file, String(attempt));
+  if (attempt <= Number(process.env.FAIL_TIMES)) { console.error(process.env.ERROR_TEXT); process.exit(1); }
 }
-`);
-  chmodSync(fakeGh, 0o755);
+const path = require('node:path');
+const env = { ...process.env, PATH: process.env.PATH.split(path.delimiter).filter(dir => dir !== path.dirname(process.argv[1])).join(path.delimiter) };
+const done = require('node:child_process').spawnSync('git', args, { stdio: 'inherit', env });
+process.exit(done.status);
+`, { mode: 0o755 });
+  function attempt(step, op, times, message, expectedError) {
+    writeFileSync(count, '0');
+    run(step, { GOAL: '网络重试', FAIL_OP: op, FAIL_TIMES: String(times), ERROR_TEXT: message }, expectedError);
+    return Number(readFileSync(count, 'utf8'));
+  }
+  assert.equal(attempt('lane', 'fetch', 9, 'fatal: early EOF', /early EOF/), 3);
+  assert.equal(attempt('lane', 'push', 9, 'fatal: permission denied', /permission denied/), 1);
+  assert.equal(attempt('lane', 'fetch', 2, 'OpenSSL SSL_connect: SSL_ERROR_SYSCALL'), 3);
+  assert.equal(attempt('seed', 'push', 1, 'The requested URL returned error: 503'), 2);
+});
+
+test('full dickda-develop lifecycle persists investigation archive onto delivery branch across ephemeral step worktrees', t => {
+  const { dir, origin, env, git, ghCallsFile, run: runIsolatedStep } = developFixture(t);
 
   const fakeCodaAgent = join(dir, 'bin/coda-agent');
   writeFileSync(fakeCodaAgent, `#!${process.execPath}
@@ -555,7 +912,7 @@ const prompt = fs.readFileSync(promptFile, 'utf8');
 const git = (...a) => execFileSync('git', a, { encoding: 'utf8' }).trim();
 
 if (prompt.includes('思考者（Thinker）')) {
-  fs.writeFileSync('.dickda/tasks/PLAN_5L.md', '# 五层技术方案\\n\\n## L1 · Codebase\\nClean API\\n');
+  fs.writeFileSync('.dickda/tasks/PLAN_5L.md', ${JSON.stringify(blueprint)});
   git('add', '.dickda/tasks/PLAN_5L.md');
   git('commit', '-m', 'docs(dickda): add 5-layer blueprint');
   console.log(JSON.stringify({ session: 'think-1', branch: 'b', head: git('rev-parse', 'HEAD'), answer: 'Blueprint ready' }));
@@ -577,20 +934,6 @@ if (prompt.includes('思考者（Thinker）')) {
 `);
   chmodSync(fakeCodaAgent, 0o755);
 
-  // Run EVERY step in its own fresh ephemeral clone of origin (at main, before .dickda existed!), matching Coda BPMN step semantics!
-  let stepCounter = 0;
-  const runIsolatedStep = (step, extra = {}, expected = 0) => {
-    const stepDir = join(dir, `ephemeral-step-${++stepCounter}`);
-    git(dir, 'clone', '-q', origin, stepDir);
-    git(stepDir, 'config', 'user.name', 'Dickda Runner');
-    git(stepDir, 'config', 'user.email', 'runner@example.com');
-    writeFileSync(env.GITHUB_OUTPUT, '');
-    const res = spawnSync(process.execPath, [developScript, step], { cwd: stepDir, env: { ...env, ...extra }, encoding: 'utf8' });
-    rmSync(stepDir, { recursive: true, force: true });
-    assert.equal(res.status, expected, res.stderr || res.stdout);
-    return parseOutputs(env.GITHUB_OUTPUT);
-  };
-
   const lane = runIsolatedStep('lane', { TITLE: 'Demo Feature', GOAL: 'Implement demo feature cleanly' });
   assert.equal(lane.needBrief, 'false');
   runIsolatedStep('seed');
@@ -598,12 +941,20 @@ if (prompt.includes('思考者（Thinker）')) {
 
   const wave1 = runIsolatedStep('lead-plan');
   assert.equal(wave1.route, 'dispatch');
+  assert.equal(wave1.session, 'interactor-session');
+  assert.equal(wave1.milestone, 'Dispatch wave 1');
   runIsolatedStep('worker', { JOB_ID: 'impl-1' });
   const integrated = runIsolatedStep('integrate');
   assert.equal(integrated.changed, 'true');
 
   const wave2 = runIsolatedStep('lead-plan');
   assert.equal(wave2.route, 'verify');
+  const continuation = readFileSync(join(env.RUNNER_TEMP, 'lead-2.md'), 'utf8');
+  assert.ok(continuation.startsWith('## 续跑代码视图'));
+  assert.ok(continuation.includes(`git fetch https://github.com/fixture/dickda-demo.git ${lane.reqBranch} && git checkout --detach ${integrated.head}`));
+  assert.match(continuation, /新增提交：\n[0-9a-f]+ feat: implement feature/);
+  assert.match(continuation, /git diff --stat：[\s\S]*?feature\.mjs\s+\|/);
+  assert.equal(JSON.parse(readFileSync(join(env.CODA_ARTIFACTS, 'develop.json'))).lastLeadHead, integrated.head);
 
   // Archive delivery runs in a fresh step clone, commits & pushes .dickda/learning/<timestamp> onto reqBranch!
   const archivedStep = runIsolatedStep('archive-delivery');

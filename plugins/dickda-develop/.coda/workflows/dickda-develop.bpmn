@@ -54,7 +54,7 @@
     </sequenceFlow>
     <sequenceFlow id="to-seed" sourceRef="brief-gate" targetRef="seed" />
 
-    <userTask id="brief" name="交互者写入需求原文" coda:wake="false" coda:noteLabel="第一行写需求标题，换行写完整需求与边界">
+    <userTask id="brief" name="交互者写入需求原文" coda:noteLabel="第一行写需求标题，换行写完整需求与边界">
       <documentation>本会话已启动 Dickda 五层开发（需求分支 {{lane.reqBranch}} → {{lane.base}}）。
 你是顶层交互者（Neon）：请将与用户对齐后的需求写入备注（第一行标题，第二行起为完整需求与验收边界）。
 {{if brief-parse.feedback = null then "" else brief-parse.feedback}}</documentation>
@@ -83,6 +83,8 @@
     <scriptTask id="seed" name="初始化统一 .dickda 资产" scriptFormat="bash" coda:timeout="5">
       <extensionElements>
         <coda:output name="head" />
+        <coda:output name="hasPlan" />
+        <coda:output name="preview" />
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" seed</script>
     </scriptTask>
@@ -92,16 +94,71 @@
     <sequenceFlow id="skip-think" sourceRef="think-gate" targetRef="lead-plan">
       <conditionExpression xsi:type="tFormalExpression">=inputs.fast = true</conditionExpression>
     </sequenceFlow>
+    <sequenceFlow id="reuse-plan" sourceRef="think-gate" targetRef="plan-present">
+      <conditionExpression xsi:type="tFormalExpression">=inputs.fast = false and seed.hasPlan = true</conditionExpression>
+    </sequenceFlow>
     <sequenceFlow id="run-think" sourceRef="think-gate" targetRef="think" />
 
     <scriptTask id="think" name="思考者制定五层技术方案（PLAN_5L.md）" scriptFormat="bash" coda:timeout="30" coda:status="思考者（Carbon）正在制定五层技术方案">
       <extensionElements>
         <coda:env name="THINKER" value="=inputs.thinker" />
         <coda:output name="head" />
+        <coda:output name="preview" />
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" think</script>
     </scriptTask>
-    <sequenceFlow id="think-to-lead" sourceRef="think" targetRef="lead-plan" />
+    <sequenceFlow id="think-to-present" sourceRef="think" targetRef="plan-present" />
+
+    <userTask id="plan-present" name="交互者讲解五层方案并给出开工建议" coda:noteLabel="开工结论与核心理由、风险，或具体修订意见">
+      <documentation>请在当前主会话向用户讲解需求分支 {{lane.reqBranch}} 上的五层方案。
+方案提交 {{if think.head = null then seed.head else think.head}}，全文见 .dickda/tasks/PLAN_5L.md。
+
+{{if think.head = null then seed.preview else think.preview}}
+
+请结合 L1 架构、L2 Lint、L3 验证、L4 并发工单和 L5 人工锚点说明取舍，明确是否建议开工以及理由、风险或优先调整项。讲解后在备注写下给用户的开工建议；方案有缺漏时写明修订意见退回思考者。</documentation>
+      <extensionElements>
+        <coda:choice id="recommend" name="已向用户讲解并附开工建议，请用户确认" primary="true" note="required" />
+        <coda:choice id="revise" name="方案有缺漏，先退回思考者修订" note="required" />
+      </extensionElements>
+    </userTask>
+    <sequenceFlow id="present-to-gate" sourceRef="plan-present" targetRef="present-gate" />
+    <exclusiveGateway id="present-gate" default="present-to-confirm" />
+    <sequenceFlow id="present-revise" sourceRef="present-gate" targetRef="plan-feedback">
+      <conditionExpression xsi:type="tFormalExpression">=plan-present.chose.revise</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="present-to-confirm" sourceRef="present-gate" targetRef="plan-confirm" />
+
+    <userTask id="plan-confirm" name="确认五层方案并开工" coda:assignee="user" coda:status="等待用户确认五层方案开工">
+      <documentation>**交互者的开工建议**
+{{plan-present.note}}
+
+**五层方案核心摘要**
+{{if think.head = null then seed.preview else think.preview}}
+
+需求分支 {{lane.reqBranch}}，方案提交 {{if think.head = null then seed.head else think.head}}。确认开工后主控开始派单。</documentation>
+      <extensionElements>
+        <coda:choice id="start" name="确认开工" primary="true" />
+        <coda:choice id="revise" name="打回修改方案" note="required" />
+        <coda:choice id="stop" name="暂不开工" />
+      </extensionElements>
+    </userTask>
+    <sequenceFlow id="confirm-to-gate" sourceRef="plan-confirm" targetRef="confirm-gate" />
+    <exclusiveGateway id="confirm-gate" default="plan-stop" />
+    <sequenceFlow id="plan-start" sourceRef="confirm-gate" targetRef="lead-plan">
+      <conditionExpression xsi:type="tFormalExpression">=plan-confirm.chose.start</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="confirm-revise" sourceRef="confirm-gate" targetRef="plan-feedback">
+      <conditionExpression xsi:type="tFormalExpression">=plan-confirm.chose.revise</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="plan-stop" sourceRef="confirm-gate" targetRef="record-stop" />
+
+    <scriptTask id="plan-feedback" name="记录本轮方案修订意见" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
+      <extensionElements>
+        <coda:env name="FEEDBACK" value="=if plan-present.chose.revise then plan-present.note else plan-confirm.note" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" plan-feedback</script>
+    </scriptTask>
+    <sequenceFlow id="feedback-to-think" sourceRef="plan-feedback" targetRef="think" />
 
     <scriptTask id="lead-plan" name="执行主控调度与裁决" scriptFormat="bash" coda:timeout="30" coda:status="执行主控（Neon）正在调度与裁决">
       <extensionElements>
@@ -116,6 +173,8 @@
         <coda:output name="jobs" />
         <coda:output name="jobIds" />
         <coda:output name="milestone" />
+        <coda:output name="round" />
+        <coda:output name="session" />
         <coda:output name="escalation" />
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" lead-plan</script>
@@ -129,12 +188,26 @@
     <sequenceFlow id="route-escalate" sourceRef="lead-route" targetRef="escalate-task">
       <conditionExpression xsi:type="tFormalExpression">=lead-plan.route = "escalate"</conditionExpression>
     </sequenceFlow>
-    <sequenceFlow id="route-abort" sourceRef="lead-route" targetRef="stopped">
+    <sequenceFlow id="route-abort" sourceRef="lead-route" targetRef="record-stop">
       <conditionExpression xsi:type="tFormalExpression">=lead-plan.route = "abort"</conditionExpression>
     </sequenceFlow>
-    <sequenceFlow id="route-dispatch" sourceRef="lead-route" targetRef="run-jobs" />
+    <sequenceFlow id="route-dispatch" sourceRef="lead-route" targetRef="milestone-gate" />
+    <exclusiveGateway id="milestone-gate" default="dispatch-jobs" />
+    <sequenceFlow id="notify-milestone" sourceRef="milestone-gate" targetRef="tell-milestone">
+      <conditionExpression xsi:type="tFormalExpression">=lead-plan.session != "" and lead-plan.milestone != ""</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="dispatch-jobs" sourceRef="milestone-gate" targetRef="run-jobs" />
 
-    <scriptTask id="run-jobs" name="并发执行三工种工程师工单" scriptFormat="bash" coda:timeout="60" coda:status="{{lead-plan.milestone}}">
+    <serviceTask id="tell-milestone" name="向主会话同步里程碑" coda:action="tell-session">
+      <extensionElements>
+        <coda:param name="session" value="=lead-plan.session" />
+        <coda:param name="key" value='=run.id + ":milestone:" + lead-plan.round' />
+        <coda:param name="text" value='=lane.reqBranch + "：" + lead-plan.milestone' />
+      </extensionElements>
+    </serviceTask>
+    <sequenceFlow id="told-to-jobs" sourceRef="tell-milestone" targetRef="run-jobs" />
+
+    <scriptTask id="run-jobs" name="并发执行三工种工程师工单" scriptFormat="bash" coda:timeout="60" coda:status='{{if lead-plan.milestone = "" then "并发执行工单" else lead-plan.milestone}}'>
       <extensionElements>
         <coda:env name="JOB_ID" value="=jobId" />
         <coda:output name="id" />
@@ -211,7 +284,7 @@
     <sequenceFlow id="escalate-route-flow" sourceRef="escalate-parse" targetRef="escalate-route" />
 
     <exclusiveGateway id="escalate-route" name="是否继续推进" default="escalate-continue" />
-    <sequenceFlow id="escalate-stop" sourceRef="escalate-route" targetRef="stopped">
+    <sequenceFlow id="escalate-stop" sourceRef="escalate-route" targetRef="record-stop">
       <conditionExpression xsi:type="tFormalExpression">=escalate-parse.route = "stop"</conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="escalate-continue" sourceRef="escalate-route" targetRef="lead-plan" />
@@ -257,6 +330,8 @@
         <coda:env name="VERIFIER_SENIOR" value="=inputs.verifierSenior" />
         <coda:output name="head" />
         <coda:output name="base" />
+        <coda:output name="previous" />
+        <coda:output name="skipReview" />
         <coda:output name="tier" />
         <coda:output name="reviewer" />
         <coda:output name="task" />
@@ -264,7 +339,12 @@
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" prepare-verify</script>
     </scriptTask>
-    <sequenceFlow id="prepare-to-dual-verify" sourceRef="prepare-verify" targetRef="dual-verify" />
+    <sequenceFlow id="prepare-to-verify-gate" sourceRef="prepare-verify" targetRef="rebuttal-gate" />
+    <exclusiveGateway id="rebuttal-gate" default="run-dual-verify" />
+    <sequenceFlow id="rebuttal-to-pr" sourceRef="rebuttal-gate" targetRef="pr">
+      <conditionExpression xsi:type="tFormalExpression">=prepare-verify.skipReview</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="run-dual-verify" sourceRef="rebuttal-gate" targetRef="dual-verify" />
 
     <callActivity id="dual-verify" name="L3 结果导向双轨验证" calledElement="dickda-verify">
       <extensionElements>
@@ -276,11 +356,26 @@
         <coda:param name="task" value="=prepare-verify.task" />
       </extensionElements>
     </callActivity>
-    <sequenceFlow id="dual-verify-to-review" sourceRef="dual-verify" targetRef="final-review" />
+    <boundaryEvent id="dual-verify-error" attachedToRef="dual-verify"><errorEventDefinition /></boundaryEvent>
+    <sequenceFlow id="dual-error-to-record" sourceRef="dual-verify-error" targetRef="dual-call-lost" />
+    <scriptTask id="dual-call-lost" name="记录双轨验证调用异常" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
+      <extensionElements>
+        <coda:env name="VERIFY_REPORT" value="提交 {{prepare-verify.head}} 调用 dickda-verify 异常，未取得双轨验证结果。请查看 coda://workflow-runs/{{run.id}} 中的子流程，修复或重试。" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" verified</script>
+    </scriptTask>
+    <sequenceFlow id="dual-lost-to-lead" sourceRef="dual-call-lost" targetRef="lead-plan" />
+    <sequenceFlow id="dual-result-flow" sourceRef="dual-verify" targetRef="dual-result" />
+    <exclusiveGateway id="dual-result" default="dual-to-review" />
+    <sequenceFlow id="dual-failed-flow" sourceRef="dual-result" targetRef="verified-check">
+      <conditionExpression xsi:type="tFormalExpression">=not(dual-verify.passed)</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="dual-to-review" sourceRef="dual-result" targetRef="final-review" />
 
     <callActivity id="final-review" name="Sol 独立代码审查（review-commit）" calledElement="review-commit">
       <extensionElements>
         <coda:param name="base" value="=prepare-verify.base" />
+        <coda:param name="previous" value="=prepare-verify.previous" />
         <coda:param name="head" value="=prepare-verify.head" />
         <coda:param name="task" value="=prepare-verify.task" />
         <coda:param name="reviewer" value="=prepare-verify.reviewer" />
@@ -307,6 +402,9 @@
         <coda:env name="VERIFY_COMMIT" value="=dual-verify.commit" />
         <coda:env name="VERIFY_PASSED" value="=dual-verify.passed" />
         <coda:env name="VERIFY_REPORT" value="=dual-verify.report" />
+        <coda:env name="VERIFY_FINDINGS" value="=dual-verify.findings" />
+        <coda:env name="VERIFY_EVIDENCE" value="=dual-verify.evidence" />
+        <coda:env name="PREVIOUS" value="=prepare-verify.previous" />
         <coda:env name="REVIEW" value="=final-review" />
         <coda:output name="route" />
         <coda:output name="reason" />
@@ -337,7 +435,7 @@
     <sequenceFlow id="retry-to-gate" sourceRef="review-retry" targetRef="review-retry-gate" />
 
     <exclusiveGateway id="review-retry-gate" default="retry-final-review" />
-    <sequenceFlow id="retry-stop" sourceRef="review-retry-gate" targetRef="stopped">
+    <sequenceFlow id="retry-stop" sourceRef="review-retry-gate" targetRef="record-stop">
       <conditionExpression xsi:type="tFormalExpression">=review-retry.chose.stop</conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="retry-final-review" sourceRef="review-retry-gate" targetRef="final-review" />
@@ -529,7 +627,7 @@
     </scriptTask>
     <sequenceFlow id="check-to-approve" sourceRef="approval-check" targetRef="approve" />
 
-    <userTask id="approve" name="批准合并" coda:assignee="user" coda:status="五层验证通过：等待批准合并">
+    <userTask id="approve" name="批准合并" coda:assignee="user" coda:status="等待用户裁决并批准合并">
       <documentation>{{approval-check.summary}}
 
 - **GitHub 检查**：{{if github-checks.lines = null or github-checks.lines = "" then "无额外项" else github-checks.lines}}
@@ -545,13 +643,22 @@
     <sequenceFlow id="approve-to-gate" sourceRef="approve" targetRef="approve-gate" />
 
     <exclusiveGateway id="approve-gate" name="是否批准合并" default="approved-flow" />
-    <sequenceFlow id="approve-stop" sourceRef="approve-gate" targetRef="stopped">
+    <sequenceFlow id="approve-stop" sourceRef="approve-gate" targetRef="record-stop">
       <conditionExpression xsi:type="tFormalExpression">=approve.chose.stop</conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="approved-flow" sourceRef="approve-gate" targetRef="approval-parse" />
 
+    <scriptTask id="record-stop" name="记录停止原因并保留需求分支" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
+      <extensionElements>
+        <coda:env name="REASON" value="=if approve.chose.stop then approve.note else if review-retry.chose.stop then review-retry.note else if escalate-task.chose.stop then escalate-task.note else if plan-confirm.chose.stop then plan-confirm.note else lead-plan.escalation" />
+        <coda:output name="reason" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" stopped</script>
+    </scriptTask>
+    <sequenceFlow id="recorded-stop" sourceRef="record-stop" targetRef="stopped" />
     <endEvent id="stopped" name="停止交付，保留分支工作" coda:notify="true">
       <extensionElements>
+        <coda:output name="reason" value="=record-stop.reason" />
         <coda:output name="pr" value="=pr.url" />
         <coda:output name="branch" value="=lane.reqBranch" />
       </extensionElements>
