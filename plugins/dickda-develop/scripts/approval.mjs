@@ -1,6 +1,39 @@
 // Post-merge hook-joiners parsing adapted from @coda-console/composer, MIT; see NOTICE.
+import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { appendGithubOutput } from './store.mjs';
+import { appendGithubOutput, requireValue } from './store.mjs';
+
+function privateEnv() {
+  const { CODA_THREAD_ID: _thread, ...env } = process.env;
+  return env;
+}
+
+export function privateGh(...args) {
+  return execFileSync('gh', args, { env: privateEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }).trim();
+}
+
+export function checkApprovalPr(state, allowMerged = false) {
+  const live = JSON.parse(privateGh('pr', 'view', state.pr, '--json', 'state,headRefOid,baseRefName,mergeable,mergeCommit'));
+  const defaultBranch = privateGh('repo', 'view', state.remote, '--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name');
+  requireValue(live.headRefOid === state.head, 'PR 提交已改变，请重新验证并批准');
+  requireValue(live.baseRefName === state.base && state.base === defaultBranch, '仅允许合入仓库默认分支');
+  requireValue(live.state === 'OPEN' || (allowMerged && live.state === 'MERGED'), 'PR 已关闭');
+  return live;
+}
+
+export function mergeApprovedPr(state, method) {
+  const live = checkApprovalPr(state, true);
+  if (live.state === 'MERGED') return { route: 'merged', commit: live.mergeCommit.oid };
+
+  const done = spawnSync('gh', ['pr', 'merge', state.pr, '--repo', state.remote, `--${method}`, '--match-head-commit', state.head, '--delete-branch'], {
+    env: privateEnv(), encoding: 'utf8',
+  });
+  if (done.error) throw done.error;
+  const after = checkApprovalPr(state, true);
+  if (after.state === 'MERGED') return { route: 'merged', commit: after.mergeCommit.oid };
+  if (after.state === 'OPEN' && after.mergeable === 'CONFLICTING') return { route: 'conflict', commit: '' };
+  throw new Error(`合并未完成：${after.state} ${done.stderr || done.stdout}`);
+}
 
 export function parseApproval(answer = {}, joinersRaw = '[]') {
   const list = typeof joinersRaw === 'string' && joinersRaw.trim() ? JSON.parse(joinersRaw) : (Array.isArray(joinersRaw) ? joinersRaw : []);

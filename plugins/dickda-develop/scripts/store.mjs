@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,6 +32,19 @@ export function git(root, ...args) {
   return execFileSync('git', ['-C', root, ...args], {
     encoding: 'utf8', timeout: 20000, maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
+}
+
+export function remoteGit(root, ...args) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    } catch (error) {
+      const transient = /\bEOF\b|SSL_ERROR_(?:SYSCALL|ZERO_RETURN)|SSL connect error|TLS connection was non-properly terminated|ECONNRESET|connection (?:was )?reset|timed?\s*out|HTTP(?:\/\S+)?\s+5\d\d\b|returned error: 5\d\d\b|curl (?:18|28|35|52|55|56|92)\b/i.test(error.stderr);
+      if (!transient || attempt === 3) throw error;
+      console.error(`git ${args[0]} 网络中断，第 ${attempt + 1} 次尝试`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250 * 2 ** (attempt - 1));
+    }
+  }
 }
 
 export function repo(cwd = process.cwd()) {
@@ -109,6 +122,7 @@ export function register(root) {
 }
 
 export const INVESTIGATE_MARKER = '# !!!DICKDA_INVESTIGATE!!!\n';
+export const DEFAULT_PLAN = '# 五层技术方案\n\n## L1 · Codebase\n\n## L2 · Static Analysis\n\n## L3 · Verification\n\n## L4 · Work Graph & Prose\n\n## L5 · Human Review\n';
 
 export function init(root) {
   const cfgFile = managed(root, 'project.json');
@@ -133,10 +147,10 @@ export function init(root) {
 
   const learningSeed = '# !!!LEARNING!!!\n\n## Orders\n\n## Refinements\n';
   const defaults = {
-    '.gitignore': '# Local temporary scratch only; runtime state lives in git-dir/dickda/\n/*.tmp\n',
+    '.gitignore': '# Local temporary scratch only; runtime state lives in git-dir/dickda/\n/*.tmp\n/*.tmp.html\n',
     'project.md': '# Project Facts\n\n## Build & Static Check Commands\n\n## Verification & UI Preview Commands\n\n## Protected / Do-Not-Modify Paths\n',
     'tasks/TODO_TASK.md': '# TODO TASK\n',
-    'tasks/PLAN_5L.md': '# 五层技术方案\n\n## L1 · Codebase\n\n## L2 · Static Analysis\n\n## L3 · Verification\n\n## L4 · Work Graph & Prose\n\n## L5 · Human Review\n',
+    'tasks/PLAN_5L.md': DEFAULT_PLAN,
     'tasks/logs/investigate.md': INVESTIGATE_MARKER,
     'knowledge/Index.md': '# Knowledge Base Index\n\n## Architecture & Modules\n\n## Domain & Decisions\n',
     'learning/Learning_General.md': learningSeed,
@@ -148,6 +162,13 @@ export function init(root) {
     const target = managed(root, name);
     mkdirSync(dirname(target), { recursive: true });
     if (!existsSync(target)) writeFileSync(target, content, { flag: 'wx' });
+    else if (name === '.gitignore') {
+      const rules = readFileSync(target, 'utf8');
+      if (!/^\/?\*\.tmp\.html[ \t]*$/m.test(rules)) {
+        const newline = rules.includes('\r\n') ? '\r\n' : '\n';
+        appendFileSync(target, `${rules && !rules.endsWith('\n') ? newline : ''}/*.tmp.html${newline}`);
+      }
+    }
   }
 
   register(root);
@@ -158,11 +179,17 @@ export function listFiles(root, folder, suffixes) {
   const dir = managed(root, folder);
   if (!existsSync(dir)) return [];
   const allowed = Array.isArray(suffixes) ? suffixes : [suffixes];
-  return readdirSync(dir, { withFileTypes: true })
-    .filter(entry => entry.isFile() && !entry.isSymbolicLink() && allowed.some(s => entry.name.endsWith(s)))
-    .map(entry => entry.name)
-    .sort()
-    .map(name => managed(root, `${folder}/${name}`));
+  const files = [];
+  function visit(directory, prefix) {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const name = `${prefix}/${entry.name}`;
+      const path = managed(root, name);
+      if (entry.isDirectory()) visit(path, name);
+      else if (entry.isFile() && allowed.some(suffix => entry.name.endsWith(suffix))) files.push(path);
+    }
+  }
+  visit(dir, folder);
+  return files.sort();
 }
 
 export function appendGithubOutput(values, file = process.env.GITHUB_OUTPUT) {

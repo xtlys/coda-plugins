@@ -9,7 +9,7 @@
     "skills": [
       "skills/dickda-develop"
     ],
-    "instructions": "采用 Dickda 五层开发时先读 dickda role interactor。需求对齐后交思考者产出 .dickda/tasks/PLAN_5L.md，发起 dickda-develop 由执行主控并发调度架构/实现/验证（两级升级）闭环交付；所有工程、测试与知识资产统一在 .dickda/。",
+    "instructions": "采用 Dickda 五层开发时先读 dickda role show interactor。发起 dickda-develop 后，思考者提交 PLAN_5L.md，交互者向用户讲解并给出开工建议。用户点确认开工后主控并发派单、同步里程碑。工单分文件记录并聚合归档，双轨验证按规约占设备。不采纳终审意见须向用户列明依据。dickda-refine 独立审查后，由用户批准合并消费归档。",
     "commands": [
       {
         "name": "dickda",

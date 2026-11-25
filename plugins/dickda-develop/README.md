@@ -19,24 +19,26 @@
 
 ```mermaid
 flowchart TD
-    I["交互者（neon-xhigh）：澄清需求 / HTML 看板对齐"] --> T["思考者（carbon-high）：制定 .dickda/tasks/PLAN_5L.md"]
-    T --> L["执行主控（neon-xhigh）：按依赖图组织并发批次"]
-
-    L ==>|"BPMN 并行多实例"| W1["架构（o55-high → carbon-high）"]
-    L ==>|"BPMN 并行多实例"| W2["实现（astra-high → astra-max）"]
-    L ==>|"BPMN 并行多实例"| W3["验证（sol-high → sol-max）"]
-
-    W1 & W2 & W3 --> M["git merge-tree 无冲突合入 + 项目 check"]
-    M --> L
-    L -.->|"越界风险请示"| I
-    L -->|"实现合齐"| V["dickda-verify 双轨验证（代码轨道 + Sol 实证轨道）+ review-commit"]
-    V -->|"发现必须修"| L
-    V -->|"全部放行"| PR["私有交付 PR → 用户批准合并 → merged 发布 → remember 归档"]
+    T["思考者提交 PLAN_5L.md"] --> I["暂停派工，交互者向用户讲解并给出开工建议"]
+    I --> U{"用户开工确认卡"}
+    U -->|"修订"| T
+    U -->|"确认开工"| L["主控按当前需求分支派工，用 tell-session 同步里程碑"]
+    L --> W["架构、实现、验证并发执行，各写一份工单日志"]
+    W --> M["合入工单并运行项目检查"]
+    M -->|"打回时保留 previousHead"| L
+    M -->|"实现齐备"| A["remember 聚合日志、需求与方案，提交归档"]
+    A --> V["双轨验证，Agent/UI 按规约占设备"]
+    V -->|"通过"| R{"独立代码审查"}
+    V -->|"未通过"| L
+    R -->|"要求修改"| L
+    R -->|"通过"| P["私有 PR 与用户批准卡"]
+    L -->|"同一已验证提交，逐条记录不采纳依据"| P
+    P -->|"用户批准合并"| F["默认分支保留归档，供 dickda-refine 提纯"]
 ```
 
-- **`dickda-develop`**：加入 `hook="develop"`，直接出现在会话「＋」与开发流程卡片中。
-- **`dickda-verify`**：并行运行确定性代码验证器（L2 Lint + L3 脚本）与验证工种（Sol）实证/UI 验收，可被主流程调用也可单独触发。
-- **`dickda-refine`**：消费 `.dickda/learning/<timestamp>` 归档，先交**思考者 + 交互者**评估是否重构及落入 L1~L4 哪一层，再交执行层落地重构并为 L4 文档瘦身。
+- **`dickda-develop`** 加入 `hook="develop"`。常规流程复用已有五层方案时也会暂停讲解和确认。显式选择 `fast` 可直接派工。主控续跑时收到当前提交、相对上轮的提交与改动统计，以及同步工作树的命令。终审要求修改时，主控可重派工单，或对同一已验证提交逐条给出客观依据。PR 和批准卡同时展示原结论与依据，交用户裁决。
+- **`dickda-verify`** 并行检查同一提交。代码轨运行 L2 Lint 和 L3 脚本。启用 UI 轨时先检出该提交，只有发现 Agent/UI 规约且指定设备才解析并占锁。没有规约会记录跳过，有规约且未指定设备则直接验收。`verifier` 和 `verifierSenior` 可覆盖插件设置。
+- **`dickda-refine`** 从最早的未消费归档开始，由思考者诊断、交互者选择落点。工程师提交后运行代码验证和项目检查，再做独立审查。审查未完成可重试或停止，要求修改可派修或写明不采纳依据。私有 PR 通过合并前和 GitHub 检查后，用户批准该提交合入默认分支，归档才在主干完成消费。冲突会退回同步、修复、重验和重新批准。「暂不合并」保留 PR、分支与主干归档。
 
 ## 3. `.dickda/` 统一资产目录
 
@@ -47,7 +49,8 @@ flowchart TD
   tasks/
     TODO_TASK.md        # 当前需求逐字原文
     PLAN_5L.md          # 五层技术方案
-    logs/investigate.md # 调查实验与裁决日志
+    logs/<jobId>.md     # 各并发工单自己的调查记录，交付前按批次聚合归档
+    logs/investigate.md # 没有工单 ID 的调查记录
   lints/                # L2 Executable Spec 脚本（*.mjs / *.sh）
   verifiers/            # L3 结果导向测试脚本与 Agent/UI 验收规约
   knowledge/            # L4 知识库（Index.md 等）

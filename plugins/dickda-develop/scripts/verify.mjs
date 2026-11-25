@@ -2,22 +2,22 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { assetsByKind, runLints } from './assets.mjs';
-import { agentArgs, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
-import { appendGithubOutput, config, git, listFiles, managed, repo, requireValue } from './store.mjs';
+import { assetsByKind, hasAgentVerifiers, runLints } from './assets.mjs';
+import { agentArgs, effectiveSettings, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
+import { appendGithubOutput, config, git, listFiles, managed, remoteGit, repo, requireValue } from './store.mjs';
 
 export function checkoutTargetCommit(root, { commit = '', runCommit = '', branch = '', remote = 'origin' } = {}) {
   const requested = String(commit || '').trim() || String(runCommit || '').trim();
   const branchRef = String(branch || '').trim();
   if (branchRef) {
-    git(root, 'fetch', '--quiet', remote, branchRef);
+    remoteGit(root, 'fetch', '--quiet', remote, branchRef);
   }
   if (!requested) {
     return git(root, 'rev-parse', 'HEAD');
   }
   const hasLocal = spawnSync('git', ['-C', root, 'cat-file', '-e', `${requested}^{commit}`]).status === 0;
   if (!hasLocal) {
-    git(root, 'fetch', '--quiet', remote, requested);
+    remoteGit(root, 'fetch', '--quiet', remote, requested);
   }
   const resolved = git(root, 'rev-parse', '--verify', `${requested}^{commit}`);
   requireValue(resolved === requested, `目标验证提交不匹配：预期 ${requested}，实际 ${resolved}`);
@@ -91,17 +91,13 @@ export function extractJsonBlock(text, tag = 'VERDICT_JSON') {
   return null;
 }
 
+function skippedAgent(summary = 'L3 Agent/UI 验证器：当前 .dickda/verifiers/ 无 Agent/UI 规约文件，跳过。') {
+  return { passed: true, skipped: true, summary, findings: [], evidence: [] };
+}
+
 export function runAgentVerifiers(root, { tier, difficulty = 'normal', rejections = 0, commit, device = '', task = '', settings = loadSettings(), runner } = {}) {
   const specs = assetsByKind(root, 'verifiers').filter(v => v.track === 'agent');
-  if (!specs.length) {
-    return {
-      passed: true,
-      skipped: true,
-      summary: 'L3 Agent/UI 验证器：当前 .dickda/verifiers/ 无 Agent/UI 规约文件，跳过。',
-      findings: [],
-      evidence: [],
-    };
-  }
+  if (!specs.length) return skippedAgent();
 
   const resolved = resolveEngineer('verifier', { tier, difficulty, rejections }, settings);
   const tempDir = process.env.RUNNER_TEMP || join(root, '.dickda');
@@ -155,35 +151,34 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     const action = process.argv[2];
     const artifacts = process.env.CODA_ARTIFACTS;
-    if (action === 'code') {
+    if (['code', 'agent-plan', 'agent'].includes(action)) {
       const root = repo();
-      const verifiedCommit = checkoutTargetCommit(root, {
+      const commit = checkoutTargetCommit(root, {
         commit: process.env.COMMIT,
         runCommit: process.env.RUN_COMMIT,
         branch: process.env.BRANCH,
       });
-      const result = { ...runCodeVerifiers(root), commit: verifiedCommit };
-      if (artifacts) writeFileSync(join(artifacts, 'code-verify.json'), JSON.stringify(result, null, 2));
-      appendGithubOutput({ passed: result.passed, summary: result.summary, commit: verifiedCommit });
-    } else if (action === 'agent') {
-      const root = repo();
-      const verifiedCommit = checkoutTargetCommit(root, {
-        commit: process.env.COMMIT,
-        runCommit: process.env.RUN_COMMIT,
-        branch: process.env.BRANCH,
-      });
-      const uiEnabled = process.env.UI !== 'false';
-      const baseResult = uiEnabled
-        ? runAgentVerifiers(root, {
-            tier: process.env.TIER || undefined,
-            commit: verifiedCommit,
-            device: process.env.DEVICE || '',
-            task: process.env.TASK || '',
-          })
-        : { passed: true, skipped: true, summary: 'L3 Agent/UI 验证已按参数跳过。', findings: [], evidence: [] };
-      const result = { ...baseResult, commit: verifiedCommit };
-      if (artifacts) writeFileSync(join(artifacts, 'agent-verify.json'), JSON.stringify(result, null, 2));
-      appendGithubOutput({ passed: result.passed, summary: result.summary, commit: verifiedCommit });
+      let result;
+      if (action === 'agent-plan') {
+        const needed = hasAgentVerifiers(root);
+        appendGithubOutput({ needed, commit });
+        if (!needed) result = skippedAgent();
+      } else if (action === 'code') {
+        result = runCodeVerifiers(root);
+      } else {
+        result = process.env.UI === 'false' ? skippedAgent('L3 Agent/UI 验证已按参数跳过。') : runAgentVerifiers(root, {
+          tier: process.env.TIER || undefined,
+          commit,
+          device: process.env.DEVICE || '',
+          task: process.env.TASK || '',
+          settings: effectiveSettings(),
+        });
+      }
+      if (result) {
+        const track = action === 'code' ? 'code' : 'agent';
+        if (artifacts) writeFileSync(join(artifacts, `${track}-verify.json`), JSON.stringify({ ...result, commit }, null, 2));
+        if (action !== 'agent-plan') appendGithubOutput({ passed: result.passed, summary: result.summary, commit });
+      }
     } else if (action === 'summary') {
       const codeRes = artifacts && existsSync(join(artifacts, 'code-verify.json'))
         ? JSON.parse(readFileSync(join(artifacts, 'code-verify.json'), 'utf8'))

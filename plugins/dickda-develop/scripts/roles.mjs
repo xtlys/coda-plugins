@@ -72,6 +72,25 @@ export function loadSettings(rawEnv = process.env.CODA_PLUGIN_SETTINGS, override
   };
 }
 
+function parseOverrideAgent(raw) {
+  if (!raw) return undefined;
+  const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  return parsed && typeof parsed === 'object' && parsed.agent ? parsed : undefined;
+}
+
+export function effectiveSettings(env = process.env) {
+  return loadSettings(env.CODA_PLUGIN_SETTINGS, {
+    'dickda-develop.thinker': parseOverrideAgent(env.THINKER),
+    'dickda-develop.lead': parseOverrideAgent(env.LEAD),
+    'dickda-develop.architectStandard': parseOverrideAgent(env.ARCHITECT),
+    'dickda-develop.architectSenior': parseOverrideAgent(env.ARCHITECT_SENIOR),
+    'dickda-develop.builderStandard': parseOverrideAgent(env.BUILDER),
+    'dickda-develop.builderSenior': parseOverrideAgent(env.BUILDER_SENIOR),
+    'dickda-develop.verifierStandard': parseOverrideAgent(env.VERIFIER),
+    'dickda-develop.verifierSenior': parseOverrideAgent(env.VERIFIER_SENIOR),
+  });
+}
+
 // Resolve single-tier role (interactor / thinker / lead) or two-tier engineer trade (architect / builder / verifier).
 export function resolveEngineer(trade, { tier, difficulty = 'normal', rejections = 0 } = {}, settings = loadSettings()) {
   requireValue(TRADES.includes(trade), `未知工程师工种：${trade}（支持 architect|builder|verifier）`);
