@@ -7,7 +7,7 @@ import { checkSpecLock, remember, runLints } from './assets.mjs';
 import { enabledGuidelinesDigest } from './prompts.mjs';
 import { checkRunsText, jsonList, openMusts, requestedChanges, reviewRange, reviewVerdict } from './review.mjs';
 import { TRADES, agentArgs, effectiveSettings, formatAgent, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
-import { appendGithubOutput, atomic, init, managed, projectGroup, remoteGit, repo, requireValue } from './store.mjs';
+import { DEFAULT_PLAN, appendGithubOutput, atomic, init, managed, projectGroup, remoteGit, repo, requireValue } from './store.mjs';
 import { extractJsonBlock } from './verify.mjs';
 
 export { effectiveSettings };
@@ -362,6 +362,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         remoteGit('.', 'push', '--quiet', '--force', '--no-follow-tags', remote, `${startCommit}:refs/heads/${reqBranch}`);
 
         let goal = (env.GOAL || '').trim();
+        const briefProvided = Boolean(goal);
         let title = (env.TITLE || '').trim() || goal.split(/\r?\n/)[0].slice(0, 80);
         const todo = '.dickda/tasks/TODO_TASK.md';
         if (!goal && git('ls-tree', '--name-only', startCommit, '--', todo)) {
@@ -382,6 +383,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           group,
           title,
           goal,
+          briefProvided,
           round: 0,
           leadSession: null,
           ledger: {},
@@ -420,8 +422,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         git('checkout', '-B', state.reqBranch, head);
         init(root);
         const todo = managed(root, 'tasks/TODO_TASK.md');
-        if (state.briefProvided || !existingTask(readFileSync(todo, 'utf8'))) atomic(todo, `# ${state.title}\n\n${state.goal}\n`);
-        const preview = planPreview(readFileSync(managed(root, 'tasks/PLAN_5L.md'), 'utf8'));
+        const plan = managed(root, 'tasks/PLAN_5L.md');
+        const original = readFileSync(todo, 'utf8').trim().replaceAll('\r\n', '\n');
+        const task = existingTask(original);
+        const goal = state.goal.replaceAll('\r\n', '\n');
+        const sameGoal = task && (goal === task.goal || goal === original);
+        const goalChanged = state.briefProvided && !sameGoal;
+        if (!task || goalChanged) atomic(todo, `# ${state.title}\n\n${state.goal}\n`);
+        if (goalChanged) atomic(plan, DEFAULT_PLAN);
+        const preview = planPreview(readFileSync(plan, 'utf8'));
         git('add', '.dickda');
         if (git('status', '--porcelain', '--', '.dickda')) {
           git('commit', '-m', `chore(dickda): initialize .dickda assets for ${state.title}`);
@@ -620,6 +629,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           '--prompt-file', promptFile,
         ], root);
 
+        const workerHead = job.trade === 'verifier' ? null : call.parsed?.head;
+        const isAncestor = !workerHead || spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', workerHead, baseHead]).status === 0;
+        const isStrictDescendant = !isAncestor && spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', baseHead, workerHead]).status === 0;
         let record;
         if (call.status !== 0 || !call.parsed?.session) {
           record = { ...job, status: 'failed', passed: false, error: `coda-agent 退出码 ${call.status}` };
@@ -635,13 +647,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
             ...(evaluated.error ? { error: evaluated.error } : {}),
           };
         } else {
-          const workerHead = call.parsed.head;
-          const isAncestor = !workerHead || spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', workerHead, baseHead]).status === 0;
-          const isDescendant = Boolean(workerHead)
-            && spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', baseHead, workerHead]).status === 0;
           if (isAncestor) {
             record = { ...job, status: 'rejected', head: workerHead, error: '工单未产生新的 Git 提交' };
-          } else if (!isDescendant) {
+          } else if (!isStrictDescendant) {
             record = { ...job, status: 'rejected', head: workerHead, error: `工单返回的提交（${workerHead}）不是需求分支基线（${baseHead}）的严格后代` };
           } else {
             git('checkout', '--quiet', workerHead);
@@ -650,14 +658,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
               record = {
                 ...job,
                 status: 'rejected',
-                head: workerHead,
                 error: `违反规约锁定：实现工单不得擅自修改 ${lockCheck.violations.join('、')}`,
               };
             } else {
               const lintRes = runLints(root);
               if (!lintRes.passed) {
                 const detail = lintRes.results.filter(r => !r.passed).map(r => `${r.path}: ${r.output}`).join('; ');
-                record = { ...job, status: 'rejected', head: workerHead, error: `L2 Executable Lint 未通过：${detail}` };
+                record = { ...job, status: 'rejected', error: `L2 Executable Lint 未通过：${detail}` };
               } else {
                 const jobRef = `dickda/job-${env.GITHUB_RUN_ID}-${job.id}`;
                 remoteGit('.', 'push', '--quiet', '--force', '--no-follow-tags', state.remote, `${workerHead}:refs/heads/${jobRef}`);
@@ -671,8 +678,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
                 };
               }
             }
-            if (record.status === 'rejected') record.retainedRef = retainWorkerHead(state.remote, job.id, workerHead);
           }
+        }
+        if (isStrictDescendant && (call.status !== 0 || record.status === 'rejected')) {
+          record.head = workerHead;
+          record.retainedRef = retainWorkerHead(state.remote, job.id, workerHead);
         }
         writeFileSync(resultFile, JSON.stringify(record, null, 2));
         appendGithubOutput({ id: job.id, status: record.status });

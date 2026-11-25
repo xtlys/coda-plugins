@@ -43,10 +43,11 @@ export function openMusts(review, previous) {
   const findings = jsonList(review.findings);
   const resolutions = jsonList(review.resolutions) ?? [];
   if (!findings || previous.some(f => !resolutions.some(r => r?.id === f.id && ['resolved', 'withdrawn', 'upheld'].includes(r.status)))) return [];
+  // review-commit can return unnumbered new findings. Keep the same id for each upheld finding on re-review.
   return [
     ...previous.filter(f => resolutions.some(r => r?.id === f.id && r.status === 'upheld')),
     ...findings.filter(f => f?.level === 'must'),
-  ];
+  ].map((f, index) => ({ ...f, id: f.id ?? `${review.head.slice(0, 12)}-${index + 1}` }));
 }
 
 export function requestedChanges(state, head) {

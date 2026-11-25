@@ -168,6 +168,7 @@ const reply = JSON.parse(process.env.AGENT_REPLY);
 fs.writeFileSync(process.env.FIXTURE_DIR + '/agent-args.json', JSON.stringify(process.argv.slice(2)));
 if (reply.head) require('node:child_process').execFileSync('git', ['fetch', process.env.FIXTURE_DIR + '/work', reply.head]);
 console.log(JSON.stringify(reply));
+process.exitCode = Number(process.env.AGENT_EXIT_CODE || 0);
 `, { mode: 0o755 });
 
   const run = stepRunner(fixture, script);
@@ -661,6 +662,20 @@ test('prose refinement removes obsolete lines across learning files and applies 
   assert.equal(readFileSync(join(learning, 'Learning_Team.md'), 'utf8'), keep);
 });
 
+test('prose refinement writes custom learning documents and rejects invalid filenames and symlinks', t => {
+  const { work } = createGitRepo(t);
+  init(work);
+  const learning = join(work, '.dickda/learning');
+  const addNote = file => applyProseRefinements(work, { learningUpdates: [{ file, text: 'Team practice' }] });
+  addNote('Learning_Team.md');
+  assert.equal(readFileSync(join(learning, 'Learning_Team.md'), 'utf8'), '- Team practice [1]\n');
+  for (const file of ['Notes.md', 'Learning_.md', '../Learning_Team.md', 'Learning_Team/Notes.md', 'Learning_Team\\Notes.md']) {
+    assert.throws(() => addNote(file), /无效的经验文档/);
+  }
+  symlinkSync(join(learning, 'Learning_Team.md'), join(learning, 'Learning_Link.md'));
+  assert.throws(() => addNote('Learning_Link.md'), /符号链接/);
+});
+
 test('development workflow routes both plan decisions, milestones, dual failures and adjudicated reviews', () => {
   const { xml, routes, card } = workflowGraph('dickda-develop');
   assert.deepEqual(routes('think-gate'), {
@@ -746,21 +761,56 @@ test('remote-only starting branch supplies the original task and a bounded previ
   assert.match(run('stopped', { REASON: '' }).reason, /暂不开工/);
 });
 
-test('empty templates return to brief, and only a supplied brief overwrites a substantive task', t => {
+test('seed preserves a plan for a matching explicit goal and resets it for a new goal', t => {
+  const { dir, work, origin, git, commit, run } = workflowFixture(t);
+  init(work);
+  const todo = '.dickda/tasks/TODO_TASK.md';
+  const plan = '.dickda/tasks/PLAN_5L.md';
+  const defaultPlan = git(work, 'hash-object', plan);
+  const oldGoal = '保留原目标。\n\n- 验收旧入口。';
+  const original = `# 已合入的需求\n\n${oldGoal}\n\n`;
+  writeFileSync(join(work, todo), original);
+  writeFileSync(join(work, plan), blueprint);
+  const start = commit(work, 'merged task and plan');
+  git(work, 'push', 'origin', 'main');
+
+  function seed(id, goal) {
+    const env = { CODA_ARTIFACTS: join(dir, id), GITHUB_RUN_ID: id };
+    run('lane', { ...env, GOAL: goal, TITLE: '本次需求' });
+    return run('seed', env);
+  }
+  for (const [id, goal] of [['same-body', oldGoal.replaceAll('\n', '\r\n')], ['same-file', original]]) {
+    const reused = seed(id, goal);
+    assert.equal(reused.hasPlan, 'true');
+    assert.equal(reused.head, start);
+  }
+  const goal = '为新入口增加验收。';
+  const seeded = seed('new-goal', goal);
+  assert.equal(seeded.hasPlan, 'false');
+  assert.equal(seeded.preview, '');
+  assert.equal(git(origin, 'show', `${seeded.head}:${todo}`), `# 本次需求\n\n${goal}`);
+  assert.equal(git(origin, 'rev-parse', `${seeded.head}:${plan}`), defaultPlan);
+});
+
+test('empty templates return to brief, and a changed brief replaces the branch task and plan', t => {
   const { work, origin, git, commit, run } = workflowFixture(t);
   const todo = '.dickda/tasks/TODO_TASK.md';
+  const plan = '.dickda/tasks/PLAN_5L.md';
   init(work);
   git(work, 'push', 'origin', `${commit(work, 'empty templates')}:main`);
   const lane = run('lane', { GOAL: '', TITLE: '' });
   assert.equal(lane.needBrief, 'true');
   assert.equal(run('brief', { BRIEF: '{"note":" "}' }).route, 'again');
   writeFileSync(join(work, todo), '# 分支原文\n\n已有边界\n');
+  writeFileSync(join(work, plan), blueprint);
   git(work, 'push', 'origin', `${commit(work, 'task written on the branch')}:${lane.reqBranch}`);
   const seed = run('seed');
-  assert.equal(seed.hasPlan, 'false');
+  assert.equal(seed.hasPlan, 'true');
   assert.equal(git(origin, 'show', `${seed.head}:${todo}`), '# 分支原文\n\n已有边界');
   assert.equal(run('brief', { BRIEF: '{"note":"新标题\\n新目标"}' }).route, 'ok');
   const updated = run('seed');
+  assert.equal(updated.hasPlan, 'false');
+  assert.equal(git(origin, 'rev-parse', `${updated.head}:${plan}`), git(origin, 'rev-parse', `main:${plan}`));
   assert.equal(git(origin, 'show', `${updated.head}:${todo}`), '# 新标题\n\n新目标');
 });
 
@@ -807,7 +857,7 @@ test('a same-head review needs a reason per finding, then goes to the PR and app
   assert.match(state().pendingFeedback, /调用异常/);
 });
 
-test('incremental review carries only numbered open musts and falls back to a full review for incomplete findings', t => {
+test('incremental review numbers new musts, preserves upheld ids and falls back for incomplete findings', t => {
   const { work, git, commit, run, lead } = workflowFixture(t);
   const lane = run('lane', { GOAL: '增量复评' });
   let { head } = run('seed');
@@ -829,24 +879,53 @@ test('incremental review carries only numbered open musts and falls back to a fu
       REVIEW: JSON.stringify({ head, decision: 'REQUEST_CHANGES', findings: JSON.stringify(findings), resolutions: JSON.stringify(resolutions) }),
     }).route, 'lead');
   }
-  const must = { id: '#1', level: 'must', kind: 'contract', title: '入口', location: 'a:1', detail: '详情' };
+  const must = { level: 'must', kind: 'contract', title: '入口', location: 'a:1', detail: '详情' };
   const second = { ...must, id: '#2', title: '出口' };
-  const third = { ...must, id: '#3', title: '新增意见' };
+  const third = { ...must, title: '新增意见' };
   const original = head;
   reviewed([must, { level: 'nit', title: '风格' }, second]);
   const first = advance();
   assert.equal(first.base, original);
-  assert.deepEqual(JSON.parse(first.previous), [must, second]);
-  reviewed([third], first.previous, [{ id: '#1', status: 'resolved' }, { id: '#2', status: 'upheld', reason: '仍有触发路径' }]);
+  const numbered = { ...must, id: `${original.slice(0, 12)}-1` };
+  assert.deepEqual(JSON.parse(first.previous), [numbered, second]);
+  reviewed([third], first.previous, [{ id: numbered.id, status: 'upheld', reason: '仍有触发路径' }, { id: '#2', status: 'resolved' }]);
   const next = advance();
   assert.equal(next.base, first.head);
-  assert.deepEqual(JSON.parse(next.previous), [second, third]);
-  // Native reviews may omit ids. Dropping just the malformed must would lose its review scope.
-  const { id, ...unnumbered } = must;
-  reviewed([unnumbered, second]);
+  assert.deepEqual(JSON.parse(next.previous), [numbered, { ...third, id: `${first.head.slice(0, 12)}-2` }]);
+  reviewed([{ ...must, kind: '' }, second]);
   const full = advance();
   assert.equal(full.base, lane.baseCommit);
   assert.equal(full.previous, '');
+});
+
+test('cancelled coding jobs retain strict descendant commits for redispatch without integrating them', t => {
+  const { work, origin, git, commit, run, lead, state } = workflowFixture(t);
+  const { reqBranch } = run('lane', { GOAL: '实现入口' });
+  const { head: base } = run('seed');
+  const sibling = commit(work, 'work on another branch');
+  git(work, 'fetch', 'origin', reqBranch);
+  git(work, 'checkout', '--detach', 'FETCH_HEAD');
+  writeFileSync(join(work, 'entry.mjs'), 'export const ready = false;\n');
+  const partial = commit(work, 'partial implementation');
+  const job = { id: 'entry', trade: 'builder', title: '入口', task: '实现入口' };
+  lead({ action: 'dispatch', jobs: [job, { ...job, id: 'check', trade: 'verifier' }] });
+  const cancel = (id, head) => run('worker', {
+    JOB_ID: id, AGENT_EXIT_CODE: '130', AGENT_REPLY: JSON.stringify({ session: 'engineer', head }),
+  });
+  for (const head of [base, sibling]) assert.equal(cancel(job.id, head).status, 'failed');
+  assert.equal(cancel('check', partial).status, 'failed');
+  assert.equal(git(origin, 'for-each-ref', '--format=%(refname)', 'refs/heads/dickda/prev-*'), '');
+
+  assert.equal(cancel(job.id, partial).status, 'failed');
+  const retained = 'refs/heads/dickda/prev-run-101-entry';
+  assert.equal(git(origin, 'rev-parse', retained), partial);
+  assert.deepEqual(run('integrate'), { head: base, changed: 'false' });
+  assert.equal(state().ledger.entry.status, 'rejected');
+  assert.equal(state().ledger.entry.lastRejectedHead, partial);
+  const [retry] = JSON.parse(lead({ action: 'dispatch', jobs: [job] }).jobs);
+  assert.equal(retry.previousHead, partial);
+  assert.equal(retry.previousRef, retained);
+  assert.match(retry.previousFeedback, /退出码 130/);
 });
 
 test('lint rejection retains worker commits through replacement and senior retry, including a locked upstream merge', t => {

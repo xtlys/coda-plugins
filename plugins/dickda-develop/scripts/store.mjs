@@ -122,6 +122,7 @@ export function register(root) {
 }
 
 export const INVESTIGATE_MARKER = '# !!!DICKDA_INVESTIGATE!!!\n';
+export const DEFAULT_PLAN = '# 五层技术方案\n\n## L1 · Codebase\n\n## L2 · Static Analysis\n\n## L3 · Verification\n\n## L4 · Work Graph & Prose\n\n## L5 · Human Review\n';
 
 export function init(root) {
   const cfgFile = managed(root, 'project.json');
@@ -149,7 +150,7 @@ export function init(root) {
     '.gitignore': '# Local temporary scratch only; runtime state lives in git-dir/dickda/\n/*.tmp\n/*.tmp.html\n',
     'project.md': '# Project Facts\n\n## Build & Static Check Commands\n\n## Verification & UI Preview Commands\n\n## Protected / Do-Not-Modify Paths\n',
     'tasks/TODO_TASK.md': '# TODO TASK\n',
-    'tasks/PLAN_5L.md': '# 五层技术方案\n\n## L1 · Codebase\n\n## L2 · Static Analysis\n\n## L3 · Verification\n\n## L4 · Work Graph & Prose\n\n## L5 · Human Review\n',
+    'tasks/PLAN_5L.md': DEFAULT_PLAN,
     'tasks/logs/investigate.md': INVESTIGATE_MARKER,
     'knowledge/Index.md': '# Knowledge Base Index\n\n## Architecture & Modules\n\n## Domain & Decisions\n',
     'learning/Learning_General.md': learningSeed,

@@ -63,7 +63,7 @@ export function applyProseRefinements(root, diagnosis) {
   for (const note of diagnosis.learningUpdates ?? []) {
     const { file = 'Learning_General.md', text } = typeof note === 'string' ? { text: note } : note ?? {};
     if (typeof text !== 'string' || !text.trim()) continue;
-    requireValue(['Learning_General.md', 'Learning_Coding.md', 'Learning_Testing.md'].includes(file), `无效的经验文档：${file}`);
+    requireValue(typeof file === 'string' && /^Learning_[A-Za-z0-9][A-Za-z0-9_-]{0,79}\.md$/.test(file), `无效的经验文档：${file}`);
     const target = managed(root, `learning/${file}`);
     const content = edits.get(target) ?? (existsSync(target) ? readFileSync(target, 'utf8') : '');
     const bullet = `- ${text.trim()}`;
@@ -243,7 +243,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           rolePrompt('thinker'),
           `## Refine 归档复盘输入（归档目录：${state.archive}）\n${archiveText}`,
           `## 当前项目五层健康度\n\`\`\`json\n${JSON.stringify(state.health, null, 2)}\n\`\`\``,
-          'learningUpdates 中的字符串写入 Learning_General.md。也可用 {"file":"Learning_Coding.md","text":"经验条文"} 指定 General、Coding 或 Testing 文档。knowledgeUpdates 每项用 {"path":"knowledge/<name>.md","content":"完整正文"} 更新知识文档。',
+          'learningUpdates 中的字符串写入 Learning_General.md。也可用 {"file":"Learning_Team.md","text":"经验条文"} 指定 Learning_*.md 文档。名称部分由 1–80 个英文字母、数字、下划线或连字符组成，以字母或数字开头。knowledgeUpdates 每项用 {"path":"knowledge/<name>.md","content":"完整正文"} 更新知识文档。',
           `## 输出要求\n评估该归档暴露的痛点是否需要结构性演进或重构，并确定应落实到哪几个层次（L1 架构/接口重构、L2 .dickda/lints 可执行规则、L3 .dickda/verifiers 结果验证器、L4 知识/经验文档更新与旧口头规则瘦身）。在末尾输出 \`\`\`json 块：\n\`\`\`json\n{\n  "needsRefactor": true,\n  "layers": ["L2", "L4"],\n  "summary": "诊断结论摘要",\n  "actions": [{"layer": "L2", "trade": "architect", "difficulty": "normal", "title": "...", "task": "..."}],\n  "obsoleteProse": [],\n  "learningUpdates": [],\n  "knowledgeUpdates": []\n}\n\`\`\``,
         ].join('\n\n');
         writeFileSync(promptFile, prompt);
@@ -350,9 +350,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         if (verdict.route === 'retry') {
           saveState({ ...state, review: null, kept });
         } else {
-          // review-commit can return unnumbered new findings. Keep the same id for each upheld finding on re-review.
-          const openReviewFindings = openMusts(review, jsonList(env.PREVIOUS) ?? []).map((f, index) =>
-            ({ ...f, id: f.id ?? `${review.head.slice(0, 12)}-${index + 1}` }));
+          const openReviewFindings = openMusts(review, jsonList(env.PREVIOUS) ?? []);
           saveState({ ...state, review, lastReviewedHead: review.head, openReviewFindings, kept });
         }
         appendGithubOutput(verdict);
