@@ -4,6 +4,7 @@ import { basename, dirname, join, relative } from 'node:path';
 import { INVESTIGATE_MARKER, atomic, base, git, hash, inside, listFiles, lock, managed, requireValue } from './store.mjs';
 
 const ARCHIVE_DIR = /^\d{4}(-\d{2}){5}$/;
+export const CONSUMED_FILE = `${base}/learning/.consumed`;
 
 export function readMarkdownAsset(file, relPath) {
   const body = readFileSync(file, 'utf8');
@@ -80,6 +81,25 @@ export function backups(root, count = 10, consumed = new Set()) {
     .slice(0, count);
 }
 
+export function consumedArchives(root, tree) {
+  let contents;
+  if (tree) {
+    const entry = git(root, 'ls-tree', tree, '--', CONSUMED_FILE);
+    if (!entry) return [];
+    requireValue(/^100(?:644|755) blob /.test(entry), `消费记录须为普通文件：${CONSUMED_FILE}`);
+    contents = git(root, 'show', `${tree}:${CONSUMED_FILE}`);
+  } else {
+    const file = inside(root, CONSUMED_FILE);
+    if (!existsSync(file)) return [];
+    contents = readFileSync(file, 'utf8');
+  }
+  return contents.split(/\r?\n/).filter(Boolean);
+}
+
+export function consumptionRecord(history, archive) {
+  return [...new Set([...history, archive])].sort().join('\n');
+}
+
 export function remember(root, time = new Date()) {
   return lock(root, 'remember', () => {
     const logDir = managed(root, 'tasks/logs');
@@ -95,13 +115,14 @@ export function remember(root, time = new Date()) {
 
     let date = new Date(time);
     requireValue(Number.isFinite(date.getTime()), '归档时间无效');
+    const consumed = new Set(consumedArchives(root));
     let dirRel;
     do {
       const parts = [date.getFullYear(), date.getMonth() + 1, date.getDate(), date.getHours(), date.getMinutes(), date.getSeconds()];
       const stamp = parts.map((n, i) => String(n).padStart(i ? 2 : 4, '0')).join('-');
       dirRel = `${base}/learning/${stamp}`;
       date = new Date(date.getTime() + 1000);
-    } while (existsSync(inside(root, dirRel)));
+    } while (consumed.has(dirRel) || existsSync(inside(root, dirRel)));
 
     const target = inside(root, dirRel);
     mkdirSync(dirname(target), { recursive: true });
@@ -133,10 +154,11 @@ export function remember(root, time = new Date()) {
   });
 }
 
-export function consumeBackup(root, archiveRelPath) {
+export function consumeBackup(root, archiveRelPath, record = consumptionRecord(consumedArchives(root), archiveRelPath)) {
   requireValue(/^\.dickda\/learning\/\d{4}(-\d{2}){5}$/.test(archiveRelPath), `无效的归档目录路径：${archiveRelPath}`);
   const target = inside(root, archiveRelPath);
   requireValue(existsSync(target), `归档目录不存在：${archiveRelPath}`);
+  atomic(inside(root, CONSUMED_FILE), `${record}\n`);
   rmSync(target, { recursive: true, force: true });
   return { consumed: archiveRelPath };
 }

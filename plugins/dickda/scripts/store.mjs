@@ -106,8 +106,20 @@ export function config(root) {
   return { verifyCommands: [], ...value };
 }
 
-export function projectGroup(root) {
-  if (existsSync(managed(root, 'project.json'))) return `dickda:${config(root).projectId}`;
+export function projectGroup(root, remote) {
+  if (!remote) {
+    const remotes = git(root, 'remote').split('\n');
+    const name = remotes.includes('origin') ? 'origin' : remotes[0];
+    if (name) remote = git(root, 'config', '--get', `remote.${name}.url`);
+  }
+  if (remote) {
+    const url = URL.parse(remote.includes('://') ? remote : remote.replace(/^([^/:]+):\/*/, 'ssh://$1/'));
+    if (url?.protocol === 'ssh:' && url.port === '22') url.port = '';
+    const repository = url && url.protocol !== 'file:'
+      ? `${url.host}${url.pathname}`.toLowerCase().replace(/\/+$/, '').replace(/\.git$/, '')
+      : resolve(root, url ? fileURLToPath(url) : remote);
+    return `dickda:${hash(repository)}`;
+  }
   const commonDir = realpathSync(resolve(root, git(root, 'rev-parse', '--git-common-dir')));
   return `dickda:${hash(commonDir)}`;
 }

@@ -381,7 +381,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
             title ||= task.title;
           }
         }
-        const group = projectGroup(root);
+        const group = projectGroup(root, remote);
         const initial = {
           remote,
           defaultBranch,

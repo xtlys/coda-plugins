@@ -6,12 +6,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
-import { assetsByKind, backups, checkSpecLock, consumeBackup, hasAgentVerifiers, remember, runLints } from '../../plugins/dickda/scripts/assets.mjs';
+import { CONSUMED_FILE, assetsByKind, backups, checkSpecLock, consumeBackup, hasAgentVerifiers, remember, runLints } from '../../plugins/dickda/scripts/assets.mjs';
 import { enrichDispatchBatch, evaluateVerificationGate, evaluateVerifierAnswer, integrateWorkerResults } from '../../plugins/dickda/scripts/develop.mjs';
 import { builtinPrompts, enablePrompt, promptTemplate, prompts, putPrompt, renderPrompt } from '../../plugins/dickda/scripts/prompts.mjs';
 import { applyProseRefinements, buildRefineContext, executeRefinePlan, normalizeDiagnosis } from '../../plugins/dickda/scripts/refine.mjs';
 import { ROLES, loadSettings, resolveEngineer, rolePrompt } from '../../plugins/dickda/scripts/roles.mjs';
-import { INVESTIGATE_MARKER, init, inside, runtime } from '../../plugins/dickda/scripts/store.mjs';
+import { INVESTIGATE_MARKER, hash, init, inside, projectGroup, runtime } from '../../plugins/dickda/scripts/store.mjs';
 import { checkoutTargetCommit, runAgentVerifiers, runCodeVerifiers } from '../../plugins/dickda/scripts/verify.mjs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -252,6 +252,43 @@ test('unified .dickda asset directory initializes cleanly, rejects symlinks, and
   symlinkSync('/tmp', join(work, '.dickda/escape-link'));
   assert.throws(() => inside(work, '.dickda/escape-link/secret'), /符号链接/);
   unlinkSync(join(work, '.dickda/escape-link'));
+});
+
+test('refine prepare and develop lane share a project lock across clones and pre-init checkouts', t => {
+  const { dir, work, env, git, commit } = workflowFixture(t);
+  git(work, 'branch', 'pre-init');
+  const { projectId } = init(work);
+  commit(work, 'initialize on the original machine');
+  git(work, 'push', 'origin', 'main', 'pre-init');
+
+  const clone = join(dir, 'clone');
+  const remote = env.GIT_CONFIG_VALUE_0;
+  git(dir, 'clone', '-q', remote, clone);
+  git(clone, 'remote', 'set-url', 'origin', 'git@GitHub.com:Fixture/Dickda-Demo.git');
+  const group = `dickda:${hash('github.com/fixture/dickda-demo')}`;
+  assert.equal(projectGroup(work, remote), group);
+  assert.equal(projectGroup(clone, 'ssh://git@GitHub.com:22/Fixture/Dickda-Demo.git/'), group);
+  assert.equal(JSON.parse(readFileSync(join(clone, '.dickda/project.json'))).projectId, projectId);
+  assert.notEqual(hash(realpathSync(join(clone, '.git'))), projectId);
+  for (const branch of ['main', 'pre-init']) {
+    git(clone, 'checkout', '-q', branch);
+    assert.equal(existsSync(join(clone, '.dickda/project.json')), branch === 'main');
+    assert.equal(projectGroup(clone), group);
+    const artifacts = join(dir, branch);
+    mkdirSync(artifacts);
+    for (const [script, action] of [[refineScript, 'prepare'], [developScript, 'lane']]) {
+      writeFileSync(env.GITHUB_OUTPUT, '');
+      execFileSync(process.execPath, [script, action], { cwd: clone, env: { ...env, CODA_ARTIFACTS: artifacts, BRANCH: branch } });
+      assert.equal(parseOutputs(env.GITHUB_OUTPUT).group, group);
+    }
+  }
+
+  git(clone, 'remote', 'remove', 'origin');
+  const linked = join(dir, 'linked');
+  git(clone, 'worktree', 'add', '-q', '--detach', linked, 'main');
+  const localGroup = `dickda:${hash(realpathSync(join(clone, '.git')))}`;
+  assert.equal(projectGroup(clone), localGroup);
+  assert.equal(projectGroup(linked), localGroup);
 });
 
 test('init keeps the default dashboard out of the Git index and upgrades existing ignore rules once', t => {
@@ -709,6 +746,11 @@ test('per-job logs merge cleanly and remember archives all valid Markdown for Re
   assert.notEqual(later.path, archived.path);
   assert.equal(readFileSync(join(work, later.path, 'investigate.md'), 'utf8'), legacy);
   assert.equal(readFileSync(shared, 'utf8'), INVESTIGATE_MARKER);
+  consumeBackup(work, later.path);
+  consumeBackup(work, archived.path);
+  assert.equal(readFileSync(join(work, CONSUMED_FILE), 'utf8'), `${archived.path}\n${later.path}\n`);
+  writeFileSync(shared, 'New investigation at the same timestamp\n');
+  assert.ok(remember(work, time).path > later.path);
 });
 
 test('remember rejects linked logs and Refine reads nested archive Markdown without following links', t => {
@@ -1658,6 +1700,70 @@ test('queued collects refresh main after the lock and skip consumed archives eve
   diverged(topic, topicArchive);
 });
 
+for (const method of ['squash', 'rebase']) {
+  test(`collect skips topic-only archives after a ${method} merge and selects the next new batch`, t => {
+    const fixture = workflowFixture(t, refineScript);
+    const { dir, work, origin, env, git, commit } = fixture;
+    const snapshot = join(dir, 'before-refinements.git');
+    git(work, 'clone', '--bare', '-q', origin, snapshot);
+    const run = stepRunner({ ...fixture, origin: snapshot }, refineScript);
+    init(work);
+    function archiveOn(day) {
+      writeFileSync(join(work, '.dickda/tasks/logs/worker.md'), `Investigation ${day}\n`);
+      return remember(work, new Date(2026, 0, day)).path;
+    }
+    function collect(id) {
+      env.CODA_ARTIFACTS = join(dir, id);
+      env.GITHUB_RUN_ID = id;
+      mkdirSync(env.CODA_ARTIFACTS);
+      run('prepare');
+      return run('collect', { BRANCH: 'topic' });
+    }
+    function execute(note) {
+      const diagnosis = { layers: ['L4'], summary: 'Document findings', learningUpdates: [note] };
+      run('diagnose', { AGENT_REPLY: JSON.stringify({ answer: '```json\n' + JSON.stringify(diagnosis) + '\n```' }) });
+      run('decide', { DECISION: '{"choice":"prose"}' });
+      return run('execute').head;
+    }
+
+    const legacy = archiveOn(1);
+    const ancestor = commit(work, 'shared historical archive');
+    git(work, 'branch', 'topic');
+    git(work, 'rm', '-r', legacy);
+    commit(work, 'consume shared archive before consumption records existed');
+    git(work, 'push', 'origin', 'main');
+    git(work, 'checkout', 'topic');
+    const archive = archiveOn(2);
+    commit(work, 'topic-only investigation');
+    git(work, 'push', 'origin', 'topic');
+    assert.deepEqual(collect('first'), { hasArchive: 'true', archive });
+    const candidate = execute('Keep the retry contract');
+    git(work, 'fetch', 'origin', 'dickda/refine-first');
+    git(work, 'checkout', 'main');
+    if (method === 'squash') {
+      git(work, 'merge', '--squash', candidate);
+      git(work, 'commit', '-m', 'squash refinement');
+    } else {
+      git(work, 'rebase', 'main', candidate);
+      const rebased = git(work, 'rev-parse', 'HEAD');
+      git(work, 'checkout', 'main');
+      git(work, 'merge', '--ff-only', rebased);
+    }
+    git(work, 'push', 'origin', 'main');
+    assert.equal(git(work, 'merge-base', 'main', 'topic'), ancestor);
+    assert.equal(git(origin, 'show', `main:${CONSUMED_FILE}`), archive);
+    assert.deepEqual(collect('empty'), { hasArchive: 'false', archive: '' });
+
+    git(work, 'checkout', 'topic');
+    const next = archiveOn(3);
+    commit(work, 'new investigation on retained topic');
+    git(work, 'push', 'origin', 'topic');
+    assert.deepEqual(collect('next'), { hasArchive: 'true', archive: next });
+    const nextCandidate = execute('Document retry outcomes');
+    assert.equal(git(origin, 'show', `${nextCandidate}:${CONSUMED_FILE}`), `${archive}\n${next}`);
+  });
+}
+
 test('invalid diagnosis stops the workflow and ineffective plans leave the archive and candidate commit intact', t => {
   const { work, origin, git, commit, run, state } = workflowFixture(t, refineScript);
   init(work);
@@ -1687,13 +1793,15 @@ test('invalid diagnosis stops the workflow and ineffective plans leave the archi
   assert.equal(git(origin, 'rev-parse', branch), original);
   assert.ok(git(origin, 'ls-tree', 'main', '--', archive));
 
-  // The no-op check runs before deleting the archive or committing, even for a well-formed text update.
+  // Updating only the consumption record still fails before deleting the archive.
+  writeFileSync(join(work, CONSUMED_FILE), `${archive}\n`);
+  const recordOnly = commit(work, 'record a batch without refining it');
   for (const choice of ['prose', 'refactor']) {
-    assert.throws(() => executeRefinePlan(work, { ...state(), choice,
+    assert.throws(() => executeRefinePlan(work, { ...state(), head: recordOnly, choice,
       diagnosis: normalizeDiagnosis({ layers: ['L4'], summary: 'Prune note', obsoleteProse: ['never recorded'] }),
     }), /没有产生实质文件变更/);
     assert.ok(existsSync(join(work, archive)));
-    assert.equal(git(work, 'rev-parse', 'HEAD'), original);
+    assert.equal(git(work, 'rev-parse', 'HEAD'), recordOnly);
   }
   writeFileSync(join(work, 'app.mjs'), 'export const answer = () => 43;\n');
   const changedHead = commit(work, 'candidate advanced before execution');
@@ -1860,6 +1968,8 @@ test('refine binds review, kept rationale and user approval to the head, revalid
   git(work, 'checkout', 'main');
   writeFileSync(join(work, 'app.mjs'), 'export const answer = () => 44;\n');
   writeFileSync(join(work, entryDoc), '# 入口响应\n');
+  const upstreamArchive = '.dickda/learning/2000-01-01-00-00-00';
+  writeFileSync(join(work, CONSUMED_FILE), `${upstreamArchive}\n`);
   const upstream = commit(work, 'upstream documents entry and updates code');
   git(work, 'push', 'origin', 'main');
   assert.equal(run('merge').route, 'conflict');
@@ -1875,11 +1985,20 @@ test('refine binds review, kept rationale and user approval to the head, revalid
   assert.equal(git(origin, 'rev-parse', branch), repaired);
   checkoutCandidate();
   assert.throws(() => git(work, 'merge', '--no-commit', upstream), /Command failed/);
-  assert.equal(git(work, 'diff', '--name-only', '--diff-filter=U'), entryDoc);
+  assert.deepEqual(git(work, 'diff', '--name-only', '--diff-filter=U').split('\n'), [entryDoc, CONSUMED_FILE]);
   writeFileSync(join(work, entryDoc), '# 入口响应与重试约定\n');
-  git(work, 'add', entryDoc);
+  const combined = [archive, upstreamArchive].sort().join('\n');
+  writeFileSync(join(work, CONSUMED_FILE), `${combined}\n`);
+  git(work, 'add', entryDoc, CONSUMED_FILE);
   git(work, 'commit', '-m', 'resolve documentation conflict');
   const resolved = git(work, 'rev-parse', 'HEAD');
+  for (const kept of [archive, upstreamArchive]) {
+    writeFileSync(join(work, CONSUMED_FILE), `${kept}\n`);
+    run('repair', repair(commit(work, 'drop one side of the consumption record')), /保留历史消费记录/);
+    assert.equal(git(origin, 'rev-parse', branch), repaired);
+  }
+  run('continue-repair', { NOTE: '保留两个分支的消费记录' });
+  git(work, 'checkout', '--detach', resolved);
   git(work, 'restore', '--source', upstream, '--', entryDoc, '.dickda/learning/Learning_General.md');
   run('repair', repair(commit(work, 'retain only upstream content and archive deletion')), /没有产生实质文件变更/);
   assert.equal(git(origin, 'rev-parse', branch), repaired);
@@ -1904,6 +2023,7 @@ test('refine binds review, kept rationale and user approval to the head, revalid
   assert.notEqual(merged.commit, finalHead);
   assert.deepEqual(run('merge'), merged);
   assert.equal(git(origin, 'ls-tree', 'main', '--', archive), '');
+  assert.equal(git(origin, 'show', `main:${CONSUMED_FILE}`), combined);
   assert.equal(git(origin, 'show', 'main:app.mjs'), git(origin, 'show', `${upstream}:app.mjs`));
   assert.match(git(origin, 'show', `main:${entryDoc}`), /失败后可重试/);
   assert.match(git(origin, 'show', 'main:.dickda/learning/Learning_General.md'), /入口须可重试/);

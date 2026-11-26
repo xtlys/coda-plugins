@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { checkApprovalPr, mergeApprovedPr, privateGh } from './approval.mjs';
-import { backups, branchChanges, consumeBackup, layerHealth, walkMarkdown } from './assets.mjs';
+import { CONSUMED_FILE, backups, branchChanges, consumeBackup, consumedArchives, consumptionRecord, layerHealth, walkMarkdown } from './assets.mjs';
 import { checkRunsText, jsonList, openMusts, reviewRange, reviewVerdict } from './review.mjs';
 import { TRADES, agentArgs, effectiveSettings, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
 import { appendGithubOutput, atomic, git, managed, projectGroup, remoteGit, repo, requireValue, save } from './store.mjs';
@@ -30,7 +30,8 @@ export function buildRefineContext(root, consumed) {
 function collectRefineContext(root, remote, base, branch) {
   const baseCommit = fetchHead(root, remote, base);
   let startHead = baseCommit;
-  let consumed;
+  const baseConsumed = consumedArchives(root, baseCommit);
+  let consumed = new Set(baseConsumed);
   if (branch && branch !== base) {
     const local = spawnSync('git', ['-C', root, 'rev-parse', '--verify', `refs/heads/${branch}^{commit}`], { encoding: 'utf8' });
     const branchHead = local.status === 0 ? local.stdout.trim() : fetchHead(root, remote, branch);
@@ -39,12 +40,12 @@ function collectRefineContext(root, remote, base, branch) {
       startHead = branchHead;
       if (ancestor !== baseCommit) {
         const directories = commit => new Set(git(root, 'ls-tree', '-dz', '--name-only', commit, '--', '.dickda/learning/').split('\0'));
-        consumed = directories(ancestor).difference(directories(baseCommit));
+        consumed = consumed.union(directories(ancestor).difference(directories(baseCommit)));
       }
     }
   }
   git(root, 'checkout', '--detach', '--force', '--quiet', startHead);
-  return { baseCommit, startHead, ...buildRefineContext(root, consumed) };
+  return { baseCommit, baseConsumed, startHead, ...buildRefineContext(root, consumed) };
 }
 
 const hasText = value => typeof value === 'string' && value.trim().length > 0;
@@ -109,7 +110,7 @@ export function applyProseRefinements(root, diagnosis) {
 function checkRefineScope(root, startHead, tree, { archive, choice, mergedUpstream }) {
   let substantive = false;
   for (const [path, { before, after, upstream }] of branchChanges(root, startHead, tree, { mergedUpstream })) {
-    if (path.startsWith(`${archive}/`)) continue;
+    if (path.startsWith(`${archive}/`) || path === CONSUMED_FILE) continue;
     const prose = (path.startsWith('.dickda/knowledge/') && path.endsWith('.md')) || /^\.dickda\/learning\/Learning_[^/]*\.md$/.test(path);
     const [oldMode, oldId] = before.split(' ');
     const [mode, id] = after.split(' ');
@@ -134,6 +135,7 @@ function checkRefineScope(root, startHead, tree, { archive, choice, mergedUpstre
 export function executeRefinePlan(root, {
   startHead,
   head = startHead,
+  baseConsumed = [],
   mergedUpstream,
   refineBranch,
   archive,
@@ -166,7 +168,7 @@ export function executeRefinePlan(root, {
         `## Refine 落层重构任务（目标层级：${item.layer}）\n标题：${item.title}\n\n${item.task}`,
         decisionNote ? `交互者补充要求：\n${decisionNote}` : '',
         repair ? `## 修复要求\n${repair.reason}\n保留已采纳的提纯改动，目标归档 ${archive} 由流程删除。\n${repair.syncInstruction || ''}` : '',
-        repair && choice === 'prose' ? '本轮仅可编辑 .dickda/knowledge/ 下含子目录的 Markdown（.md）文档和 .dickda/learning/Learning_*.md。同步默认分支时须原样保留其他路径的上游变更。' : '',
+        repair && choice === 'prose' ? `本轮可编辑 .dickda/knowledge/ 下含子目录的 Markdown（.md）文档、.dickda/learning/Learning_*.md 和消费记录 ${CONSUMED_FILE}。同步默认分支时须原样保留其他路径的上游变更。` : '',
         '完成后必须在当前分支产生 Git 提交（不要自行推送远端或开 PR）。',
       ].filter(Boolean).join('\n\n'));
 
@@ -196,6 +198,9 @@ export function executeRefinePlan(root, {
   }
 
   if (mergedUpstream) requireValue(isAncestor(root, mergedUpstream, currentHead), `修复提交尚未合入默认分支提交 ${mergedUpstream}`);
+  const revisions = new Set([startHead, head, mergedUpstream].filter(Boolean));
+  const history = [...revisions].flatMap(commit => consumedArchives(root, commit));
+  const record = consumptionRecord([...baseConsumed, ...history], archive);
   const scope = { archive, choice, mergedUpstream };
   let stagedTree;
   if (consume) {
@@ -203,16 +208,17 @@ export function executeRefinePlan(root, {
     git(root, 'add', '-A', '.dickda');
     stagedTree = git(root, 'write-tree');
     checkRefineScope(root, startHead, stagedTree, scope);
-    consumeBackup(root, archive);
-    git(root, 'add', '-A', '--', archive);
+    consumeBackup(root, archive, record);
+    git(root, 'add', '-A', '--', archive, CONSUMED_FILE);
     git(root, 'commit', '-m', `chore(dickda): refine ${archive} (${diagnosis.layers.join(',')})`);
     currentHead = git(root, 'rev-parse', 'HEAD');
   }
   requireValue(!git(root, 'ls-tree', currentHead, '--', archive), '提纯提交仍包含已消费的归档');
   // A commit hook can change the staged result. Check the published tree if it contains any additional edit.
-  if (!stagedTree || git(root, 'diff', '--name-only', '-z', stagedTree, currentHead, '--', `:(exclude)${archive}`)) {
+  if (!stagedTree || git(root, 'diff', '--name-only', '-z', stagedTree, currentHead, '--', `:(exclude)${archive}`, `:(exclude)${CONSUMED_FILE}`)) {
     checkRefineScope(root, startHead, currentHead, scope);
   }
+  requireValue(consumedArchives(root, currentHead).join('\n') === record, `提纯提交须保留历史消费记录并登记当前归档：${CONSUMED_FILE}`);
 
   const verifyOutcome = runCodeVerifiers(root);
   requireValue(verifyOutcome.passed, `Refine 后的 L2/L3 验证未通过，拒绝持久化并保留原分支归档：\n${verifyOutcome.summary}`);
@@ -252,7 +258,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const base = (env.BASE || '').trim() || defaultBranch;
         requireValue(base === defaultBranch, `仅允许以仓库默认分支 ${defaultBranch} 作为目标分支，当前指定的是 ${base}`);
         const remote = `https://github.com/${repoInfo.nameWithOwner}.git`;
-        const group = projectGroup(repo());
+        const group = projectGroup(repo(), remote);
         if (!state) saveState({ remote, base, group });
         appendGithubOutput({ group });
         break;
@@ -336,7 +342,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
             repair = { reason, attempts };
             if (state.syncBase) {
               mergedUpstream = fetchHead(root, state.remote, state.base);
-              repair.syncInstruction = `执行 git fetch ${state.remote} refs/heads/${state.base}，将默认分支提交 ${mergedUpstream} 合入提纯分支并解决冲突。`;
+              repair.syncInstruction = `执行 git fetch ${state.remote} refs/heads/${state.base}，将默认分支提交 ${mergedUpstream} 合入提纯分支并解决冲突。合并 ${CONSUMED_FILE} 时须保留双方与当前批次的记录，逐行排序去重。`;
             }
           }
           const head = fetchHead(root, state.remote, state.refineBranch);
