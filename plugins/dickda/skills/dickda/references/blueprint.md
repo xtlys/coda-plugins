@@ -33,4 +33,4 @@
 1. **能通过改进 API/类型杜绝** → 落 **L1**（开架构重构工单）；
 2. **能通过 AST/文本/依赖扫描抓出** → 落 **L2**（新增 `.dickda/lints/` 脚本）；
 3. **能通过黑盒/UI 场景锁死** → 落 **L3**（新增 `.dickda/verifiers/` 用例）；
-4. **纯领域背景或低频取舍** → 留 **L4**（更新 `.dickda/knowledge/` 或 `.dickda/learning/`，并删除已被 L1–L3 覆盖的旧条文）。
+4. **纯领域背景或低频取舍** → 留 **L4**（更新 `.dickda/knowledge/` 下的 Markdown 文档或 `.dickda/learning/Learning_*.md`，并删除已被 L1–L3 覆盖的旧条文）。

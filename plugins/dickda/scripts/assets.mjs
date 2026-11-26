@@ -68,13 +68,14 @@ export function hasAgentVerifiers(root) {
   return assetsByKind(root, 'verifiers').some(spec => spec.track === 'agent');
 }
 
-export function backups(root, count = 10) {
+export function backups(root, count = 10, consumed = new Set()) {
   requireValue(Number.isInteger(count) && count > 0 && count <= 10000, 'earliest 数量须为 1–10000');
   const folder = managed(root, 'learning');
   if (!existsSync(folder)) return [];
   return readdirSync(folder, { withFileTypes: true })
     .filter(entry => entry.isDirectory() && !entry.isSymbolicLink() && ARCHIVE_DIR.test(entry.name))
     .map(entry => `${base}/learning/${entry.name}`)
+    .filter(path => !consumed.has(path))
     .sort()
     .slice(0, count);
 }
@@ -169,51 +170,55 @@ export function runLints(root) {
   };
 }
 
+function changedEntries(root, from, to, paths) {
+  const fields = git(root, 'diff', '--raw', '-z', '--no-renames', '--no-abbrev', from, to, '--', ...paths).split('\0');
+  const changes = new Map();
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const [oldMode, newMode, oldId, newId] = fields[i].slice(1).split(' ');
+    changes.set(fields[i + 1], { before: `${oldMode} ${oldId}`, after: `${newMode} ${newId}` });
+  }
+  return changes;
+}
+
+// Compare against the original branch tree, discounting only faithfully merged upstream entries.
+export function branchChanges(root, baseCommit, tree, { mergedUpstream, paths = [] } = {}) {
+  const changes = changedEntries(root, baseCommit, tree, paths);
+  if (!mergedUpstream) return changes;
+  const ancestor = git(root, 'merge-base', baseCommit, mergedUpstream);
+  if (ancestor === mergedUpstream) return changes;
+  const baseChanges = changedEntries(root, ancestor, baseCommit, paths);
+  for (const [path, upstream] of changedEntries(root, ancestor, mergedUpstream, paths)) {
+    const before = baseChanges.get(path)?.after ?? upstream.before;
+    const after = changes.get(path)?.after ?? before;
+    if (after === upstream.after && (before === upstream.before || before === upstream.after)) {
+      changes.delete(path);
+    } else {
+      // Include a dropped upstream change even when the candidate exactly matches the original branch.
+      changes.set(path, { before, after, upstream: upstream.after });
+    }
+  }
+  return changes;
+}
+
 // Builder jobs with lockSpec=true must never delete or weaken locked .dickda/lints or .dickda/verifiers.
 export function checkSpecLock(root, baseCommit, headCommit, { upstreamCommit = '' } = {}) {
-  const mergeBase = upstreamCommit && spawnSync('git', ['-C', root, 'merge-base', baseCommit, upstreamCommit], { encoding: 'utf8' }).stdout.trim();
-  const mergedUpstream = mergeBase && mergeBase !== git(root, 'rev-parse', `${upstreamCommit}^{commit}`)
-    && spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', upstreamCommit, headCommit]).status === 0;
-  const specDirs = ['.dickda/lints/', '.dickda/verifiers/'];
-  const changedPaths = (from, to) => git(root, 'diff', '--name-only', '-z', '--no-renames', from, to, '--', ...specDirs)
-    .split('\0').filter(Boolean);
-  let violations = changedPaths(baseCommit, headCommit);
-  if (mergedUpstream) {
-    const entries = commit => {
-      const tree = git(root, 'ls-tree', '-rzt', commit, '--', ...specDirs);
-      return new Map(tree.split('\0').filter(Boolean).map(entry => {
-        const tab = entry.indexOf('\t');
-        return [entry.slice(tab + 1), entry.slice(0, tab)];
-      }));
-    };
-    const ancestorTree = entries(mergeBase);
-    const baseTree = entries(baseCommit);
-    const upstreamTree = entries(upstreamCommit);
-    const headTree = entries(headCommit);
-    // A merge that keeps the base entry can silently drop an upstream change.
-    const candidates = new Set([...violations, ...changedPaths(mergeBase, upstreamCommit)]);
-    violations = [...candidates].filter(path => {
-      const ancestorEntry = ancestorTree.get(path);
-      const baseEntry = baseTree.get(path);
-      const upstreamEntry = upstreamTree.get(path);
-      const headEntry = headTree.get(path);
-      if (upstreamEntry === ancestorEntry) return headEntry !== baseEntry;
-      if (baseEntry === ancestorEntry) return headEntry !== upstreamEntry;
-      return baseEntry !== upstreamEntry || headEntry !== baseEntry;
-    }).sort();
-  }
+  const merged = upstreamCommit && spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', upstreamCommit, headCommit]).status === 0;
+  const changes = branchChanges(root, baseCommit, headCommit, {
+    mergedUpstream: merged ? upstreamCommit : '', paths: ['.dickda/lints/', '.dickda/verifiers/'],
+  });
+  const violations = [...changes.keys()].sort();
   return {
     ok: violations.length === 0,
     violations,
   };
 }
 
-export function layerHealth(root) {
+export function layerHealth(root, consumed) {
   const lints = assetsByKind(root, 'lints');
   const verifiers = assetsByKind(root, 'verifiers');
   const knowledge = assetsByKind(root, 'knowledge');
   const learning = assetsByKind(root, 'learning');
-  const archives = backups(root, 1000);
+  const archives = backups(root, 1000, consumed);
   const planFile = managed(root, 'tasks/PLAN_5L.md');
   const hasPlan = existsSync(planFile) && readFileSync(planFile, 'utf8').trim().length > 100;
   return {

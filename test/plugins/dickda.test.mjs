@@ -742,6 +742,8 @@ test('prose refinement removes obsolete lines across learning files and applies 
   for (const name of names) writeFileSync(join(learning, name), `${keep}- Obsolete manual check [3]\n`);
   const knowledge = { path: 'knowledge/architecture/boundaries.md', content: '# Module boundaries\n' };
   const diagnosis = normalizeDiagnosis({
+    summary: 'Replace the manual check with documented practices',
+    layers: ['L4'],
     obsoleteProse: ['Obsolete manual check'],
     learningUpdates: [
       'Common practice', { text: 'Common practice' }, 'Keep this',
@@ -776,6 +778,25 @@ test('prose refinement writes custom learning documents and rejects invalid file
   }
   symlinkSync(join(learning, 'Learning_Team.md'), join(learning, 'Learning_Link.md'));
   assert.throws(() => addNote('Learning_Link.md'), /符号链接/);
+});
+
+test('refine diagnosis requires declared layers, actionable work orders and nonempty L4 entries', () => {
+  const diagnosis = { layers: ['L4'], summary: 'Record the investigation', learningUpdates: ['Retry on timeout'] };
+  const job = { layer: 'L2', trade: 'architect', title: 'Check timeout', task: 'Add a lint' };
+  for (const [invalid, error] of [
+    [[], /JSON 对象/], [{ ...diagnosis, summary: ' ' }, /summary/],
+    [{ ...diagnosis, layers: [] }, /layers/], [{ ...diagnosis, layers: ['L4', 'L5'] }, /layers/],
+    [{ ...diagnosis, needsRefactor: true }, /actions/], [{ ...diagnosis, layers: ['L2'] }, /actions/],
+    [{ ...diagnosis, actions: [job] }, /actions/],
+    [{ ...diagnosis, layers: ['L2'], actions: [{ ...job, task: ' ' }] }, /actions/],
+    [{ ...diagnosis, layers: ['L2'], actions: [{ ...job, trade: 'unknown' }] }, /actions/],
+    [{ ...diagnosis, obsoleteProse: [' '] }, /obsoleteProse/],
+    [{ ...diagnosis, learningUpdates: [{ text: ' ' }] }, /learningUpdates/],
+    [{ ...diagnosis, learningUpdates: [{ text: 'note', file: 'Notes.md' }] }, /learningUpdates/],
+    [{ ...diagnosis, knowledgeUpdates: [{ path: 'knowledge/doc.md', content: ' ' }] }, /知识更新/],
+    [{ ...diagnosis, knowledgeUpdates: [{ path: 'knowledge/../tasks/doc.md', content: 'note' }] }, /知识更新/],
+  ]) assert.throws(() => normalizeDiagnosis(invalid), error);
+  assert.equal(normalizeDiagnosis({ ...diagnosis, layers: ['L2', 'L4'], actions: [job] }).needsRefactor, true);
 });
 
 test('development workflow routes both plan decisions, milestones, dual failures and adjudicated reviews', () => {
@@ -833,7 +854,7 @@ test('development workflow routes both plan decisions, milestones, dual failures
   assert.match(card('approve'), /approval-check.summary/);
 });
 
-for (const [script, step] of [[developScript, 'lane'], [refineScript, 'collect']]) {
+for (const [script, step] of [[developScript, 'lane'], [refineScript, 'prepare']]) {
   test(`${step} rejects a non-default base before fetching it or writing workflow state`, t => {
     const { run, artifacts } = workflowFixture(t, script);
     assert.deepEqual(run(step, { BASE: 'release' }, /仅允许以仓库默认分支 main 作为目标分支.*release/), {});
@@ -1301,6 +1322,7 @@ process.exit(done.status);
   writeFileSync(join(work, '.dickda/tasks/logs/network.md'), 'investigation');
   remember(work);
   git(work, 'push', 'origin', `${commit(work, 'seed batch')}:main`);
+  refine('prepare');
   assert.equal(attempt(refine, 'collect', 'fetch', 9, 'fatal: early EOF', /early EOF/), 3);
   assert.equal(attempt(refine, 'collect', 'push', 1, 'Connection reset by peer'), 2);
 });
@@ -1526,6 +1548,7 @@ if (prompt.includes('Refine 归档复盘输入')) {
   mkdirSync(refineArtifacts, { recursive: true });
   const runRefineStep = stepRunner({ dir, origin, git, env: { ...env, CODA_ARTIFACTS: refineArtifacts, GITHUB_RUN_ID: 'refine-202' } }, refineScript);
 
+  runRefineStep('prepare');
   const collected = runRefineStep('collect');
   assert.equal(collected.hasArchive, 'true');
   assert.equal(collected.archive, archived.path);
@@ -1563,12 +1586,13 @@ function refineFixture(t, broken = false) {
   const { work, git, commit, env, run, state } = fixture;
   env.CODA_PLUGIN_SETTINGS = JSON.stringify({ 'dickda.mergeMethod': 'squash' });
   init(work);
-  writeFileSync(join(work, '.dickda/lints/healthy.sh'), 'test ! -e broken\n');
-  if (broken) writeFileSync(join(work, 'broken'), 'failed check\n');
+  writeFileSync(join(work, '.dickda/lints/healthy.sh'), 'test ! -e .dickda/knowledge/Broken.md\n');
+  if (broken) writeFileSync(join(work, '.dickda/knowledge/Broken.md'), 'failed check\n');
   writeFileSync(join(work, '.dickda/tasks/logs/worker.md'), '入口调查\n');
   const { path: archive } = remember(work);
   const original = commit(work, 'seed investigation batch');
   git(work, 'push', 'origin', 'main');
+  run('prepare');
   run('collect');
   const diagnosis = { layers: ['L4'], summary: '记录入口约定', learningUpdates: ['入口须可重试'] };
   run('diagnose', { THINKER: '{"agent":"custom-thinker"}', AGENT_REPLY: JSON.stringify({ answer: '```json\n' + JSON.stringify(diagnosis) + '\n```' }) });
@@ -1582,8 +1606,111 @@ function refineFixture(t, broken = false) {
   return { ...fixture, archive, original, branch, checkoutCandidate };
 }
 
+test('queued collects refresh main after the lock and skip consumed archives even on a diverged starting branch', t => {
+  const fixture = refineFixture(t);
+  const { dir, work, origin, env, git, commit, original, archive, branch, run, state } = fixture;
+  git(work, 'branch', 'behind', original);
+  git(work, 'checkout', '-b', 'topic', original);
+  writeFileSync(join(work, '.dickda/tasks/logs/topic.md'), 'Topic investigation\n');
+  const topicArchive = remember(work).path;
+  const topic = commit(work, 'investigate on topic');
+  git(work, 'push', 'origin', 'behind', 'topic');
+  git(work, 'checkout', 'main');
+
+  // Every queued checkout sees only the refs and objects available before the first run consumed its archive.
+  const snapshot = join(dir, 'before-lock.git');
+  git(work, 'clone', '--bare', '-q', origin, snapshot);
+  function queue(id, startingBranch) {
+    const artifacts = join(dir, id);
+    mkdirSync(artifacts);
+    const queued = stepRunner({ ...fixture, origin: snapshot, env: {
+      ...env, CODA_ARTIFACTS: artifacts, GITHUB_RUN_ID: id, RUN_COMMIT: original, BRANCH: startingBranch,
+    } }, refineScript);
+    assert.equal(queued('prepare').group, state().group);
+    const ref = `dickda/refine-${id}`;
+    assert.equal(git(origin, 'branch', '--list', ref), '');
+    return (expectedHead, expectedArchive) => {
+      assert.deepEqual(queued('collect'), { hasArchive: String(Boolean(expectedArchive)), archive: expectedArchive });
+      const saved = JSON.parse(readFileSync(join(artifacts, 'refine.json'), 'utf8'));
+      assert.equal(saved.baseCommit, git(origin, 'rev-parse', 'main'));
+      assert.equal(saved.startHead, expectedHead);
+      if (expectedArchive) assert.equal(git(origin, 'rev-parse', ref), expectedHead);
+      else assert.equal(git(origin, 'branch', '--list', ref), '');
+    };
+  }
+  const empty = queue('empty', '');
+  const onMain = queue('on-main', 'main');
+  const behind = queue('on-behind', 'behind');
+  const diverged = queue('on-topic', 'topic');
+  const first = run('execute').head;
+  git(work, 'fetch', 'origin', branch);
+  git(work, 'merge', '--ff-only', first);
+  git(work, 'push', 'origin', 'main');
+  assert.equal(git(origin, 'ls-tree', 'main', '--', archive), '');
+  empty(first, '');
+
+  writeFileSync(join(work, '.dickda/tasks/logs/next.md'), 'Next investigation on main\n');
+  const next = remember(work, new Date(2030, 0, 1)).path;
+  const latest = commit(work, 'add next investigation');
+  git(work, 'push', 'origin', 'main');
+  onMain(latest, next);
+  behind(latest, next);
+  diverged(topic, topicArchive);
+});
+
+test('invalid diagnosis stops the workflow and ineffective plans leave the archive and candidate commit intact', t => {
+  const { work, origin, git, commit, run, state } = workflowFixture(t, refineScript);
+  init(work);
+  writeFileSync(join(work, '.dickda/tasks/logs/worker.md'), 'Investigation\n');
+  const archive = remember(work).path;
+  const original = commit(work, 'pending archive');
+  git(work, 'push', 'origin', 'main');
+  run('prepare');
+  run('collect');
+  const branch = state().refineBranch;
+  const jsonBlock = value => '```json\n' + JSON.stringify(value) + '\n```';
+  const reply = answer => ({ AGENT_REPLY: JSON.stringify({ answer }) });
+  for (const [answer, error] of [
+    ['无法完成诊断', /JSON 对象/], [jsonBlock(null), /JSON 对象/],
+    [jsonBlock({ layers: ['L4'], summary: 'Empty', actions: [], learningUpdates: [] }), /没有可落地/],
+  ]) {
+    run('diagnose', reply(answer), error);
+    assert.equal(state().diagnosis, undefined);
+    assert.equal(git(origin, 'rev-parse', branch), original);
+  }
+  run('diagnose', reply(jsonBlock({
+    layers: ['L1'], summary: 'Refactor the entry point',
+    actions: [{ layer: 'L1', trade: 'builder', title: 'Entry point', task: 'Refactor app.mjs' }],
+  })));
+  run('decide', { DECISION: '{"choice":"prose"}' });
+  run('execute', {}, /没有产生实质文件变更/);
+  assert.equal(git(origin, 'rev-parse', branch), original);
+  assert.ok(git(origin, 'ls-tree', 'main', '--', archive));
+
+  // The no-op check runs before deleting the archive or committing, even for a well-formed text update.
+  for (const choice of ['prose', 'refactor']) {
+    assert.throws(() => executeRefinePlan(work, { ...state(), choice,
+      diagnosis: normalizeDiagnosis({ layers: ['L4'], summary: 'Prune note', obsoleteProse: ['never recorded'] }),
+    }), /没有产生实质文件变更/);
+    assert.ok(existsSync(join(work, archive)));
+    assert.equal(git(work, 'rev-parse', 'HEAD'), original);
+  }
+  writeFileSync(join(work, 'app.mjs'), 'export const answer = () => 43;\n');
+  const changedHead = commit(work, 'candidate advanced before execution');
+  assert.throws(() => executeRefinePlan(work, {
+    ...state(), head: changedHead, diagnosis: { learningUpdates: ['Retry on timeout'], layers: ['L4'] },
+  }), /仅更新 L4.*app\.mjs/);
+  assert.ok(existsSync(join(work, archive)));
+});
+
 test('refine routes hook failures, incomplete reviews, human decisions and conflicts before merging', () => {
   const { xml, routes, card } = workflowGraph('dickda-refine');
+  assert.deepEqual(routes('start'), { prepare: 'always' });
+  assert.deepEqual(routes('prepare'), { hold: 'always' });
+  assert.match(xml, /id="hold"[^>]*coda:action="hold-group">[\s\S]*?name="group" value="=prepare.group"[\s\S]*?name="exclusive" value="true"[\s\S]*?name="borrow" value="no"/);
+  assert.deepEqual(routes('hold'), { collect: 'always' });
+  assert.deepEqual(routes('collect'), { 'has-archive': 'always' });
+  assert.deepEqual(routes('has-archive'), { diagnose: '=collect.hasArchive = true', 'empty-done': 'always' });
   for (const input of ['thinker', 'architect', 'architectSenior', 'builder', 'builderSenior', 'verifier', 'verifierSenior']) {
     assert.match(xml, new RegExp(`<coda:input name="${input}"[^>]*type="agent"`));
     assert.ok(xml.includes(`value="=inputs.${input}"`));
@@ -1633,15 +1760,17 @@ test('refine repairs failed execution and checks only with verified descendant c
   const reply = head => ({ AGENT_REPLY: JSON.stringify({ head }) });
   run('repair', reply(original), /未产生新提交/);
   checkoutCandidate();
-  writeFileSync(join(work, 'attempt'), 'still broken');
+  writeFileSync(join(work, '.dickda/knowledge/Attempt.md'), 'still broken');
   run('repair', reply(commit(work, 'repair still fails lint')), /L2\/L3 验证未通过/);
   assert.equal(tip(), original);
-  run('repair', reply(original), /未产生新提交/);
-  run('repair', {}, /自动修复已达 3 次/);
-  run('continue-repair', { NOTE: '移除 broken 并保留入口约定' });
-  assert.match(state().failure, /移除 broken/);
   checkoutCandidate();
-  unlinkSync(join(work, 'broken'));
+  writeFileSync(join(work, 'app.mjs'), 'export const answer = () => 0;\n');
+  run('repair', reply(commit(work, 'change code during prose repair')), /仅更新 L4.*app\.mjs/);
+  run('repair', {}, /自动修复已达 3 次/);
+  run('continue-repair', { NOTE: '清理失效文档并保留入口约定' });
+  assert.match(state().failure, /清理失效文档/);
+  checkoutCandidate();
+  unlinkSync(join(work, '.dickda/knowledge/Broken.md'));
   const fixed = run('repair', reply(commit(work, 'fix lint')));
   assert.equal(tip(), fixed.head);
   assert.equal(git(origin, 'ls-tree', fixed.head, '--', archive), '');
@@ -1653,7 +1782,7 @@ test('refine repairs failed execution and checks only with verified descendant c
     assert.match(state().failure, /smoke failed/);
   }
   checkoutCandidate();
-  writeFileSync(join(work, 'smoke.mjs'), 'export const healthy = true;\n');
+  writeFileSync(join(work, '.dickda/knowledge/Smoke.md'), '# Smoke check\n');
   const smokeFix = commit(work, 'fix smoke check');
   assert.equal(run('repair', reply(smokeFix)).head, smokeFix);
   assert.equal(run('prepare-review', { RUNS: '[]' }).head, smokeFix);
@@ -1681,31 +1810,36 @@ test('refine binds review, kept rationale and user approval to the head, revalid
     assert.equal(run('reviewed', { REVIEW: review }).route, 'retry');
     run('deliver', {}, /独立代码审查/);
   }
-  const finding = { level: 'must', kind: 'contract', title: '入口返回值', location: 'app.mjs:1', detail: '入口仍返回旧值' };
+  const entryDoc = '.dickda/knowledge/Entry.md';
+  const finding = { level: 'must', kind: 'contract', title: '入口文档', location: entryDoc, detail: '缺少入口的重试约定' };
   const review = (head, decision, fields = {}, previous = '') => run('reviewed', {
     REVIEW: JSON.stringify({ head, decision, ...fields }), PREVIOUS: previous,
   });
   assert.equal(review(first, 'REQUEST_CHANGES', { findings: JSON.stringify([finding]) }).route, 'changes');
   run('deliver', {}, /REQUEST_CHANGES/);
   run('review-decision', { DECISION: '{"choice":"repair","note":"修复入口"}' });
-  assert.match(state().failure, /入口仍返回旧值[\s\S]*修复入口/);
+  assert.match(state().failure, /缺少入口的重试约定[\s\S]*修复入口/);
   checkoutCandidate();
-  writeFileSync(join(work, 'app.mjs'), 'export const answer = () => 43;\n');
-  const repaired = commit(work, 'repair entry');
   const repair = head => ({ AGENT_REPLY: JSON.stringify({ head }) });
+  writeFileSync(join(work, '.dickda/lints/healthy.sh'), 'exit 0\n');
+  run('repair', repair(commit(work, 'weaken lint after review')), /仅更新 L4.*lints\/healthy\.sh/);
+  assert.equal(git(origin, 'rev-parse', branch), first);
+  checkoutCandidate();
+  writeFileSync(join(work, entryDoc), '# 可重试入口\n');
+  const repaired = commit(work, 'document retry contract');
   assert.equal(run('repair', repair(repaired)).head, repaired);
   const next = run('prepare-review');
   const previous = JSON.parse(next.previous);
   assert.deepEqual(previous, [{ ...finding, id: `${first.slice(0, 12)}-1` }]);
   assert.equal(next.base, first);
   assert.equal(next.head, repaired);
-  const report = '复评要求保持旧值';
+  const report = '复评要求补充重试条件';
   assert.equal(review(repaired, 'REQUEST_CHANGES', {
     report, findings: '[]', resolutions: JSON.stringify([{ id: previous[0].id, status: 'upheld', reason: report }]),
   }, next.previous).route, 'changes');
   assert.deepEqual(state().openReviewFindings, previous);
   run('review-decision', { DECISION: '{"choice":"kept","note":"  "}' }, /客观依据/);
-  const reason = '入口契约已改为 43，提交中的用例覆盖了新版接口。';
+  const reason = '通用经验条文已经覆盖本次入口的重试条件。';
   run('review-decision', { DECISION: JSON.stringify({ choice: 'kept', note: reason }) });
   const pr = run('deliver');
   assert.equal(pr.summary, readFileSync(join(artifacts, 'refine-pr.md'), 'utf8'));
@@ -1725,7 +1859,8 @@ test('refine binds review, kept rationale and user approval to the head, revalid
 
   git(work, 'checkout', 'main');
   writeFileSync(join(work, 'app.mjs'), 'export const answer = () => 44;\n');
-  const upstream = commit(work, 'upstream change to same line');
+  writeFileSync(join(work, entryDoc), '# 入口响应\n');
+  const upstream = commit(work, 'upstream documents entry and updates code');
   git(work, 'push', 'origin', 'main');
   assert.equal(run('merge').route, 'conflict');
   assert.ok(git(origin, 'ls-tree', 'main', '--', archive));
@@ -1733,19 +1868,31 @@ test('refine binds review, kept rationale and user approval to the head, revalid
   writeFileSync(join(work, 'unrelated'), 'does not resolve the conflict');
   run('repair', repair(commit(work, 'unsynced descendant')), /尚未合入默认分支/);
   assert.equal(git(origin, 'rev-parse', branch), repaired);
-  run('continue-repair', { NOTE: '合入最新 main 并保留新版契约' });
+  run('continue-repair', { NOTE: '合入最新 main 并保留重试约定' });
+  checkoutCandidate();
+  git(work, 'merge', '-s', 'ours', '-m', 'silently drop upstream changes', upstream);
+  run('repair', repair(git(work, 'rev-parse', 'HEAD')), /仅更新 L4.*app\.mjs/);
+  assert.equal(git(origin, 'rev-parse', branch), repaired);
   checkoutCandidate();
   assert.throws(() => git(work, 'merge', '--no-commit', upstream), /Command failed/);
-  assert.equal(git(work, 'diff', '--name-only', '--diff-filter=U'), 'app.mjs');
-  writeFileSync(join(work, 'app.mjs'), 'export const answer = () => 45;\n');
-  git(work, 'add', 'app.mjs');
-  git(work, 'commit', '-m', 'resolve entry conflict');
+  assert.equal(git(work, 'diff', '--name-only', '--diff-filter=U'), entryDoc);
+  writeFileSync(join(work, entryDoc), '# 入口响应与重试约定\n');
+  git(work, 'add', entryDoc);
+  git(work, 'commit', '-m', 'resolve documentation conflict');
   const resolved = git(work, 'rev-parse', 'HEAD');
+  git(work, 'restore', '--source', upstream, '--', entryDoc, '.dickda/learning/Learning_General.md');
+  run('repair', repair(commit(work, 'retain only upstream content and archive deletion')), /没有产生实质文件变更/);
+  assert.equal(git(origin, 'rev-parse', branch), repaired);
+  run('continue-repair', { NOTE: '保留提纯条文并同步入口文档' });
   assert.equal(run('repair', repair(resolved)).head, resolved);
+  checkoutCandidate();
+  writeFileSync(join(work, entryDoc), '# 入口响应\n\n失败后可重试。\n');
+  const finalHead = commit(work, 'clarify retry after syncing main');
+  assert.equal(run('repair', repair(finalHead)).head, finalHead);
   run('deliver', {}, /不一致/);
   const last = run('prepare-review', { RUNS: '[{"workflow":"check","state":"succeeded","runId":"check-3"}]' });
-  assert.equal(last.head, resolved);
-  assert.equal(review(resolved, 'APPROVE', { resolutions: JSON.stringify([{ id: previous[0].id, status: 'resolved' }]) }, last.previous).route, 'pr');
+  assert.equal(last.head, finalHead);
+  assert.equal(review(finalHead, 'APPROVE', { resolutions: JSON.stringify([{ id: previous[0].id, status: 'resolved' }]) }, last.previous).route, 'pr');
   const updated = run('deliver');
   assert.equal(updated.pr, pr.pr);
   assert.match(updated.summary, /check-3/);
@@ -1754,17 +1901,19 @@ test('refine binds review, kept rationale and user approval to the head, revalid
   assert.equal(run('approval-check').summary, updated.summary);
   const merged = run('merge');
   assert.deepEqual(merged, { route: 'merged', commit: git(origin, 'rev-parse', 'main') });
-  assert.notEqual(merged.commit, resolved);
+  assert.notEqual(merged.commit, finalHead);
   assert.deepEqual(run('merge'), merged);
   assert.equal(git(origin, 'ls-tree', 'main', '--', archive), '');
-  assert.equal(git(origin, 'show', 'main:app.mjs'), 'export const answer = () => 45;');
+  assert.equal(git(origin, 'show', 'main:app.mjs'), git(origin, 'show', `${upstream}:app.mjs`));
+  assert.match(git(origin, 'show', `main:${entryDoc}`), /失败后可重试/);
+  assert.match(git(origin, 'show', 'main:.dickda/learning/Learning_General.md'), /入口须可重试/);
   assert.equal(git(origin, 'branch', '--list', branch), '');
   const calls = readFileSync(ghCallsFile, 'utf8').trim().split('\n').map(JSON.parse).filter(call => call.args[0] === 'pr');
   assert.ok(calls.every(call => call.thread === null));
   assert.equal(calls.filter(call => call.args[1] === 'create').length, 1);
   assert.ok(calls.some(call => call.args[1] === 'edit' && call.args.includes('--body-file')));
   assert.deepEqual(calls.filter(call => call.args[1] === 'merge').map(call => call.args.slice(-4)),
-    [repaired, resolved].map(head => ['--squash', '--match-head-commit', head, '--delete-branch']));
+    [repaired, finalHead].map(head => ['--squash', '--match-head-commit', head, '--delete-branch']));
 });
 
 test('custom prompts and interactive HTML dashboard work cohesively', t => {
