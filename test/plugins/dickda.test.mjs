@@ -163,11 +163,16 @@ process.exitCode = Number(process.env.AGENT_EXIT_CODE || 0);
 
   const run = stepRunner(fixture, script);
   const state = () => JSON.parse(readFileSync(join(fixture.artifacts, script === refineScript ? 'refine.json' : 'develop.json'), 'utf8'));
+  const seedFast = () => {
+    const seed = run('seed');
+    Object.assign(fixture.env, { FAST: 'true', SEED_HEAD: seed.head });
+    return seed;
+  };
   const lead = (decision, expectedError, extra = {}) => run('lead-plan', {
     AGENT_REPLY: JSON.stringify({ session: 'lead', answer: '```json\n' + JSON.stringify(decision) + '\n```' }),
     ...extra,
   }, expectedError);
-  return { ...fixture, ghCallsFile, run, lead, state };
+  return { ...fixture, ghCallsFile, run, seedFast, lead, state };
 }
 
 test('dickda declares its Coda engine and uses supported contributions', () => {
@@ -328,7 +333,8 @@ test('dual-track verification checks out explicit delivery commit even when main
 const args = process.argv.slice(2);
 const commitIdx = args.indexOf('--commit');
 const commitSha = commitIdx >= 0 ? args[commitIdx + 1] : '';
-console.log(JSON.stringify({ session: 'sol-1', answer: '\`\`\`json\\n' + JSON.stringify({ passed: true, summary: 'checked ' + commitSha, evidence: [], findings: [] }) + '\\n\`\`\`' }));
+const checked = require('node:child_process').execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+console.log(JSON.stringify({ session: 'sol-1', answer: '\`\`\`json\\n' + JSON.stringify({ passed: checked === commitSha, summary: 'checked ' + commitSha, evidence: ['git rev-parse HEAD: ' + checked], findings: [] }) + '\\n\`\`\`' }));
 `);
   chmodSync(fakeAgent, 0o755);
 
@@ -369,6 +375,7 @@ console.log(JSON.stringify({ session: 'sol-1', answer: '\`\`\`json\\n' + JSON.st
   const sumOut = parseOutputs(env.GITHUB_OUTPUT);
   assert.equal(sumOut.commit, goodDeliveryHead);
   assert.equal(sumOut.passed, 'true');
+  assert.deepEqual(JSON.parse(sumOut.evidence), ['git rev-parse HEAD: ' + goodDeliveryHead]);
   assert.equal(checkoutTargetCommit(stepCodeWork, { commit: goodDeliveryHead }), goodDeliveryHead);
 });
 
@@ -432,7 +439,7 @@ test('agent-plan checks the requested commit before holding a device and uses th
 
   writeFileSync(join(dir, 'bin/coda-agent'), `#!${process.execPath}
 require('node:fs').writeFileSync(process.env.FIXTURE_DIR + '/agent-args.json', JSON.stringify(process.argv.slice(2)));
-console.log(JSON.stringify({ answer: '\`\`\`json\\n{"passed":true}\\n\`\`\`' }));
+console.log(JSON.stringify({ answer: '\`\`\`json\\n{"passed":true,"summary":"登录后显示首页","evidence":[{"path":"login.png"}]}\\n\`\`\`' }));
 `, { mode: 0o755 });
   for (const [tier, model] of [['standard', 'ui-standard'], ['senior', 'ui-senior']]) {
     const result = run('agent', {
@@ -446,6 +453,39 @@ console.log(JSON.stringify({ answer: '\`\`\`json\\n{"passed":true}\\n\`\`\`' }))
     assert.equal(args[args.indexOf('--model') + 1], model);
     assert.equal(report().skipped, false);
   }
+});
+
+test('Agent/UI specifications require a summary and substantive evidence for a passing verdict', t => {
+  const { work } = createGitRepo(t);
+  init(work);
+  writeFileSync(join(work, '.dickda/verifiers/login.md'), '登录后应显示首页。');
+  const verify = verdict => runAgentVerifiers(work, {
+    runner: () => ({ status: 0, stdout: JSON.stringify({ answer: '```json\n' + JSON.stringify(verdict) + '\n```' }) }),
+  });
+  const pass = { passed: true, summary: '登录后显示首页' };
+  assert.throws(() => verify({ passed: true }), /summary/);
+  assert.throws(() => verify({ ...pass, summary: ' \n', evidence: ['login.png'] }), /summary/);
+  for (const evidence of [undefined, 'login.png', [], [' \t'], [null, {}, { path: ' ', exitCode: 0 }]]) {
+    assert.throws(() => verify({ ...pass, evidence }), /evidence.*非空实证/);
+  }
+  for (const evidence of [['login.png'], [' ', { step: 2, path: 'login.png' }]]) {
+    const result = verify({ ...pass, evidence });
+    assert.equal(result.passed, true);
+    assert.deepEqual(result.evidence, evidence);
+  }
+  assert.equal(verify({ passed: false, summary: '登录入口未显示' }).passed, false);
+});
+
+test('dispatch IDs and replacement references reserve the same case-insensitive namespace across rounds', () => {
+  const job = { id: 'ui', trade: 'verifier', title: '验收入口', task: '检查登录入口' };
+  const upper = { ...job, id: 'UI' };
+  const ledger = { ui: { ...job, status: 'rejected' } };
+  assert.throws(() => enrichDispatchBatch([job, upper]), /重复.*忽略大小写/);
+  assert.throws(() => enrichDispatchBatch([upper], ledger), /UI.*历史工单 ui.*大小写/);
+  assert.throws(() => enrichDispatchBatch([{ ...job, id: 'retry', replaces: 'UI' }], ledger), /UI.*历史工单 ui.*大小写/);
+  assert.throws(() => enrichDispatchBatch([{ ...job, id: 'retry', replaces: 'ui' }, job], ledger), /重复/);
+  assert.equal(enrichDispatchBatch([upper])[0].id, 'UI');
+  assert.equal(enrichDispatchBatch([job], ledger)[0].id, 'ui');
 });
 
 test('verifier worker failures and missing/failed review-commit calls never silently pass', t => {
@@ -757,6 +797,12 @@ test('development workflow routes both plan decisions, milestones, dual failures
   assert.deepEqual(routes('confirm-gate'), {
     'lead-plan': '=plan-confirm.chose.start', 'plan-feedback': '=plan-confirm.chose.revise', 'record-stop': 'always',
   });
+  const leadPlan = xml.match(/<scriptTask id="lead-plan"[\s\S]*?<\/scriptTask>/)[0];
+  const approvedHead = card('plan-confirm').match(/方案提交 \{\{([^}]+)\}\}/)[1];
+  assert.equal(approvedHead, 'if think.head = null then seed.head else think.head');
+  assert.ok(leadPlan.includes(`name="APPROVED_HEAD" value="=${approvedHead}"`));
+  assert.ok(leadPlan.includes('name="FAST" value="=inputs.fast"'));
+  assert.ok(leadPlan.includes('name="SEED_HEAD" value="=seed.head"'));
   assert.match(xml, /name="FEEDBACK" value="=if plan-present.chose.revise then plan-present.note else plan-confirm.note"/);
   assert.deepEqual(routes('plan-feedback'), { think: 'always' });
   assert.deepEqual(routes('record-stop'), { stopped: 'always' });
@@ -775,6 +821,11 @@ test('development workflow routes both plan decisions, milestones, dual failures
   assert.deepEqual(routes('dual-call-lost'), { 'lead-plan': 'always' });
   assert.deepEqual(routes('dual-verify'), { 'dual-result': 'always' });
   assert.deepEqual(routes('dual-result'), { 'verified-check': '=not(dual-verify.passed)', 'final-review': 'always' });
+  const finalReview = xml.match(/<callActivity id="final-review"[\s\S]*?<\/callActivity>/)[0];
+  const evidence = finalReview.match(/<coda:param name="evidence" value="([^"]+)"/)[1];
+  assert.deepEqual([...evidence.matchAll(/\{\{([^}]+)\}\}/g)].map(match => match[1]), [
+    'prepare-verify.evidence', 'dual-verify.report', 'dual-verify.evidence', 'dual-verify.findings',
+  ]);
   assert.match(xml, /name="previous" value="=prepare-verify.previous"/);
   assert.match(xml, /name="VERIFY_EVIDENCE" value="=dual-verify.evidence"/);
   assert.match(xml, /name="VERIFY_FINDINGS" value="=dual-verify.findings"/);
@@ -831,8 +882,56 @@ test('remote-only starting branch supplies the original task and a bounded previ
   assert.match(run('stopped', { REASON: '' }).reason, /暂不开工/);
 });
 
-test('seed preserves a plan for a matching explicit goal and resets it for a new goal', t => {
-  const { dir, work, origin, git, commit, run } = workflowFixture(t);
+test('think rejects business changes anywhere in the proposed diff before publishing the plan', t => {
+  const { work, origin, git, commit, run, state } = workflowFixture(t);
+  const { reqBranch } = run('lane', { GOAL: '规划登录入口' });
+  const seed = run('seed');
+  git(work, 'fetch', 'origin', reqBranch);
+  git(work, 'checkout', '--detach', seed.head);
+  writeFileSync(join(work, 'feature.mjs'), 'export const ready = true;\n');
+  commit(work, 'implement feature before approval');
+  writeFileSync(join(work, '.dickda/tasks/PLAN_5L.md'), blueprint);
+  const head = commit(work, 'write plan');
+  run('think', { AGENT_REPLY: JSON.stringify({ head }) }, /只可修改 \.dickda\/tasks\/PLAN_5L\.md.*feature\.mjs/);
+  assert.equal(git(origin, 'rev-parse', reqBranch), seed.head);
+  assert.equal(state().head, seed.head);
+});
+
+test('first dispatch checks the approved revision against the remote head before calling the lead', t => {
+  const { work, dir, artifacts, git, commit, run, lead, state } = workflowFixture(t);
+  const { reqBranch } = run('lane', { GOAL: '规划登录入口' });
+  const seed = run('seed');
+  git(work, 'fetch', 'origin', reqBranch);
+  git(work, 'checkout', '--detach', seed.head);
+  const plan = join(work, '.dickda/tasks/PLAN_5L.md');
+  function propose(body) {
+    writeFileSync(plan, body);
+    return run('think', { AGENT_REPLY: JSON.stringify({ head: commit(work, 'propose plan') }) });
+  }
+  const original = propose(blueprint);
+  run('plan-feedback', { FEEDBACK: '补上离线场景' });
+  const revised = propose(blueprint + '\n离线场景须显示错误提示。');
+  const start = { FAST: 'false', SEED_HEAD: seed.head, APPROVED_HEAD: revised.head };
+  const dispatch = { action: 'dispatch', jobs: [{ id: 'login', trade: 'builder', title: '登录入口', task: '实现登录' }] };
+  lead(dispatch, new RegExp(`基线提交不一致.*${original.head}.*${revised.head}`), { ...start, APPROVED_HEAD: original.head });
+
+  writeFileSync(join(work, 'feature.mjs'), 'export const external = true;\n');
+  const external = commit(work, 'advance remote while the card is pending');
+  const ref = `refs/heads/${reqBranch}`;
+  git(work, 'push', 'origin', `${external}:${ref}`);
+  lead(dispatch, new RegExp(`基线提交不一致.*${revised.head}.*${external}`), start);
+  lead(dispatch, new RegExp(`基线提交不一致.*${seed.head}.*${external}`), { FAST: 'true', SEED_HEAD: seed.head, APPROVED_HEAD: seed.head });
+  assert.equal(state().round, 0);
+  assert.ok(!existsSync(join(dir, 'tmp/lead-1.md')));
+  assert.ok(!existsSync(join(artifacts, 'batch-1.json')));
+
+  git(work, 'push', `--force-with-lease=${ref}:${external}`, 'origin', `${revised.head}:${ref}`);
+  assert.equal(lead(dispatch, undefined, start).route, 'dispatch');
+  assert.equal(state().approvedPlanHead, revised.head);
+});
+
+test('a matching explicit goal can start on the reused plan and a new goal resets it', t => {
+  const { dir, work, origin, git, commit, run, lead } = workflowFixture(t);
   init(work);
   const todo = '.dickda/tasks/TODO_TASK.md';
   const plan = '.dickda/tasks/PLAN_5L.md';
@@ -853,6 +952,9 @@ test('seed preserves a plan for a matching explicit goal and resets it for a new
     const reused = seed(id, goal);
     assert.equal(reused.hasPlan, 'true');
     assert.equal(reused.head, start);
+    assert.equal(lead({ action: 'verify' }, undefined, {
+      CODA_ARTIFACTS: join(dir, id), GITHUB_RUN_ID: id, FAST: 'false', SEED_HEAD: start, APPROVED_HEAD: reused.head,
+    }).route, 'verify');
   }
   const goal = '为新入口增加验收。';
   const seeded = seed('new-goal', goal);
@@ -885,9 +987,9 @@ test('empty templates return to brief, and a changed brief replaces the branch t
 });
 
 test('a same-head review needs a reason per finding, then goes to the PR and approval card with both verdicts', t => {
-  const { run, lead, state, artifacts } = workflowFixture(t);
+  const { run, seedFast, lead, state, artifacts } = workflowFixture(t);
   run('lane', { GOAL: '交付新入口' });
-  const { head } = run('seed');
+  const { head } = seedFast();
   const findings = [
     { id: '#1', level: 'must', kind: 'contract', title: '入口覆盖', location: 'app.mjs:1', detail: '入口可能未检查' },
     { id: '#2', level: 'must', kind: 'test-quality', title: '入口覆盖', location: 'test.mjs', detail: '未找到回归用例' },
@@ -928,9 +1030,10 @@ test('a same-head review needs a reason per finding, then goes to the PR and app
 });
 
 test('incremental review numbers new musts, preserves upheld ids and falls back for incomplete findings', t => {
-  const { work, git, commit, run, lead } = workflowFixture(t);
+  const { work, git, commit, run, seedFast, lead } = workflowFixture(t);
   const lane = run('lane', { GOAL: '增量复评' });
-  let { head } = run('seed');
+  let { head } = seedFast();
+  assert.equal(lead({ action: 'verify' }).route, 'verify');
   git(work, 'fetch', 'origin', lane.reqBranch);
   git(work, 'checkout', '--detach', 'FETCH_HEAD');
   function advance() {
@@ -968,10 +1071,80 @@ test('incremental review numbers new musts, preserves upheld ids and falls back 
   assert.equal(full.previous, '');
 });
 
+test('integrate reconciles the round snapshot with result files and their IDs before publishing any work', t => {
+  const { work, origin, artifacts, git, commit, run, seedFast, lead, state } = workflowFixture(t);
+  const { reqBranch } = run('lane', { GOAL: '实现并验收入口' });
+  const seed = seedFast();
+  const { round } = lead({ action: 'dispatch', jobs: [
+    { id: 'ui', trade: 'verifier', title: '验收入口', task: '验证入口可见' },
+    { id: 'entry', trade: 'builder', title: '实现入口', task: '新增入口' },
+  ] });
+  git(work, 'fetch', 'origin', reqBranch);
+  git(work, 'checkout', '--detach', seed.head);
+  writeFileSync(join(work, 'feature.mjs'), 'export const ready = true;\n');
+  const head = commit(work, 'implement entry');
+  run('worker', { JOB_ID: 'entry', AGENT_REPLY: JSON.stringify({ session: 'builder', head }) });
+  run('integrate', {}, /派发 \[entry, ui\]，回收 \[entry\]/);
+  assert.equal(git(origin, 'rev-parse', reqBranch), seed.head);
+  assert.deepEqual(state().ledger, {});
+
+  const resultFile = id => join(artifacts, 'workers', `${round}-${id}.json`);
+  writeFileSync(resultFile('other'), JSON.stringify({ id: 'other' }));
+  run('integrate', {}, /派发 \[entry, ui\]，回收 \[entry, other\]/);
+  run('worker', { JOB_ID: 'ui', AGENT_REPLY: JSON.stringify({ session: 'verifier', answer: '```json\n{"passed":true}\n```' }) });
+  run('integrate', {}, /派发 \[entry, ui\]，回收 \[entry, other, ui\]/);
+  unlinkSync(resultFile('other'));
+  const ui = readFileSync(resultFile('ui'));
+  writeFileSync(resultFile('ui'), readFileSync(resultFile('entry')));
+  run('integrate', {}, /ui\.json.*ID entry 不一致/);
+  writeFileSync(resultFile('ui'), ui);
+  assert.equal(run('integrate').head, head);
+  assert.equal(state().ledger.ui.status, 'verified');
+});
+
+test('must findings on verifier jobs block verification until exact-ID retries, replacements or reasoned waivers', t => {
+  const { run, seedFast, lead, state } = workflowFixture(t);
+  run('lane', { GOAL: '验收登录、结算与旧入口' });
+  seedFast();
+  const job = id => ({ id, trade: 'verifier', title: id, task: '检查入口能否提交' });
+  function worker(id, findings) {
+    const verdict = { passed: true, summary: findings.length ? '提交没有响应' : '提交成功', findings };
+    return run('worker', { JOB_ID: id, AGENT_REPLY: JSON.stringify({ session: 'verifier', answer: '```json\n' + JSON.stringify(verdict) + '\n```' }) }).status;
+  }
+  const must = [{ level: 'must', title: '提交没有响应', detail: '点击提交后仍停留在表单' }];
+  const ids = ['login', 'checkout', 'legacy'];
+  lead({ action: 'dispatch', jobs: ids.map(job) });
+  for (const id of ids) assert.equal(worker(id, must), 'rejected');
+  run('integrate');
+  lead({ action: 'verify' }, /验证工单：checkout.*重派.*ignoredFindings/);
+
+  lead({ action: 'dispatch', jobs: [job('login'), { ...job('checkout-2'), replaces: 'checkout' }] });
+  assert.equal(worker('login', []), 'succeeded');
+  assert.equal(worker('checkout-2', must), 'rejected');
+  run('integrate');
+  assert.equal(state().ledger.login.status, 'verified');
+  assert.equal(state().ledger.checkout.status, 'rejected');
+  lead({ action: 'dispatch', jobs: [{ ...job('checkout-3'), replaces: 'checkout-2' }] });
+  assert.equal(worker('checkout-3', []), 'succeeded');
+  run('integrate');
+  const { ledger } = state();
+  assert.equal(ledger['checkout-3'].status, 'verified');
+  for (const id of ['checkout', 'checkout-2']) {
+    assert.equal(ledger[id].status, 'replaced');
+    assert.equal(ledger[id].replacedBy, 'checkout-3');
+  }
+
+  const waiver = { id: 'legacy', reason: '确认的方案已移除旧入口' };
+  lead({ action: 'verify', ignoredFindings: [{ ...waiver, id: 'Legacy' }] }, /验证工单：legacy/);
+  lead({ action: 'verify', ignoredFindings: [{ ...waiver, reason: '  ' }] }, /ignoredFindings.*非空/);
+  assert.equal(lead({ action: 'verify', ignoredFindings: [waiver] }).route, 'verify');
+  assert.deepEqual(state().ignoredFindings, [waiver]);
+});
+
 test('cancelled coding jobs retain strict descendant commits for redispatch without integrating them', t => {
-  const { work, origin, git, commit, run, lead, state } = workflowFixture(t);
+  const { work, origin, git, commit, run, seedFast, lead, state } = workflowFixture(t);
   const { reqBranch } = run('lane', { GOAL: '实现入口' });
-  const { head: base } = run('seed');
+  const { head: base } = seedFast();
   const sibling = commit(work, 'work on another branch');
   git(work, 'fetch', 'origin', reqBranch);
   git(work, 'checkout', '--detach', 'FETCH_HEAD');
@@ -979,6 +1152,7 @@ test('cancelled coding jobs retain strict descendant commits for redispatch with
   const partial = commit(work, 'partial implementation');
   const job = { id: 'entry', trade: 'builder', title: '入口', task: '实现入口' };
   lead({ action: 'dispatch', jobs: [job, { ...job, id: 'check', trade: 'verifier' }] });
+  assert.equal(state().approvedPlanHead, base);
   const cancel = (id, head) => run('worker', {
     JOB_ID: id, AGENT_EXIT_CODE: '130', AGENT_REPLY: JSON.stringify({ session: 'engineer', head }),
   });
@@ -999,12 +1173,12 @@ test('cancelled coding jobs retain strict descendant commits for redispatch with
 });
 
 test('lint rejection retains worker commits through replacement and senior retry, including a locked upstream merge', t => {
-  const { work, origin, git, commit, env, run, lead, state } = workflowFixture(t);
+  const { work, origin, git, commit, env, run, seedFast, lead, state } = workflowFixture(t);
   init(work);
   writeFileSync(join(work, '.dickda/lints/check.sh'), 'test ! -f blocked.txt\n');
   git(work, 'push', 'origin', `${commit(work, 'base lint')}:main`);
   const { reqBranch } = run('lane', { GOAL: '实现入口' });
-  run('seed');
+  seedFast();
   git(work, 'fetch', 'origin', reqBranch);
   git(work, 'checkout', '--detach', 'FETCH_HEAD');
 
@@ -1066,9 +1240,9 @@ test('lint rejection retains worker commits through replacement and senior retry
 });
 
 test('parallel conflict retains the rejected commit before removing the job ref and cleans it at PR or merge', t => {
-  const { work, origin, git, commit, run, lead, state } = workflowFixture(t);
+  const { work, origin, git, commit, run, seedFast, lead, state } = workflowFixture(t);
   const { reqBranch } = run('lane', { GOAL: '并发实现' });
-  run('seed');
+  seedFast();
   for (const step of ['pr', 'merge']) {
     git(work, 'fetch', 'origin', reqBranch);
     const base = git(work, 'rev-parse', 'FETCH_HEAD');
@@ -1132,7 +1306,7 @@ process.exit(done.status);
 });
 
 test('full dickda lifecycle persists investigation archive onto delivery branch across ephemeral step worktrees', t => {
-  const { dir, origin, env, git, ghCallsFile, run: runIsolatedStep } = workflowFixture(t);
+  const { dir, origin, env, git, ghCallsFile, run: runIsolatedStep, state } = workflowFixture(t);
 
   const fakeCodaAgent = join(dir, 'bin/coda-agent');
   writeFileSync(fakeCodaAgent, `#!${process.execPath}
@@ -1168,19 +1342,22 @@ if (prompt.includes('思考者（Thinker）')) {
 
   const lane = runIsolatedStep('lane', { TITLE: 'Demo Feature', GOAL: 'Implement demo feature cleanly' });
   assert.equal(lane.needBrief, 'false');
-  runIsolatedStep('seed');
-  runIsolatedStep('think');
+  const seed = runIsolatedStep('seed');
+  const thought = runIsolatedStep('think');
+  const start = { FAST: 'false', SEED_HEAD: seed.head, APPROVED_HEAD: thought.head };
 
-  const wave1 = runIsolatedStep('lead-plan');
+  const wave1 = runIsolatedStep('lead-plan', start);
   assert.equal(wave1.route, 'dispatch');
+  assert.equal(state().approvedPlanHead, thought.head);
   assert.equal(wave1.session, 'interactor-session');
   assert.equal(wave1.milestone, 'Dispatch wave 1');
   runIsolatedStep('worker', { JOB_ID: 'impl-1' });
   const integrated = runIsolatedStep('integrate');
   assert.equal(integrated.changed, 'true');
 
-  const wave2 = runIsolatedStep('lead-plan');
+  const wave2 = runIsolatedStep('lead-plan', start);
   assert.equal(wave2.route, 'verify');
+  assert.equal(state().approvedPlanHead, thought.head);
   const continuation = readFileSync(join(env.RUNNER_TEMP, 'lead-2.md'), 'utf8');
   assert.ok(continuation.startsWith('## 续跑代码视图'));
   assert.ok(continuation.includes(`git fetch https://github.com/fixture/dickda-demo.git ${lane.reqBranch} && git checkout --detach ${integrated.head}`));

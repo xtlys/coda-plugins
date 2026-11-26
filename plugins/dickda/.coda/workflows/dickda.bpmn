@@ -174,6 +174,9 @@
 
     <scriptTask id="lead-plan" name="执行主控调度与裁决" scriptFormat="bash" coda:timeout="30" coda:status="执行主控（Neon）正在调度与裁决">
       <extensionElements>
+        <coda:env name="FAST" value="=inputs.fast" />
+        <coda:env name="SEED_HEAD" value="=seed.head" />
+        <coda:env name="APPROVED_HEAD" value="=if think.head = null then seed.head else think.head" />
         <coda:env name="LEAD" value="=inputs.lead" />
         <coda:env name="ARCHITECT" value="=inputs.architect" />
         <coda:env name="ARCHITECT_SENIOR" value="=inputs.architectSenior" />
@@ -394,7 +397,7 @@
         <coda:param name="reviewer" value='=if prepare-verify.tier = "senior"
           then (if inputs.verifierSenior != null then inputs.verifierSenior else vars.dickda.verifierSenior)
           else (if inputs.verifier != null then inputs.verifier else vars.dickda.verifierStandard)' />
-        <coda:param name="evidence" value="=prepare-verify.evidence" />
+        <coda:param name="evidence" value="项目检查&#10;{{prepare-verify.evidence}}&#10;&#10;双轨验证报告&#10;{{dual-verify.report}}&#10;&#10;实证证据&#10;{{dual-verify.evidence}}&#10;&#10;双轨发现&#10;{{dual-verify.findings}}" />
         <coda:param name="focus" value="请对照 .dickda/tasks/TODO_TASK.md、PLAN_5L.md、.dickda/lints 与 .dickda/verifiers 审查真实可达缺陷与契约一致性。" />
       </extensionElements>
     </callActivity>

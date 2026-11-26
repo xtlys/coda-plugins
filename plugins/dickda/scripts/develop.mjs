@@ -47,18 +47,24 @@ function deleteRefs(remote, refs) {
 export function enrichDispatchBatch(rawJobs, ledger = {}, settings = loadSettings()) {
   requireValue(Array.isArray(rawJobs) && rawJobs.length >= 1 && rawJobs.length <= 12, 'dispatch 批次须包含 1–12 个并发工单');
   const seen = new Set();
+  const history = Object.keys(ledger);
+  function claimId(id) {
+    requireValue(typeof id === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(id), `工单 ID 不合法：${id}`);
+    const folded = id.toLowerCase();
+    const conflict = history.find(key => key !== id && key.toLowerCase() === folded);
+    requireValue(!conflict, `工单 ID ${id} 与历史工单 ${conflict} 仅大小写不同`);
+    requireValue(!seen.has(folded), `同一并发批次内工单 ID 重复（含 replaces，忽略大小写）：${id}`);
+    seen.add(folded);
+  }
   return rawJobs.map((job, idx) => {
     const jobId = String(job.id || `job-${idx + 1}`).trim();
-    requireValue(/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(jobId), `工单 ID 不合法：${jobId}`);
+    claimId(jobId);
     const current = Object.hasOwn(ledger, jobId) ? ledger[jobId] : null;
     const replaces = job.replaces ?? (current?.status === 'rejected' ? current.replaces : null);
     if (replaces) {
+      claimId(replaces);
       requireValue(ledger[replaces]?.status === 'rejected' && (!current || current.replaces === replaces), `工单 ${jobId} 的 replaces 须指向原被打回的工单：${replaces}`);
-      requireValue(!seen.has(replaces), `同一批次不能重复派发被替代工单：${replaces}`);
-      seen.add(replaces);
     }
-    requireValue(!seen.has(jobId), `同一并发批次内工单 ID 重复：${jobId}`);
-    seen.add(jobId);
     requireValue(TRADES.includes(job.trade), `工单 ${jobId} 的工种须为 architect、builder 或 verifier`);
     requireValue(typeof job.title === 'string' && job.title.trim(), `工单 ${jobId} 缺少 title`);
     requireValue(typeof job.task === 'string' && job.task.trim(), `工单 ${jobId} 缺少 task`);
@@ -215,8 +221,10 @@ export function integrateWorkerResults(cwd, baseTip, workerResults, ledger = {},
     }
   }
 
-  for (const { id } of landed) {
-    let replaced = ledger[id].replaces;
+  for (const { id } of workerResults) {
+    const entry = ledger[id];
+    if (!['landed', 'verified'].includes(entry.status)) continue;
+    let replaced = entry.replaces;
     while (replaced && ledger[replaced]?.status === 'rejected') {
       const original = ledger[replaced];
       original.status = 'replaced';
@@ -445,6 +453,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
       case 'think': {
         const root = repo();
+        const planPath = '.dickda/tasks/PLAN_5L.md';
         const thinkBase = fetchHead(state.remote, state.reqBranch);
         git('checkout', '-B', state.reqBranch, thinkBase);
         const promptFile = join(env.RUNNER_TEMP, 'thinker.md');
@@ -453,7 +462,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           `## 当前项目已启用规范摘要\n${enabledGuidelinesDigest(root)}`,
           `## 本次需求原文（.dickda/tasks/TODO_TASK.md）\n${readFileSync(managed(root, 'tasks/TODO_TASK.md'), 'utf8')}`,
           state.planFeedback ? `## 交互者/用户修订意见\n${state.planFeedback}` : '',
-          `请将完整的五层技术方案写入 \`.dickda/tasks/PLAN_5L.md\` 并提交到当前分支（不要推送或开 PR），最后简要汇报五层核心设计。`,
+          `请将完整的五层技术方案写入 \`${planPath}\`，只提交这一份文件到当前分支（不要推送或开 PR），最后简要汇报五层核心设计。`,
         ].filter(Boolean).join('\n\n');
         writeFileSync(promptFile, prompt);
         const call = callCodaAgent([
@@ -468,7 +477,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const validDescendant = thoughtHead !== thinkBase
           && spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', thinkBase, thoughtHead]).status === 0;
         requireValue(validDescendant, `思考者返回的提交（${thoughtHead}）不是当前需求分支基线（${thinkBase}）的严格后代`);
-        const preview = planPreview(git('show', `${thoughtHead}:.dickda/tasks/PLAN_5L.md`));
+        const outsidePlan = execFileSync('git', ['diff', '--name-only', '-z', '--no-renames', thinkBase, thoughtHead, '--'], { cwd: root, encoding: 'utf8' })
+          .split('\0').filter(path => path && path !== planPath);
+        requireValue(!outsidePlan.length, `思考者只可修改 ${planPath}，提交还改动了：${outsidePlan.join('、')}`);
+        const preview = planPreview(git('show', `${thoughtHead}:${planPath}`));
         requireValue(preview, '思考者提交的 PLAN_5L.md 须含 L1–L5 各层方案正文');
         remoteGit('.', 'push', '--quiet', '--no-follow-tags', state.remote, `${thoughtHead}:refs/heads/${state.reqBranch}`);
         saveState({ ...state, head: thoughtHead, planAnswer: call.parsed.answer ?? '', planFeedback: '' });
@@ -486,8 +498,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       case 'lead-plan': {
         const root = repo();
         const fetchedHead = fetchHead(state.remote, state.reqBranch);
-        git('checkout', '-B', state.reqBranch, fetchedHead);
         const round = (state.round ?? 0) + 1;
+        if (round === 1) {
+          const approvedPlanHead = env.FAST === 'true' ? env.SEED_HEAD : env.APPROVED_HEAD;
+          requireValue(fetchedHead === approvedPlanHead, `开工基线提交不一致：预期 ${approvedPlanHead || '缺失'}，需求分支 ${state.reqBranch} 当前为 ${fetchedHead}`);
+          state.approvedPlanHead = approvedPlanHead;
+        }
+        git('checkout', '-B', state.reqBranch, fetchedHead);
         const planBody = existsSync(managed(root, 'tasks/PLAN_5L.md')) ? readFileSync(managed(root, 'tasks/PLAN_5L.md'), 'utf8') : '';
         const ledgerSummary = Object.values(state.ledger ?? {}).map(item => [
           `- ${item.id} [${item.trade}] status=${item.status}, rejections=${item.rejections ?? 0}`,
@@ -511,7 +528,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           `- 可用工种级别：\n  - architect：常规 ${formatAgent(settings.architect.standard)} ｜ 高级 ${formatAgent(settings.architect.senior)}\n  - builder：常规 ${formatAgent(settings.builder.standard)} ｜ 高级 ${formatAgent(settings.builder.senior)}\n  - verifier：常规 ${formatAgent(settings.verifier.standard)} ｜ 高级 ${formatAgent(settings.verifier.senior)}`,
           `## 工单账本状态\n${ledgerSummary}`,
           state.pendingFeedback ? `## 最新待裁决反馈 / 检查与审查结果\n${state.pendingFeedback}` : '',
-          '重试 status=rejected 的工单必须原样复用其 id，或用 replaces 指明原工单 id。verify 时，放弃的编码工单须在 ignoredFindings 中按工单 id 写明原因。对同一 HEAD 的 REQUEST_CHANGES，须对每条未采纳意见按编号或标题给出客观 reason。',
+          '重试 status=rejected 的工单必须原样复用其 id，或用 replaces 指明原工单 id。verify 时，放弃的编码或验证工单须在 ignoredFindings 中按工单 id 逐条写明客观依据。对同一 HEAD 的 REQUEST_CHANGES，须对每条未采纳意见按编号或标题给出客观 reason。',
           `## 输出格式要求（严格遵守）\n请在回复末尾输出一个 \`\`\`json 代码块，action 取值之一：\n1. \`"dispatch"\`：并发派发 1–12 个无相互阻塞依赖的工单（可同时涵盖 architect / builder / verifier）：\n\`\`\`json\n{\n  "action": "dispatch",\n  "milestone": "一句话进度说明",\n  "ignoredFindings": [{"id": "#1", "reason": "忽略该非阻塞意见的客观依据"}],\n  "jobs": [\n    {"id": "arch-core", "trade": "architect", "difficulty": "normal", "title": "建立骨架与Lint", "task": "自足任务说明"},\n    {"id": "impl-mod-a", "trade": "builder", "difficulty": "normal", "lockSpec": true, "title": "实现模块A", "task": "自足任务说明"}\n  ]\n}\n\`\`\`\n2. \`"verify"\`：全部实现已合入且必须修均已闭环，进入 Stage 3 全量双轨验证与交付：\n\`\`\`json\n{\n  "action": "verify",\n  "report": "面向用户的 5–8 行改动汇报（做了什么 + 风险提示）",\n  "ignoredFindings": []\n}\n\`\`\`\n3. \`"escalate"\`：发现超出 PLAN_5L.md 边界的重大风险，需请顶层交互者拍板：\n\`\`\`json\n{\n  "action": "escalate",\n  "question": "需要交互者/用户拍板的具体问题与可选方案"\n}\n\`\`\``,
         ].filter(Boolean).join('\n\n');
         writeFileSync(promptFile, prompt);
@@ -560,8 +577,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
             escalation: '',
           });
         } else if (decision.action === 'verify') {
-          const pending = Object.values(state.ledger).filter(item => item.status === 'rejected' && item.trade !== 'verifier' && !ignored.some(f => f.id === item.id));
-          requireValue(!pending.length, `仍有被打回的编码工单：${pending.map(item => item.id).join('、')}。请重派或在 ignoredFindings 按工单 id 写明放弃原因。`);
+          const pending = Object.values(state.ledger).filter(item => item.status === 'rejected' && !ignored.some(f => f.id === item.id));
+          const unresolved = pending.map(item => `${item.trade === 'verifier' ? '验证' : '编码'}工单：${item.id}`);
+          requireValue(!pending.length, `仍有被打回的${unresolved.join('、')}。请重派或在 ignoredFindings 中按工单 id 逐条写明不采纳的客观依据。`);
           if (requestedChanges(state, fetchedHead)) {
             requireValue(ignored.length, '同一提交的 REQUEST_CHANGES 须在本轮 ignoredFindings 中逐条写明不采纳依据');
             const remaining = [...ignored];
@@ -691,6 +709,22 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       }
 
       case 'integrate': {
+        const batch = JSON.parse(readFileSync(join(env.CODA_ARTIFACTS, `batch-${state.round}.json`), 'utf8'));
+        const workersDir = join(env.CODA_ARTIFACTS, 'workers');
+        const prefix = `${state.round}-`;
+        const files = existsSync(workersDir)
+          ? readdirSync(workersDir).filter(f => f.startsWith(prefix) && f.endsWith('.json')).sort()
+          : [];
+        const results = files.map(file => {
+          const result = JSON.parse(readFileSync(join(workersDir, file), 'utf8'));
+          requireValue(file === `${prefix}${result.id}.json`, `工单结果文件 ${file} 与其中的 ID ${result.id} 不一致`);
+          return result;
+        });
+        const expected = batch.map(job => job.id).sort();
+        const received = results.map(result => result.id).sort();
+        requireValue(expected.length === received.length && expected.every((id, i) => id === received[i]),
+          `第 ${state.round} 轮派单与回收的工单 ID 不一致：派发 [${expected.join(', ')}]，回收 [${received.join(', ')}]`);
+
         // A delivery push and ledger update can succeed before a temporary ref deletion needs retrying.
         if (state.integration?.round === state.round) {
           deleteRefs(state.remote, state.integration.cleanup);
@@ -700,13 +734,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const root = repo();
         const baseTip = fetchHead(state.remote, state.reqBranch);
         git('checkout', '-B', state.reqBranch, baseTip);
-
-        const workersDir = join(env.CODA_ARTIFACTS, 'workers');
-        const prefix = `${state.round}-`;
-        const files = existsSync(workersDir)
-          ? readdirSync(workersDir).filter(f => f.startsWith(prefix) && f.endsWith('.json')).sort()
-          : [];
-        const results = files.map(f => JSON.parse(readFileSync(join(workersDir, f), 'utf8')));
 
         for (const r of results) {
           if (r.jobRef) {

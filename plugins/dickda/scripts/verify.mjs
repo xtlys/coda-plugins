@@ -109,7 +109,7 @@ export function runAgentVerifiers(root, { tier, difficulty = 'normal', rejection
     `## 本次实证 / UI 验收上下文\n- 工作目录：${root}\n${commit ? `- 验证提交：${commit}\n` : ''}${device ? `- 已分配独占测试设备：${device}\n` : ''}${task ? `- 关联需求摘要：\n${task}\n` : ''}`,
     `## 待逐项执行的验证规约（共 ${specs.length} 份）`,
     ...specs.map(s => `### ${s.path}\n\n${s.body}`),
-    `## 输出契约\n完成真实运行与截图/日志取证后，在最后一条回复末尾附上 \`\`\`json 块（包含 passed 布尔值、summary 字符串、evidence 数组、findings 数组，每项含 level: "must"|"nit", title, detail）：\n\`\`\`json\n{"passed": true, "summary": "全部场景实证通过", "evidence": [], "findings": []}\n\`\`\``,
+    `## 输出契约\n完成真实运行与截图/日志取证后，在最后一条回复末尾附上 \`\`\`json 块。通过时 summary 须说明实测结果，evidence 至少列出一项本次运行的截图、日志或命令输出。findings 每项含 level（"must" 或 "nit"）、title 和 detail。\n\`\`\`json\n{"passed": true, "summary": "登录后显示首页", "evidence": [{"path": "artifacts/login.png", "detail": "首页显示当前用户名"}], "findings": []}\n\`\`\``,
   ].join('\n\n');
 
   writeFileSync(promptFile, prompt);
@@ -131,6 +131,13 @@ export function runAgentVerifiers(root, { tier, difficulty = 'normal', rejection
     const findings = Array.isArray(verdict.findings) ? verdict.findings : [];
     const hasMust = findings.some(f => f.level === 'must');
     const passed = verdict.passed === true && !hasMust;
+    if (passed) {
+      const hasText = value => typeof value === 'string' && value.trim().length > 0;
+      requireValue(hasText(verdict.summary), 'Agent/UI 验收通过时 summary 须为非空文本');
+      const hasEvidence = item => hasText(item) || (item && typeof item === 'object'
+        && !Array.isArray(item) && Object.values(item).some(hasText));
+      requireValue(Array.isArray(verdict.evidence) && verdict.evidence.some(hasEvidence), 'Agent/UI 验收通过时 evidence 须至少包含一项非空实证证据');
+    }
     return {
       passed,
       skipped: false,

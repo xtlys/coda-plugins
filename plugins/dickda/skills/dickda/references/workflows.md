@@ -2,7 +2,7 @@
 
 ## 1. 开工确认与并发派工（`DECISION_JSON`）
 
-常规开发从需求分支读取或生成 `.dickda/tasks/PLAN_5L.md`，随后暂停。交互者先向用户讲解各层取舍，填写开工建议、理由与风险。用户可在确认卡选择开工、打回修订或暂不开工。只有确认开工才进入主控，显式选择 `fast` 时直接进入主控。
+常规开发从需求分支读取或生成 `.dickda/tasks/PLAN_5L.md`，思考者的提交只能改动这份方案。交互者先向用户讲解各层取舍，填写开工建议、理由与风险。用户可在确认卡选择开工、打回修订或暂不开工。首轮派单要求需求分支 HEAD 与本次开工确认卡的 SHA 一致。显式选择 `fast` 时以 `seed.head` 为基线。
 
 主控续跑会拿到需求分支当前 HEAD、相对上次视图的新提交与 `git diff --stat`，按提示同步到这个提交再决策。派工时若提供了里程碑且有主会话，流程通过 `tell-session` 按运行与轮次同步一次。
 
@@ -11,9 +11,9 @@
 - **`dispatch`（并发派发 1..N 个工单）**：
   - 每个工单包含 `id`、`trade`（`architect | builder | verifier`）、`difficulty`（`normal | hard`）、可选 `tier`（`standard | senior`）、`title`、`task`、`lockSpec`（`builder` 默认 `true`，禁止修改 `.dickda/lints` 与已锁定 `.dickda/verifiers`）。
   - BPMN 使用无序并行多实例（`multiInstanceLoopCharacteristics`）在各自独立工作树同时调用 `coda-agent` 执行同批全部工单。
-  - 工单只写自己的 `.dickda/tasks/logs/<jobId>.md`。打回的提交有临时远端引用，使用原 ID 或通过 `replaces` 重派时可从 `previousHead` 查看前次改动和失败原因。工单合入或交付时清理引用。
-  - 批次结束后自动用 `git merge-tree` 无冲突校验合入需求分支 `dickda/req-<runId>`；发生冲突或违反 `lockSpec` 的工单自动记为被打回并累加 `rejections` 计数。
-- **`verify`** 先用 `remember` 将有效调查日志连同需求和五层方案归入 `.dickda/learning/<timestamp>/` 并提交。用归档后的 SHA 补跑项目检查、双轨验证与独立 `review-commit`。双轨失败退回主控。独立审查未完成可重试或停止。终审要求修改可派修新提交，对同一已通过双轨的提交选择不采纳时，主控须在 `ignoredFindings` 逐条填写客观依据。PR 与用户批准卡保留原结论、依据和验证证据。
+  - 工单只写自己的 `.dickda/tasks/logs/<jobId>.md`。同批及历史 ID 均按大小写不敏感规则检查冲突。复用原 ID 或以 `replaces` 指向被打回的工单时，须与账本中的 ID 完全一致。打回的提交有临时远端引用，可从 `previousHead` 查看前次改动。工单合入或交付时清理引用。
+  - 合入前按当轮派单快照核对每个结果的 ID，缺失、多余或重复都会中止合入。通过后用 `git merge-tree` 校验并发改动并合入需求分支 `dickda/req-<runId>`。发生冲突或违反 `lockSpec` 的工单记为被打回并累加 `rejections` 计数。
+- **`verify`** 要求每张被打回的编码或验证工单已重派通过，或在本轮 `ignoredFindings` 按 ID 逐条写明不采纳的客观依据。随后用 `remember` 将有效调查日志连同需求和五层方案归入 `.dickda/learning/<timestamp>/` 并提交。归档后的 SHA 通过项目检查与双轨验证后，独立 `review-commit` 收到项目检查摘要和本轮双轨报告、实证证据与发现。双轨失败退回主控。独立审查未完成可重试或停止。终审要求修改可派修新提交，对同一已通过双轨的提交选择不采纳时，主控须在 `ignoredFindings` 逐条填写客观依据。PR 与用户批准卡保留原结论、依据和验证证据。
 - **`escalate`（向上请示交互者）**：仅在遇到破坏 `PLAN_5L.md` 顶层设计、对外契约变更或高级工程师仍无法消解的阻塞风险时触发，流程挂起 `userTask` 交顶层交互者会话拍板。
 
 ## 2. 两级工程师升级逻辑
@@ -31,7 +31,7 @@
 
 ## 4. 双轨验证与设备
 
-`dickda-verify` 对同一提交并行运行代码轨与可选 Agent/UI 轨。启用 UI 且指定设备时，在启动代码轨前调用 `resolve-testbed`。Agent/UI 轨检出该 SHA 并递归检查 `.dickda/verifiers/`，发现规约才用解析出的 `group` 调用 `hold-group` 占用指定设备。有规约而未指定设备时直接验收。无规约时记录该提交的跳过结果。开发流程将 `verifier`、`verifierSenior` 透传到验证流程，当前运行的覆盖优先于插件设置。
+`dickda-verify` 对同一提交并行运行代码轨与可选 Agent/UI 轨。启用 UI 且指定设备时，在启动代码轨前调用 `resolve-testbed`。Agent/UI 轨检出该 SHA 并递归检查 `.dickda/verifiers/`，发现规约才用解析出的 `group` 调用 `hold-group` 占用指定设备。有规约而未指定设备时直接验收。通过时 `summary` 须给出非空的实测摘要，`evidence` 数组至少含一项非空文本或带非空文本字段的证据对象。无规约时记录该提交的跳过结果。开发流程将 `verifier`、`verifierSenior` 透传到验证流程，当前运行的覆盖优先于插件设置。
 
 ## 5. 提纯归档与合并
 
