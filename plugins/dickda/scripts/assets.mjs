@@ -3,8 +3,8 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdir
 import { basename, dirname, join, relative } from 'node:path';
 import { INVESTIGATE_MARKER, atomic, base, git, hash, inside, listFiles, lock, managed, requireValue } from './store.mjs';
 
-const ARCHIVE_DIR = /^\d{4}(-\d{2}){5}$/;
 export const CONSUMED_FILE = `${base}/learning/.consumed`;
+export const archiveRoot = path => /^(\.dickda\/learning\/\d{4}(?:-\d{2}){5})(?:\/|$)/.exec(path)?.[1];
 
 export function readMarkdownAsset(file, relPath) {
   const body = readFileSync(file, 'utf8');
@@ -20,7 +20,7 @@ export function readMarkdownAsset(file, relPath) {
   };
 }
 
-export function walkMarkdown(root, folder) {
+export function walkMarkdown(root, folder, excluded) {
   const dir = inside(root, folder);
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true })
@@ -28,7 +28,7 @@ export function walkMarkdown(root, folder) {
     .flatMap(entry => {
       if (entry.isSymbolicLink()) return [];
       const relPath = `${folder}/${entry.name}`;
-      if (entry.isDirectory()) return walkMarkdown(root, relPath);
+      if (entry.isDirectory()) return excluded?.has(relPath) ? [] : walkMarkdown(root, relPath, excluded);
       return entry.isFile() && entry.name.endsWith('.md') ? [readMarkdownAsset(inside(root, relPath), relPath)] : [];
     });
 }
@@ -37,11 +37,8 @@ export function assetsByKind(root, kind) {
   requireValue(['knowledge', 'learning', 'archives', 'lints', 'verifiers', 'tasks'].includes(kind), '未知资产类型');
   if (kind === 'knowledge') return walkMarkdown(root, `${base}/knowledge`);
   if (kind === 'tasks') return walkMarkdown(root, `${base}/tasks`);
-  if (kind === 'learning' || kind === 'archives') {
-    const all = walkMarkdown(root, `${base}/learning`);
-    const isArchive = doc => /^\.dickda\/learning\/\d{4}(-\d{2}){5}\//.test(doc.path);
-    return kind === 'archives' ? all.filter(isArchive) : all.filter(doc => !isArchive(doc));
-  }
+  if (kind === 'archives') return pendingArchives(root).flatMap(dir => walkMarkdown(root, dir));
+  if (kind === 'learning') return walkMarkdown(root, `${base}/learning`, new Set(archiveDirectories(root)));
   if (kind === 'lints') {
     return listFiles(root, 'lints', ['.mjs', '.js', '.sh']).map(file => {
       const relPath = relative(root, file).split('\\').join('/');
@@ -69,16 +66,24 @@ export function hasAgentVerifiers(root) {
   return assetsByKind(root, 'verifiers').some(spec => spec.track === 'agent');
 }
 
-export function backups(root, count = 10, consumed = new Set()) {
-  requireValue(Number.isInteger(count) && count > 0 && count <= 10000, 'earliest 数量须为 1–10000');
+function archiveDirectories(root) {
   const folder = managed(root, 'learning');
   if (!existsSync(folder)) return [];
   return readdirSync(folder, { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && !entry.isSymbolicLink() && ARCHIVE_DIR.test(entry.name))
+    .filter(entry => entry.isDirectory())
     .map(entry => `${base}/learning/${entry.name}`)
-    .filter(path => !consumed.has(path))
-    .sort()
-    .slice(0, count);
+    .filter(archiveRoot)
+    .sort();
+}
+
+function pendingArchives(root, extraConsumed = []) {
+  const consumed = new Set([...consumedArchives(root), ...extraConsumed]);
+  return archiveDirectories(root).filter(path => !consumed.has(path));
+}
+
+export function backups(root, count = 10, extraConsumed = []) {
+  requireValue(Number.isInteger(count) && count > 0 && count <= 10000, 'earliest 数量须为 1–10000');
+  return pendingArchives(root, extraConsumed).slice(0, count);
 }
 
 export function consumedArchives(root, tree) {
@@ -96,8 +101,8 @@ export function consumedArchives(root, tree) {
   return contents.split(/\r?\n/).filter(Boolean);
 }
 
-export function consumptionRecord(history, archive) {
-  return [...new Set([...history, archive])].sort().join('\n');
+export function consumptionRecord(history, ...archives) {
+  return [...new Set([...history, ...archives])].sort().join('\n');
 }
 
 export function remember(root, time = new Date()) {
@@ -154,8 +159,14 @@ export function remember(root, time = new Date()) {
   });
 }
 
+export function pruneConsumedArchives(root, consumed) {
+  const directories = archiveDirectories(root).filter(dir => consumed.has(dir));
+  for (const dir of directories) rmSync(inside(root, dir), { recursive: true });
+  return directories;
+}
+
 export function consumeBackup(root, archiveRelPath, record = consumptionRecord(consumedArchives(root), archiveRelPath)) {
-  requireValue(/^\.dickda\/learning\/\d{4}(-\d{2}){5}$/.test(archiveRelPath), `无效的归档目录路径：${archiveRelPath}`);
+  requireValue(archiveRoot(archiveRelPath) === archiveRelPath, `无效的归档目录路径：${archiveRelPath}`);
   const target = inside(root, archiveRelPath);
   requireValue(existsSync(target), `归档目录不存在：${archiveRelPath}`);
   atomic(inside(root, CONSUMED_FILE), `${record}\n`);

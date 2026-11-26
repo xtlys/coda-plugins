@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
-import { CONSUMED_FILE, assetsByKind, backups, checkSpecLock, consumeBackup, hasAgentVerifiers, remember, runLints } from '../../plugins/dickda/scripts/assets.mjs';
+import { CONSUMED_FILE, assetsByKind, backups, checkSpecLock, consumeBackup, hasAgentVerifiers, layerHealth, remember, runLints } from '../../plugins/dickda/scripts/assets.mjs';
+import { buildDashboardData } from '../../plugins/dickda/scripts/dashboard.mjs';
 import { enrichDispatchBatch, evaluateVerificationGate, evaluateVerifierAnswer, integrateWorkerResults } from '../../plugins/dickda/scripts/develop.mjs';
 import { builtinPrompts, enablePrompt, promptTemplate, prompts, putPrompt, renderPrompt } from '../../plugins/dickda/scripts/prompts.mjs';
 import { applyProseRefinements, buildRefineContext, executeRefinePlan, normalizeDiagnosis } from '../../plugins/dickda/scripts/refine.mjs';
@@ -775,6 +776,35 @@ test('remember rejects linked logs and Refine reads nested archive Markdown with
   assert.deepEqual(nestedFiles, [{ name: 'legacy/job.md', body: 'Historical log\n' }]);
 });
 
+test('archive readers agree with the consumption record even when consumed directories remain on disk', t => {
+  const { work, env } = createGitRepo(t);
+  init(work);
+  const dirs = ['01', '02', '03'].map(day => `.dickda/learning/2026-01-${day}-00-00-00`);
+  const [consumed, ...pending] = dirs;
+  for (const dir of dirs) {
+    mkdirSync(join(work, dir, 'nested'), { recursive: true });
+    writeFileSync(join(work, dir, 'nested/log.md'), `# Investigation\n${dir}\n`);
+  }
+  writeFileSync(join(work, CONSUMED_FILE), `${consumed}\n`);
+  function checkReaders() {
+    assert.deepEqual(backups(work), pending);
+    assert.deepEqual(backups(work, 1, [pending[0]]), [pending[1]]);
+    assert.equal(layerHealth(work).pendingArchives, pending.length);
+    assert.deepEqual(assetsByKind(work, 'archives').map(doc => doc.path), pending.map(dir => `${dir}/nested/log.md`));
+    const dashboard = buildDashboardData(work);
+    assert.deepEqual(dashboard.archives, pending);
+    assert.equal(dashboard.health.pendingArchives, pending.length);
+  }
+  checkReaders();
+  const cli = (...args) => execFileSync(process.execPath, [cliScript, ...args, '--root', work], { env, encoding: 'utf8', stdio: 'pipe' });
+  assert.equal(JSON.parse(cli('status')).pendingArchives, pending.length);
+  assert.deepEqual(JSON.parse(cli('remember', '--earliest', '1')), [pending[0]]);
+  assert.deepEqual(JSON.parse(cli('asset', 'list', 'archives')).map(doc => doc.path), pending.map(dir => `${dir}/nested/log.md`));
+  assert.throws(() => cli('asset', 'show', `${consumed}/nested/log.md`), /资产不存在/);
+  rmSync(join(work, consumed), { recursive: true });
+  checkReaders();
+});
+
 test('prose refinement removes obsolete lines across learning files and applies targeted notes and knowledge', t => {
   const { work } = createGitRepo(t);
   init(work);
@@ -1177,7 +1207,10 @@ test('must findings on verifier jobs block verification until exact-ID retries, 
   const must = [{ level: 'must', title: '提交没有响应', detail: '点击提交后仍停留在表单' }];
   const ids = ['login', 'checkout', 'legacy'];
   lead({ action: 'dispatch', jobs: ids.map(job) });
-  for (const id of ids) assert.equal(worker(id, must), 'rejected');
+  for (const id of ids) {
+    const findings = id === 'legacy' ? must : [...must, { level: 'must', title: '重试丢失表单' }];
+    assert.equal(worker(id, findings), 'rejected');
+  }
   run('integrate');
   lead({ action: 'verify' }, /验证工单：checkout.*重派.*ignoredFindings/);
 
@@ -1186,6 +1219,7 @@ test('must findings on verifier jobs block verification until exact-ID retries, 
   assert.equal(worker('checkout-2', must), 'rejected');
   run('integrate');
   assert.equal(state().ledger.login.status, 'verified');
+  assert.deepEqual(state().ledger.login.openMusts, []);
   assert.equal(state().ledger.checkout.status, 'rejected');
   lead({ action: 'dispatch', jobs: [{ ...job('checkout-3'), replaces: 'checkout-2' }] });
   assert.equal(worker('checkout-3', []), 'succeeded');
@@ -1195,6 +1229,7 @@ test('must findings on verifier jobs block verification until exact-ID retries, 
   for (const id of ['checkout', 'checkout-2']) {
     assert.equal(ledger[id].status, 'replaced');
     assert.equal(ledger[id].replacedBy, 'checkout-3');
+    assert.deepEqual(ledger[id].openMusts, []);
   }
 
   const waiver = { id: 'legacy', reason: '确认的方案已移除旧入口' };
@@ -1202,6 +1237,86 @@ test('must findings on verifier jobs block verification until exact-ID retries, 
   lead({ action: 'verify', ignoredFindings: [{ ...waiver, reason: '  ' }] }, /ignoredFindings.*非空/);
   assert.equal(lead({ action: 'verify', ignoredFindings: [waiver] }).route, 'verify');
   assert.deepEqual(state().ignoredFindings, [waiver]);
+
+  const lost = { level: 'must', title: '保存丢数据' };
+  lead({ action: 'dispatch', jobs: [job('legacy')] });
+  worker('legacy', [...must, lost]);
+  run('integrate');
+  lead({ action: 'dispatch', jobs: [job('legacy')], ignoredFindings: [waiver] });
+  worker('legacy', [lost]);
+  run('integrate');
+  lead({ action: 'verify' }, /legacy#2 保存丢数据/);
+  assert.equal(lead({ action: 'verify', ignoredFindings: [{ id: 'legacy#2', reason: '回读测试已覆盖该场景' }] }).route, 'verify');
+});
+
+test('two musts on one verifier require separate rulings across lead rounds', t => {
+  const { run, seedFast, lead, state, env } = workflowFixture(t);
+  run('lane', { GOAL: '验收保存流程' });
+  seedFast();
+  const job = { id: 'ver-1', trade: 'verifier', title: '验证保存', task: '检查两个入口的保存结果' };
+  const first = { level: 'must', title: '旧入口无响应', detail: '提交后停留在旧表单' };
+  const second = { level: 'must', title: '保存丢数据', detail: '重新打开后为空' };
+  function report(findings) {
+    const verdict = { passed: false, findings };
+    run('worker', { JOB_ID: job.id, AGENT_REPLY: JSON.stringify({ session: 'verifier', answer: '```json\n' + JSON.stringify(verdict) + '\n```' }) });
+    run('integrate');
+  }
+  lead({ action: 'dispatch', jobs: [job] });
+  report([first, { level: 'nit', title: '按钮文案' }, second]);
+  const ids = () => state().ledger[job.id].openMusts.map(f => f.id);
+  assert.deepEqual(ids(), ['ver-1#1', 'ver-1#2']);
+  assert.match(state().pendingFeedback, /ver-1#1 \[must\] 旧入口无响应/);
+  assert.match(state().pendingFeedback, /ver-1#2 \[must\] 保存丢数据/);
+
+  const oldEntry = { id: 'ver-1#1', reason: '已批准的方案移除了旧入口' };
+  const save = { id: 'ver-1#2', reason: '回读测试确认已保存，复现使用了清空数据的测试夹具' };
+  const missing = /ver-1#2 保存丢数据/;
+  const wholeJob = { id: job.id, reason: oldEntry.reason };
+  for (const ignoredFindings of [[wholeJob], [oldEntry], [oldEntry, wholeJob], [oldEntry, oldEntry]]) {
+    lead({ action: 'verify', ignoredFindings }, missing);
+  }
+  const prompt = readFileSync(join(env.RUNNER_TEMP, 'lead-2.md'), 'utf8').split('## 最新待裁决反馈')[0];
+  assert.match(prompt, /ver-1#1 旧入口无响应/);
+  assert.match(prompt, missing);
+
+  lead({ action: 'dispatch', jobs: [job], ignoredFindings: [oldEntry] });
+  report([second, first]);
+  assert.deepEqual(ids(), ['ver-1#2', 'ver-1#1']);
+  lead({ action: 'verify' }, missing);
+  assert.equal(lead({ action: 'verify', ignoredFindings: [save] }).route, 'verify');
+  assert.deepEqual(state().ignoredFindings, [oldEntry, save]);
+});
+
+test('failed verifier retries preserve both musts at the verify gate', t => {
+  const { run, seedFast, lead, state } = workflowFixture(t);
+  run('lane', { GOAL: '验收保存流程' });
+  seedFast();
+  const job = { id: 'save', trade: 'verifier', title: '保存验证', task: '检查提交与回读' };
+  const verdict = value => '```json\n' + JSON.stringify(value) + '\n```';
+  function attempt(answer, expectedStatus, exitCode = '0') {
+    lead({ action: 'dispatch', jobs: [job] });
+    const result = run('worker', {
+      JOB_ID: job.id, AGENT_EXIT_CODE: exitCode, AGENT_REPLY: JSON.stringify({ session: 'verifier', answer }),
+    });
+    assert.equal(result.status, expectedStatus);
+    run('integrate');
+  }
+
+  attempt(verdict({ passed: false, findings: [
+    { level: 'must', title: '重复提交', detail: '一次点击写入两次' },
+    { level: 'must', title: '保存丢数据', detail: '重新打开后为空' },
+  ] }), 'rejected');
+  const original = state().ledger.save.openMusts;
+  const verify = { action: 'verify', ignoredFindings: [{ id: job.id, reason: '旧入口已移除' }] };
+  for (const [answer, exitCode] of [[verdict({ passed: true }), '1'], ['未返回结构化结论', '0']]) {
+    attempt(answer, 'failed', exitCode);
+    lead(verify, /save#1 重复提交.*save#2 保存丢数据/);
+    assert.deepEqual(state().ledger.save.openMusts, original);
+  }
+
+  attempt(verdict({ passed: false, findings: [] }), 'rejected');
+  assert.deepEqual(state().ledger.save.openMusts, []);
+  assert.equal(lead(verify).route, 'verify');
 });
 
 test('cancelled coding jobs retain strict descendant commits for redispatch without integrating them', t => {
@@ -1701,7 +1816,7 @@ test('queued collects refresh main after the lock and skip consumed archives eve
 });
 
 for (const method of ['squash', 'rebase']) {
-  test(`collect skips topic-only archives after a ${method} merge and selects the next new batch`, t => {
+  test(`refining a retained topic after a ${method} merge keeps both consumed archives off main`, t => {
     const fixture = workflowFixture(t, refineScript);
     const { dir, work, origin, env, git, commit } = fixture;
     const snapshot = join(dir, 'before-refinements.git');
@@ -1719,8 +1834,8 @@ for (const method of ['squash', 'rebase']) {
       run('prepare');
       return run('collect', { BRANCH: 'topic' });
     }
-    function execute(note) {
-      const diagnosis = { layers: ['L4'], summary: 'Document findings', learningUpdates: [note] };
+    function execute(file, note) {
+      const diagnosis = { layers: ['L4'], summary: 'Document findings', learningUpdates: [{ file, text: note }] };
       run('diagnose', { AGENT_REPLY: JSON.stringify({ answer: '```json\n' + JSON.stringify(diagnosis) + '\n```' }) });
       run('decide', { DECISION: '{"choice":"prose"}' });
       return run('execute').head;
@@ -1737,7 +1852,7 @@ for (const method of ['squash', 'rebase']) {
     commit(work, 'topic-only investigation');
     git(work, 'push', 'origin', 'topic');
     assert.deepEqual(collect('first'), { hasArchive: 'true', archive });
-    const candidate = execute('Keep the retry contract');
+    const candidate = execute('Learning_Retry.md', 'Keep the retry contract');
     git(work, 'fetch', 'origin', 'dickda/refine-first');
     git(work, 'checkout', 'main');
     if (method === 'squash') {
@@ -1759,8 +1874,16 @@ for (const method of ['squash', 'rebase']) {
     commit(work, 'new investigation on retained topic');
     git(work, 'push', 'origin', 'topic');
     assert.deepEqual(collect('next'), { hasArchive: 'true', archive: next });
-    const nextCandidate = execute('Document retry outcomes');
+    const nextCandidate = execute('Learning_Outcomes.md', 'Document retry outcomes');
     assert.equal(git(origin, 'show', `${nextCandidate}:${CONSUMED_FILE}`), `${archive}\n${next}`);
+    git(work, 'fetch', 'origin', 'dickda/refine-next');
+    git(work, 'checkout', 'main');
+    // Both sides added .consumed. Keep the candidate's combined record when squashing.
+    git(work, 'merge', '--squash', '-X', 'theirs', nextCandidate);
+    git(work, 'commit', '-m', 'squash second refinement');
+    git(work, 'push', 'origin', 'main');
+    assert.equal(git(origin, 'ls-tree', 'main', '--', archive, next), '');
+    assert.equal(git(origin, 'show', `main:${CONSUMED_FILE}`), `${archive}\n${next}`);
   });
 }
 
@@ -1809,6 +1932,33 @@ test('invalid diagnosis stops the workflow and ineffective plans leave the archi
     ...state(), head: changedHead, diagnosis: { learningUpdates: ['Retry on timeout'], layers: ['L4'] },
   }), /仅更新 L4.*app\.mjs/);
   assert.ok(existsSync(join(work, archive)));
+});
+
+test('refine scope permits only deletions in consumed archives and requires a substantive change elsewhere', t => {
+  const { work, git, commit } = createGitRepo(t);
+  init(work);
+  const [previous, archive] = ['01', '02'].map(day => `.dickda/learning/2026-01-${day}-00-00-00`);
+  for (const dir of [previous, archive]) {
+    mkdirSync(join(work, dir));
+    writeFileSync(join(work, dir, 'log.md'), 'Investigation\n');
+  }
+  const startHead = commit(work, 'topic still carries the previously consumed archive');
+  const plan = { startHead, baseConsumed: [previous], archive, refineBranch: 'refine', diagnosis: { layers: ['L4'] } };
+  function reject(head, error) {
+    for (const choice of ['prose', 'refactor']) {
+      assert.throws(() => executeRefinePlan(work, { ...plan, head, choice }), error);
+    }
+  }
+  git(work, 'rm', '-r', previous);
+  reject(commit(work, 'only remove consumed files'), /没有产生实质文件变更/);
+
+  for (const path of [`${previous}/added.md`, `${archive}/log.md`]) {
+    git(work, 'checkout', '--detach', startHead);
+    writeFileSync(join(work, '.dickda/knowledge/Entry.md'), '# Retry contract\n');
+    writeFileSync(join(work, path), 'Edited investigation\n');
+    reject(commit(work, 'edit an archive alongside a prose change'), new RegExp(`已消费归档仅允许删除：${RegExp.escape(path)}`));
+    assert.ok(existsSync(join(work, path)));
+  }
 });
 
 test('refine routes hook failures, incomplete reviews, human decisions and conflicts before merging', () => {
@@ -1969,6 +2119,8 @@ test('refine binds review, kept rationale and user approval to the head, revalid
   writeFileSync(join(work, 'app.mjs'), 'export const answer = () => 44;\n');
   writeFileSync(join(work, entryDoc), '# 入口响应\n');
   const upstreamArchive = '.dickda/learning/2000-01-01-00-00-00';
+  mkdirSync(join(work, upstreamArchive));
+  writeFileSync(join(work, upstreamArchive, 'old.md'), 'Already consumed upstream\n');
   writeFileSync(join(work, CONSUMED_FILE), `${upstreamArchive}\n`);
   const upstream = commit(work, 'upstream documents entry and updates code');
   git(work, 'push', 'origin', 'main');
@@ -2003,7 +2155,9 @@ test('refine binds review, kept rationale and user approval to the head, revalid
   run('repair', repair(commit(work, 'retain only upstream content and archive deletion')), /没有产生实质文件变更/);
   assert.equal(git(origin, 'rev-parse', branch), repaired);
   run('continue-repair', { NOTE: '保留提纯条文并同步入口文档' });
-  assert.equal(run('repair', repair(resolved)).head, resolved);
+  const cleaned = run('repair', repair(resolved)).head;
+  assert.equal(git(origin, 'rev-parse', `${cleaned}^`), resolved);
+  assert.equal(git(origin, 'ls-tree', cleaned, '--', upstreamArchive), '');
   checkoutCandidate();
   writeFileSync(join(work, entryDoc), '# 入口响应\n\n失败后可重试。\n');
   const finalHead = commit(work, 'clarify retry after syncing main');

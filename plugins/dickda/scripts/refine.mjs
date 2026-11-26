@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { checkApprovalPr, mergeApprovedPr, privateGh } from './approval.mjs';
-import { CONSUMED_FILE, backups, branchChanges, consumeBackup, consumedArchives, consumptionRecord, layerHealth, walkMarkdown } from './assets.mjs';
+import { CONSUMED_FILE, archiveRoot, backups, branchChanges, consumeBackup, consumedArchives, consumptionRecord, layerHealth, pruneConsumedArchives, walkMarkdown } from './assets.mjs';
 import { checkRunsText, jsonList, openMusts, reviewRange, reviewVerdict } from './review.mjs';
 import { TRADES, agentArgs, effectiveSettings, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
 import { appendGithubOutput, atomic, git, managed, projectGroup, remoteGit, repo, requireValue, save } from './store.mjs';
@@ -107,10 +107,14 @@ export function applyProseRefinements(root, diagnosis) {
   for (const [file, content] of edits) atomic(file, content);
 }
 
-function checkRefineScope(root, startHead, tree, { archive, choice, mergedUpstream }) {
+function checkRefineScope(root, startHead, tree, { allConsumed, choice, mergedUpstream }) {
   let substantive = false;
   for (const [path, { before, after, upstream }] of branchChanges(root, startHead, tree, { mergedUpstream })) {
-    if (path.startsWith(`${archive}/`) || path === CONSUMED_FILE) continue;
+    if (path === CONSUMED_FILE) continue;
+    if (allConsumed.has(archiveRoot(path))) {
+      requireValue(before === after || after.startsWith('000000 '), `已消费归档仅允许删除：${path}`);
+      continue;
+    }
     const prose = (path.startsWith('.dickda/knowledge/') && path.endsWith('.md')) || /^\.dickda\/learning\/Learning_[^/]*\.md$/.test(path);
     const [oldMode, oldId] = before.split(' ');
     const [mode, id] = after.split(' ');
@@ -200,24 +204,27 @@ export function executeRefinePlan(root, {
   if (mergedUpstream) requireValue(isAncestor(root, mergedUpstream, currentHead), `修复提交尚未合入默认分支提交 ${mergedUpstream}`);
   const revisions = new Set([startHead, head, mergedUpstream].filter(Boolean));
   const history = [...revisions].flatMap(commit => consumedArchives(root, commit));
-  const record = consumptionRecord([...baseConsumed, ...history], archive);
-  const scope = { archive, choice, mergedUpstream };
-  let stagedTree;
+  const allConsumed = new Set([...baseConsumed, ...history, archive]);
+  const record = consumptionRecord(allConsumed);
+  const scope = { allConsumed, choice, mergedUpstream };
   if (consume) {
     applyProseRefinements(root, diagnosis);
     git(root, 'add', '-A', '.dickda');
-    stagedTree = git(root, 'write-tree');
-    checkRefineScope(root, startHead, stagedTree, scope);
+  }
+  checkRefineScope(root, startHead, consume ? git(root, 'write-tree') : currentHead, scope);
+  if (consume) {
     consumeBackup(root, archive, record);
     git(root, 'add', '-A', '--', archive, CONSUMED_FILE);
+  }
+  const removed = pruneConsumedArchives(root, allConsumed);
+  if (removed.length) git(root, 'rm', '-r', '--cached', '--ignore-unmatch', '--', ...removed);
+  if (consume || (removed.length && git(root, 'diff', '--cached', '--name-only'))) {
     git(root, 'commit', '-m', `chore(dickda): refine ${archive} (${diagnosis.layers.join(',')})`);
     currentHead = git(root, 'rev-parse', 'HEAD');
-  }
-  requireValue(!git(root, 'ls-tree', currentHead, '--', archive), '提纯提交仍包含已消费的归档');
-  // A commit hook can change the staged result. Check the published tree if it contains any additional edit.
-  if (!stagedTree || git(root, 'diff', '--name-only', '-z', stagedTree, currentHead, '--', `:(exclude)${archive}`, `:(exclude)${CONSUMED_FILE}`)) {
     checkRefineScope(root, startHead, currentHead, scope);
   }
+  const remaining = git(root, 'ls-tree', '-z', '--name-only', currentHead, '--', '.dickda/learning/').split('\0').filter(path => allConsumed.has(path));
+  requireValue(!remaining.length, `提纯提交仍包含已消费的归档：${remaining.join('、')}`);
   requireValue(consumedArchives(root, currentHead).join('\n') === record, `提纯提交须保留历史消费记录并登记当前归档：${CONSUMED_FILE}`);
 
   const verifyOutcome = runCodeVerifiers(root);

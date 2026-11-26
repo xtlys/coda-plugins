@@ -144,8 +144,29 @@ export function integrateWorkerResults(cwd, baseTip, workerResults, ledger = {},
       ...(w.previousHead ? { lastRejectedHead: w.previousHead, lastRejectedRef: w.previousRef } : {}),
     };
     if (w.trade === 'verifier') {
-      for (const f of w.findings ?? []) findings.push({ ...f, sourceJob: w.id, verifier: w.agentSummary });
-      if (w.status === 'succeeded' && w.passed === true) {
+      const passed = w.status === 'succeeded' && w.passed === true;
+      if (w.status === 'rejected' || passed) {
+        const previous = [...(entry.openMusts ?? [])];
+        entry.openMusts = [];
+        for (const f of w.findings ?? []) {
+          const finding = { ...f, sourceJob: w.id, verifier: w.agentSummary };
+          if (finding.level === 'must') {
+            finding.title ||= finding.detail || '未命名的必须修缺陷';
+            const index = previous.findIndex(item => item.title === finding.title && item.detail === finding.detail);
+            if (index >= 0) {
+              finding.id = previous.splice(index, 1)[0].id;
+            } else {
+              entry.mustCount = (entry.mustCount ?? 0) + 1;
+              finding.id = `${w.id}#${entry.mustCount}`;
+            }
+            entry.openMusts.push({ id: finding.id, title: finding.title, detail: finding.detail });
+          }
+          findings.push(finding);
+        }
+      } else {
+        entry.openMusts ??= [];
+      }
+      if (passed && !entry.openMusts.length) {
         entry.status = 'verified';
         entry.tier = w.tier;
         entry.agentSummary = w.agentSummary;
@@ -229,6 +250,7 @@ export function integrateWorkerResults(cwd, baseTip, workerResults, ledger = {},
       const original = ledger[replaced];
       original.status = 'replaced';
       original.replacedBy = id;
+      if (original.trade === 'verifier') original.openMusts = [];
       replaced = original.replaces;
     }
   }
@@ -511,6 +533,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           item.replaces && `replaces=${item.replaces}`, item.replacedBy && `replacedBy=${item.replacedBy}`,
           item.status === 'rejected' && item.nextTier === 'senior' && '下次派单自动升级 senior',
           item.status === 'rejected' && item.lastFeedback,
+          ...(item.openMusts ?? []).map(f => `\n  - ${f.id} ${f.title}`),
         ].filter(Boolean).join(' ')).join('\n') || '尚无工单记录。';
 
         const promptFile = join(env.RUNNER_TEMP, `lead-${round}.md`);
@@ -528,7 +551,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           `- 可用工种级别：\n  - architect：常规 ${formatAgent(settings.architect.standard)} ｜ 高级 ${formatAgent(settings.architect.senior)}\n  - builder：常规 ${formatAgent(settings.builder.standard)} ｜ 高级 ${formatAgent(settings.builder.senior)}\n  - verifier：常规 ${formatAgent(settings.verifier.standard)} ｜ 高级 ${formatAgent(settings.verifier.senior)}`,
           `## 工单账本状态\n${ledgerSummary}`,
           state.pendingFeedback ? `## 最新待裁决反馈 / 检查与审查结果\n${state.pendingFeedback}` : '',
-          '重试 status=rejected 的工单必须原样复用其 id，或用 replaces 指明原工单 id。verify 时，放弃的编码或验证工单须在 ignoredFindings 中按工单 id 逐条写明客观依据。对同一 HEAD 的 REQUEST_CHANGES，须对每条未采纳意见按编号或标题给出客观 reason。',
+          '重试 status=rejected 的工单必须原样复用其 id，或用 replaces 指明原工单 id。verify 时须在 ignoredFindings 中按验证缺陷 ID 逐条写明不采纳的客观依据。无具体缺陷的失败工单按工单 ID 裁决。前序轮次已记录的依据继续有效。对同一 HEAD 的 REQUEST_CHANGES，须在本轮对每条未采纳意见按编号或标题给出客观 reason。',
           `## 输出格式要求（严格遵守）\n请在回复末尾输出一个 \`\`\`json 代码块，action 取值之一：\n1. \`"dispatch"\`：并发派发 1–12 个无相互阻塞依赖的工单（可同时涵盖 architect / builder / verifier）：\n\`\`\`json\n{\n  "action": "dispatch",\n  "milestone": "一句话进度说明",\n  "ignoredFindings": [{"id": "#1", "reason": "忽略该非阻塞意见的客观依据"}],\n  "jobs": [\n    {"id": "arch-core", "trade": "architect", "difficulty": "normal", "title": "建立骨架与Lint", "task": "自足任务说明"},\n    {"id": "impl-mod-a", "trade": "builder", "difficulty": "normal", "lockSpec": true, "title": "实现模块A", "task": "自足任务说明"}\n  ]\n}\n\`\`\`\n2. \`"verify"\`：全部实现已合入且必须修均已闭环，进入 Stage 3 全量双轨验证与交付：\n\`\`\`json\n{\n  "action": "verify",\n  "report": "面向用户的 5–8 行改动汇报（做了什么 + 风险提示）",\n  "ignoredFindings": []\n}\n\`\`\`\n3. \`"escalate"\`：发现超出 PLAN_5L.md 边界的重大风险，需请顶层交互者拍板：\n\`\`\`json\n{\n  "action": "escalate",\n  "question": "需要交互者/用户拍板的具体问题与可选方案"\n}\n\`\`\``,
         ].filter(Boolean).join('\n\n');
         writeFileSync(promptFile, prompt);
@@ -547,7 +570,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         requireValue(decision && ['dispatch', 'verify', 'escalate', 'abort'].includes(decision.action), '执行主控未输出合法的 action JSON（dispatch|verify|escalate|abort）');
 
         const ignored = decision.ignoredFindings ?? [];
-        requireValue(Array.isArray(ignored) && ignored.every(item => typeof item?.reason === 'string' && item.reason.trim()), 'ignoredFindings 中每项都须提供非空的客观 reason');
+        const hasReason = item => typeof item?.reason === 'string' && item.reason.trim();
+        requireValue(Array.isArray(ignored) && ignored.every(hasReason), 'ignoredFindings 中每项都须提供非空的客观 reason');
         const nextState = {
           ...state,
           head: fetchedHead,
@@ -560,6 +584,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
         if (decision.action === 'dispatch') {
           const jobs = enrichDispatchBatch(decision.jobs, state.ledger, settings);
+          // Bind a ticket-level ruling to the report it judged before a retry can change the findings.
+          const verifiers = new Map(jobs.filter(job => job.trade === 'verifier').map(job => [job.id, state.ledger[job.id]?.openMusts ?? []]));
+          nextState.ignoredFindings = nextState.ignoredFindings.map(ruling => {
+            const musts = verifiers.get(ruling.id);
+            if (!musts || ruling.jobOnly) return ruling;
+            return musts.length === 1 ? { ...ruling, id: musts[0].id } : { ...ruling, jobOnly: true };
+          });
           mkdirSync(join(env.CODA_ARTIFACTS, 'workers'), { recursive: true });
           mkdirSync(join(env.CODA_ARTIFACTS, 'jobs'), { recursive: true });
           for (const j of jobs) {
@@ -577,12 +608,25 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
             escalation: '',
           });
         } else if (decision.action === 'verify') {
-          const pending = Object.values(state.ledger).filter(item => item.status === 'rejected' && !ignored.some(f => f.id === item.id));
-          const unresolved = pending.map(item => `${item.trade === 'verifier' ? '验证' : '编码'}工单：${item.id}`);
-          requireValue(!pending.length, `仍有被打回的${unresolved.join('、')}。请重派或在 ignoredFindings 中按工单 id 逐条写明不采纳的客观依据。`);
+          const available = nextState.ignoredFindings.filter(hasReason);
+          const unresolved = [];
+          for (const job of Object.values(state.ledger)) {
+            if (job.status !== 'rejected') continue;
+            const musts = job.openMusts ?? [];
+            for (const { id, title } of musts.length ? musts : [job]) {
+              const index = available.findIndex(f => f.id === id || (musts.length === 1 && f.id === job.id && !f.jobOnly));
+              if (index >= 0) available.splice(index, 1);
+              else {
+                const label = `${job.trade === 'verifier' ? '验证' : '编码'}工单：${job.id}`;
+                unresolved.push(musts.length ? `${label} 缺少 ${id} ${title} 的依据` : label);
+              }
+            }
+          }
+          requireValue(!unresolved.length, `仍有被打回的${unresolved.join('、')}。请重派或在 ignoredFindings 中按上述 ID 逐条写明不采纳的客观依据。`);
           if (requestedChanges(state, fetchedHead)) {
-            requireValue(ignored.length, '同一提交的 REQUEST_CHANGES 须在本轮 ignoredFindings 中逐条写明不采纳依据');
-            const remaining = [...ignored];
+            const reviewIgnored = ignored.filter(f => available.includes(f));
+            requireValue(reviewIgnored.length, '同一提交的 REQUEST_CHANGES 须在本轮 ignoredFindings 中逐条写明不采纳依据');
+            const remaining = [...reviewIgnored];
             const rulings = state.openReviewFindings.map((finding, idx) => {
               const id = finding.id || `#${idx + 1}`;
               const ruling = remaining.find(f => f.id === id) ?? remaining.find(f => !f.id && finding.title && f.title === finding.title);
@@ -592,8 +636,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
             });
             if (state.verifiedHead === fetchedHead) {
               nextState.rebuttedReviewHead = fetchedHead;
-              nextState.reviewRebuttals = rulings.length ? rulings : ignored;
-              nextState.ignoredFindings = [...(state.ignoredFindings ?? []), ...(rulings.length ? remaining : [])];
+              nextState.reviewRebuttals = rulings.length ? rulings : reviewIgnored;
+              nextState.ignoredFindings = nextState.ignoredFindings.filter(f => !reviewIgnored.includes(f) || (rulings.length && remaining.includes(f)));
             }
           }
           nextState.report = (decision.report || state.report || `已完成需求：${state.title}`).trim();
@@ -755,7 +799,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const feedbackParts = [];
         if (merged.landed.length) feedbackParts.push(`已合入工单：${merged.landed.map(l => `${l.id}(${l.trade}/${l.tier})`).join('、')}`);
         if (merged.rejected.length) feedbackParts.push(`未通过工单：\n${merged.rejected.map(r => `- ${r.id}（累计未通过 ${r.rejections} 次${r.nextTier === 'senior' ? '，下次派单自动升级 senior' : ''}）：${r.reason}`).join('\n')}`);
-        if (merged.findings.length) feedbackParts.push(`验证工种（Sol）报告的问题：\n${merged.findings.map((f, idx) => `- #${idx + 1} [${f.level ?? 'must'}] ${f.title ?? ''}：${f.detail ?? ''}`).join('\n')}`);
+        const findings = [
+          ...Object.values(merged.ledger).flatMap(job => job.openMusts ?? []),
+          ...merged.findings.filter(f => f.level !== 'must'),
+        ];
+        if (findings.length) feedbackParts.push(`验证工种（Sol）报告的问题：\n${findings.map((f, idx) => `- ${f.id ?? `#${idx + 1}`} [${f.level ?? 'must'}] ${f.title ?? ''}：${f.detail ?? ''}`).join('\n')}`);
 
         saveState({
           ...state,
