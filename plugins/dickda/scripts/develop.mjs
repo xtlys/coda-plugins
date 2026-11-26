@@ -154,24 +154,31 @@ export function integrateWorkerResults(cwd, baseTip, workerResults, ledger = {},
       }
       const resolved = w.status === 'rejected' ? w.resolved ?? [] : [];
       const unresolvedMusts = (entry.openMusts ?? []).filter(f => !resolved.includes(f.id));
-      const reportedMusts = new Set();
+      const claimed = new Set();
+      const reportedMusts = [];
       for (const f of w.findings ?? []) {
         const finding = { ...f, sourceJob: w.id, verifier: w.agentSummary };
         if (finding.level === 'must') {
           finding.title ||= finding.detail || '未命名的必须修缺陷';
-          let must = unresolvedMusts.find(item => item.id === finding.id)
-            ?? unresolvedMusts.find(item => item.title === finding.title && item.detail === finding.detail);
-          if (!must) {
+          finding.location = typeof finding.location === 'string' ? finding.location.trim() : '';
+          const hasId = typeof finding.id === 'string' && finding.id.trim() !== '';
+          let must = unresolvedMusts.find(item => !claimed.has(item.id) && (hasId
+            ? item.id === finding.id
+            : item.title === finding.title && (item.detail ?? '') === (finding.detail ?? '')
+              && (item.location ?? '') === finding.location));
+          if (must) {
+            claimed.add(must.id);
+          } else {
             entry.mustCount = (entry.mustCount ?? 0) + 1;
             must = { id: `${w.id}#${entry.mustCount}`, title: finding.title, detail: finding.detail };
-            unresolvedMusts.push(must);
           }
+          must.location = finding.location || must.location || '';
           finding.id = must.id;
-          reportedMusts.add(must);
+          reportedMusts.push(must);
         }
         findings.push(finding);
       }
-      if (w.status === 'succeeded' && w.passed === true && !reportedMusts.size) {
+      if (w.status === 'succeeded' && w.passed === true && !reportedMusts.length) {
         entry.openMusts = [];
         entry.status = 'verified';
         entry.tier = w.tier;
@@ -179,7 +186,7 @@ export function integrateWorkerResults(cwd, baseTip, workerResults, ledger = {},
         entry.lastAnswer = w.summary ?? '';
         entry.lastFeedback = '';
       } else {
-        entry.openMusts = [...reportedMusts, ...unresolvedMusts.filter(f => !reportedMusts.has(f))];
+        entry.openMusts = [...reportedMusts, ...unresolvedMusts.filter(f => !claimed.has(f.id))];
         entry.rejections = (entry.rejections ?? 0) + 1;
         entry.status = 'rejected';
         entry.lastFeedback = w.error || w.summary || '验证工单未通过或结论缺失';
@@ -300,6 +307,8 @@ function dualReport(state) {
   }
   return sections.filter(Boolean).join('\n\n');
 }
+
+const findingTitle = ({ title, location }) => `${title ?? ''}${location ? `（${location}）` : ''}`;
 
 const ignoredLines = items => items.map((item, index) =>
   `- ${[item.id, item.title].filter(Boolean).join(' ') || `审查意见 ${index + 1}`}：${item.reason}`
@@ -540,7 +549,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           item.replaces && `replaces=${item.replaces}`, item.replacedBy && `replacedBy=${item.replacedBy}`,
           item.status === 'rejected' && item.nextTier === 'senior' && '下次派单自动升级 senior',
           item.status === 'rejected' && item.lastFeedback,
-          ...(item.openMusts ?? []).map(f => `\n  - ${f.id} ${f.title}`),
+          ...(item.openMusts ?? []).map(f => `\n  - ${f.id} ${findingTitle(f)}`),
         ].filter(Boolean).join(' ')).join('\n') || '尚无工单记录。';
 
         const promptFile = join(env.RUNNER_TEMP, `lead-${round}.md`);
@@ -623,12 +632,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
             const musts = job.openMusts ?? [];
             // The replacement carries the findings, so its predecessor needs no separate ruling.
             if (!musts.length && replacedVerifiers.has(job.id)) continue;
-            for (const { id, title } of musts.length ? musts : [job]) {
-              const index = available.findIndex(f => f.id === id || (musts.length === 1 && f.id === job.id && !f.jobOnly));
+            for (const finding of musts.length ? musts : [job]) {
+              const index = available.findIndex(f => f.id === finding.id || (musts.length === 1 && f.id === job.id && !f.jobOnly));
               if (index >= 0) available.splice(index, 1);
               else {
                 const label = `${job.trade === 'verifier' ? '验证' : '编码'}工单：${job.id}`;
-                unresolved.push(musts.length ? `${label} 缺少 ${id} ${title} 的依据` : label);
+                unresolved.push(musts.length ? `${label} 缺少 ${finding.id} ${findingTitle(finding)} 的依据` : label);
               }
             }
           }
@@ -815,7 +824,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           ...Object.values(merged.ledger).flatMap(job => job.openMusts ?? []),
           ...merged.findings.filter(f => f.level !== 'must'),
         ];
-        if (findings.length) feedbackParts.push(`验证工种（Sol）报告的问题：\n${findings.map((f, idx) => `- ${f.id ?? `#${idx + 1}`} [${f.level ?? 'must'}] ${f.title ?? ''}：${f.detail ?? ''}`).join('\n')}`);
+        if (findings.length) feedbackParts.push(`验证工种（Sol）报告的问题：\n${findings.map((f, idx) => `- ${f.id ?? `#${idx + 1}`} [${f.level ?? 'must'}] ${findingTitle(f)}：${f.detail ?? ''}`).join('\n')}`);
 
         saveState({
           ...state,

@@ -1230,7 +1230,7 @@ test('must findings on verifier jobs block verification until exact-ID retries, 
   assert.equal(state().ledger.checkout.status, 'rejected');
   assert.deepEqual(state().ledger.checkout.openMusts, []);
   const checkoutIds = state().ledger['checkout-2'].openMusts.map(f => f.id).sort();
-  assert.deepEqual(checkoutIds, ['checkout#1', 'checkout#2', 'checkout-2#1']);
+  assert.deepEqual(checkoutIds, ['checkout#1', 'checkout#2', 'checkout-2#1', 'checkout-2#2']);
   lead({
     action: 'verify', ignoredFindings: checkoutIds.map(id => ({ id, reason: '结算入口已从本次方案移除' })),
   }, /仍有被打回的验证工单：legacy 缺少 legacy#1 提交没有响应 的依据。请重派/);
@@ -1260,6 +1260,59 @@ test('must findings on verifier jobs block verification until exact-ID retries, 
   run('integrate');
   lead({ action: 'verify' }, /legacy#2 保存丢数据/);
   assert.equal(lead({ action: 'verify', ignoredFindings: [{ id: 'legacy#2', reason: '回读测试已覆盖该场景' }] }).route, 'verify');
+});
+
+test('verifier musts with explicit IDs only claim an exact historical ID once per round', () => {
+  const ledger = {};
+  const must = { level: 'must', title: '保存失败', detail: '提交后回读为空' };
+  function report(findings) {
+    const job = { id: 'audit', trade: 'verifier', status: 'rejected', findings };
+    const result = integrateWorkerResults(repoRoot, 'HEAD', [job], ledger);
+    return result.ledger.audit.openMusts.map(f => f.id);
+  }
+
+  assert.deepEqual(report([{ ...must, id: 'worker-a' }, { ...must, id: 'worker-b' }]), ['audit#1', 'audit#2']);
+  const second = { ...must, id: 'audit#2' };
+  assert.deepEqual(report([{ ...must, id: 'worker-c' }, second, second, must, must]), [
+    'audit#3', 'audit#2', 'audit#4', 'audit#1', 'audit#5',
+  ]);
+});
+
+test('same-title verifier musts at different locations stay open and resolve independently', t => {
+  const { run, seedFast, lead, state, env } = workflowFixture(t);
+  run('lane', { GOAL: '验收订单和用户保存' });
+  seedFast();
+  const job = { id: 'audit', trade: 'verifier', title: '验证保存', task: '复测订单和用户的保存结果' };
+  const orders = { title: '保存失败', detail: '提交后回读为空', location: 'src/orders.mjs:20' };
+  const users = { ...orders, location: 'src/users.mjs:40' };
+  const first = { id: 'audit#1', ...orders };
+  const second = { id: 'audit#2', ...users };
+  const open = () => state().ledger.audit.openMusts;
+  function report(findings, resolved = []) {
+    lead({ action: 'dispatch', jobs: [job] });
+    const verdict = { passed: false, findings: findings.map(f => ({ level: 'must', ...f })), resolved };
+    const answer = '```json\n' + JSON.stringify(verdict) + '\n```';
+    run('worker', { JOB_ID: job.id, AGENT_REPLY: JSON.stringify({ session: 'verifier', answer }) });
+    run('integrate');
+  }
+
+  report([{ ...orders, location: ` ${orders.location} ` }, users]);
+  assert.deepEqual(open(), [first, second]);
+  const feedback = state().pendingFeedback;
+  const missingUsers = /缺少 audit#2 .*src\/users\.mjs:40/;
+  lead({ action: 'verify', ignoredFindings: [{ id: first.id, reason: '订单入口已通过回读复核' }] }, missingUsers);
+
+  report([users]);
+  assert.deepEqual(open(), [second, first]);
+  const prompt = readFileSync(join(env.RUNNER_TEMP, 'worker-audit.md'), 'utf8');
+  for (const { id, title, location } of [first, second]) {
+    assert.ok(feedback.includes(`${id} [must] ${title}（${location}）`));
+    assert.ok(prompt.includes(`"location": "${location}"`));
+  }
+
+  report([], [first.id]);
+  assert.deepEqual(open(), [second]);
+  lead({ action: 'verify' }, missingUsers);
 });
 
 test('two musts on one verifier require separate rulings across lead rounds', t => {
