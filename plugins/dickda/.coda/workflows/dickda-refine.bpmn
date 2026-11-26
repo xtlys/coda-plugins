@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:coda="https://coda.pub/schema/bpmn/1.0"
-  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="dickda-refine-definitions" targetNamespace="https://coda.pub/plugins/dickda-develop">
-  <process id="dickda-refine" name="Dickda 五层提纯与重构" isExecutable="true" coda:title="Dickda 五层提纯（Refine）">
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="dickda-refine-definitions" targetNamespace="https://coda.pub/plugins/dickda">
+  <process id="dickda-refine" name="dickda模式 · 五层提纯与重构" isExecutable="true" coda:title="dickda模式 · 五层提纯与重构">
     <extensionElements>
       <coda:input name="branch" label="起始分支" type="branch" defaultFrom="session.branch" description="从此分支读取待消费归档；留空从目标分支开始" />
-      <coda:input name="base" label="目标分支" type="string" default="" description="提纯与重构 PR 的目标分支；留空使用仓库默认分支" />
+      <coda:input name="base" label="目标分支" type="string" default="" description="仅允许仓库默认分支，留空自动读取" />
       <coda:input name="thinker" label="思考者覆盖" type="agent" description="留空采用插件设置（默认 carbon-high）" />
       <coda:input name="architect" label="架构（常规）覆盖" type="agent" description="留空采用插件设置（默认 antigravity claude-opus-5-5 high）" />
       <coda:input name="architectSenior" label="架构（高级）覆盖" type="agent" description="留空采用插件设置（默认 carbon-high）" />
@@ -205,8 +205,8 @@
         <coda:param name="head" value="=prepare-review.head" />
         <coda:param name="previous" value="=prepare-review.previous" />
         <coda:param name="reviewer" value='=if prepare-review.tier = "senior"
-          then (if inputs.verifierSenior != null then inputs.verifierSenior else vars.dickda-develop.verifierSenior)
-          else (if inputs.verifier != null then inputs.verifier else vars.dickda-develop.verifierStandard)' />
+          then (if inputs.verifierSenior != null then inputs.verifierSenior else vars.dickda.verifierSenior)
+          else (if inputs.verifier != null then inputs.verifier else vars.dickda.verifierStandard)' />
         <coda:param name="task" value="=prepare-review.task" />
         <coda:param name="evidence" value="=prepare-review.evidence" />
       </extensionElements>

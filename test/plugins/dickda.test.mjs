@@ -6,18 +6,16 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
-import { assetsByKind, backups, checkSpecLock, consumeBackup, hasAgentVerifiers, layerHealth, remember, runLints } from '../../plugins/dickda-develop/scripts/assets.mjs';
-import { writeDashboard } from '../../plugins/dickda-develop/scripts/dashboard.mjs';
-import { enrichDispatchBatch, evaluateVerificationGate, evaluateVerifierAnswer, integrateWorkerResults } from '../../plugins/dickda-develop/scripts/develop.mjs';
-import { panel, readPanel } from '../../plugins/dickda-develop/scripts/panel.mjs';
-import { builtinPrompts, enablePrompt, promptTemplate, prompts, putPrompt, renderPrompt } from '../../plugins/dickda-develop/scripts/prompts.mjs';
-import { applyProseRefinements, buildRefineContext, executeRefinePlan, normalizeDiagnosis } from '../../plugins/dickda-develop/scripts/refine.mjs';
-import { ROLES, loadSettings, resolveEngineer, rolePrompt } from '../../plugins/dickda-develop/scripts/roles.mjs';
-import { INVESTIGATE_MARKER, init, inside, runtime } from '../../plugins/dickda-develop/scripts/store.mjs';
-import { checkoutTargetCommit, runAgentVerifiers, runCodeVerifiers } from '../../plugins/dickda-develop/scripts/verify.mjs';
+import { assetsByKind, backups, checkSpecLock, consumeBackup, hasAgentVerifiers, remember, runLints } from '../../plugins/dickda/scripts/assets.mjs';
+import { enrichDispatchBatch, evaluateVerificationGate, evaluateVerifierAnswer, integrateWorkerResults } from '../../plugins/dickda/scripts/develop.mjs';
+import { builtinPrompts, enablePrompt, promptTemplate, prompts, putPrompt, renderPrompt } from '../../plugins/dickda/scripts/prompts.mjs';
+import { applyProseRefinements, buildRefineContext, executeRefinePlan, normalizeDiagnosis } from '../../plugins/dickda/scripts/refine.mjs';
+import { ROLES, loadSettings, resolveEngineer, rolePrompt } from '../../plugins/dickda/scripts/roles.mjs';
+import { INVESTIGATE_MARKER, init, inside, runtime } from '../../plugins/dickda/scripts/store.mjs';
+import { checkoutTargetCommit, runAgentVerifiers, runCodeVerifiers } from '../../plugins/dickda/scripts/verify.mjs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
-const pluginDir = join(repoRoot, 'plugins/dickda-develop');
+const pluginDir = join(repoRoot, 'plugins/dickda');
 const cliScript = join(pluginDir, 'scripts/cli.mjs');
 const developScript = join(pluginDir, 'scripts/develop.mjs');
 const verifyScript = join(pluginDir, 'scripts/verify.mjs');
@@ -34,20 +32,12 @@ function createGitRepo(t) {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const work = join(dir, 'work');
   const origin = join(dir, 'origin.git');
-  const stateDir = join(dir, 'plugin-state');
-  const previousState = process.env.CODA_PLUGIN_STATE;
-  process.env.CODA_PLUGIN_STATE = stateDir;
-  t.after(() => {
-    if (previousState === undefined) delete process.env.CODA_PLUGIN_STATE;
-    else process.env.CODA_PLUGIN_STATE = previousState;
-  });
   const artifacts = join(dir, 'artifacts');
-  for (const p of [work, stateDir, artifacts, join(dir, 'bin'), join(dir, 'tmp')]) mkdirSync(p, { recursive: true });
+  for (const p of [work, artifacts, join(dir, 'bin'), join(dir, 'tmp')]) mkdirSync(p, { recursive: true });
 
   const env = {
     ...process.env,
     CODA_PLUGIN_PATH: pluginDir,
-    CODA_PLUGIN_STATE: stateDir,
     CODA_ARTIFACTS: artifacts,
     RUNNER_TEMP: join(dir, 'tmp'),
     GITHUB_OUTPUT: join(dir, 'github-output'),
@@ -82,7 +72,7 @@ function createGitRepo(t) {
   git(work, 'clone', '--bare', '-q', work, origin);
   git(work, 'remote', 'add', 'origin', origin);
 
-  return { dir, work, origin, stateDir, artifacts, env, git, commit };
+  return { dir, work, origin, artifacts, env, git, commit };
 }
 
 function parseOutputs(file) {
@@ -179,6 +169,18 @@ process.exitCode = Number(process.env.AGENT_EXIT_CODE || 0);
   }, expectedError);
   return { ...fixture, ghCallsFile, run, lead, state };
 }
+
+test('dickda declares its Coda engine and uses supported contributions', () => {
+  const { name, displayName, engines, contributes } = JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf8'));
+  assert.equal(name, 'dickda');
+  assert.equal(displayName, 'dickda模式');
+  assert.equal(engines.coda, 1);
+  for (const key of ['endpoints', 'groups', 'events', 'resources', 'panels', 'extensionPoints', 'extensions']) {
+    assert.ok(!Object.hasOwn(contributes, key), `retired contribution: ${key}`);
+  }
+  assert.deepEqual(contributes.skills, ['skills/dickda']);
+  assert.equal(contributes.commands[0].name, 'dickda');
+});
 
 test('three roles and four trades default to exact requested models and escalate to senior on difficulty or rejections', () => {
   const settings = loadSettings('{}');
@@ -370,15 +372,36 @@ console.log(JSON.stringify({ session: 'sol-1', answer: '\`\`\`json\\n' + JSON.st
   assert.equal(checkoutTargetCommit(stepCodeWork, { commit: goodDeliveryHead }), goodDeliveryHead);
 });
 
-test('agent-plan checks the requested commit before resolving a device and uses the selected verifier tier', t => {
+test('both workflows resolve an explicit device at entry and reuse its group for acceptance', () => {
+  for (const [name, condition, next, hold] of [
+    ['dickda', '=inputs.device != ""', 'lane', 'accept-hold'],
+    ['dickda-verify', '=inputs.ui = true and inputs.device != ""', 'preflight-done', 'device-hold'],
+  ]) {
+    const { xml, routes } = workflowGraph(name);
+    assert.deepEqual(routes('start'), { 'preflight-gate': 'always' });
+    assert.match(xml, /<exclusiveGateway id="preflight-gate"[^>]* default="skip-preflight"/);
+    assert.deepEqual(routes('preflight-gate'), { 'device-resolve': condition, [next]: 'always' });
+    assert.equal(xml.match(/calledElement="resolve-testbed"/g).length, 1);
+    assert.match(xml, /<callActivity id="device-resolve"[^>]* calledElement="resolve-testbed">\s*<extensionElements>\s*<coda:param name="device" value="=inputs.device" \/>/);
+    assert.deepEqual(routes('device-resolve'), { [next]: 'always' });
+    assert.match(xml, new RegExp(`<serviceTask id="${hold}"[^>]*coda:action="hold-group"[^>]*>\\s*<extensionElements>\\s*<coda:param name="group" value="=device-resolve\\.group"`));
+  }
+  const develop = workflowGraph('dickda');
+  assert.deepEqual(develop.routes('lane'), { hold: 'always' });
+  assert.deepEqual(develop.routes('accept-device-gate'), { 'accept-hold': '=inputs.device != ""', preview: 'always' });
+  const verify = workflowGraph('dickda-verify');
+  assert.deepEqual(verify.routes('preflight-done'), { 'tracks-fork': 'always' });
+  assert.deepEqual(verify.routes('tracks-fork'), { 'code-verify': 'always', 'agent-gate': 'always' });
+});
+
+test('agent-plan checks the requested commit before holding a device and uses the selected verifier tier', t => {
   const { xml, routes } = workflowGraph('dickda-verify');
   assert.deepEqual(routes('agent-sub-start'), { 'agent-plan': 'always' });
   assert.deepEqual(routes('agent-plan'), { 'specs-gate': 'always' });
   assert.deepEqual(routes('specs-gate'), { 'device-gate': '=agent-plan.needed = true', 'agent-sub-end': 'always' });
-  assert.deepEqual(routes('device-gate'), { 'device-resolve': '=inputs.device != ""', 'agent-verify': 'always' });
-  assert.deepEqual(routes('device-resolve'), { 'device-hold': 'always' });
+  assert.deepEqual(routes('device-gate'), { 'device-hold': '=inputs.device != ""', 'agent-verify': 'always' });
   assert.deepEqual(routes('device-hold'), { 'agent-verify': 'always' });
-  const dual = workflowGraph('dickda-develop').xml.match(/<callActivity id="dual-verify"[\s\S]*?<\/callActivity>/)[0];
+  const dual = workflowGraph('dickda').xml.match(/<callActivity id="dual-verify"[\s\S]*?<\/callActivity>/)[0];
   for (const [input, key] of [['verifier', 'VERIFIER'], ['verifierSenior', 'VERIFIER_SENIOR']]) {
     assert.match(xml, new RegExp(`<coda:input name="${input}"[^>]*type="agent"`));
     assert.ok(xml.includes(`<coda:env name="${key}" value="=inputs.${input}"`));
@@ -716,7 +739,7 @@ test('prose refinement writes custom learning documents and rejects invalid file
 });
 
 test('development workflow routes both plan decisions, milestones, dual failures and adjudicated reviews', () => {
-  const { xml, routes, card } = workflowGraph('dickda-develop');
+  const { xml, routes, card } = workflowGraph('dickda');
   assert.deepEqual(routes('think-gate'), {
     'lead-plan': '=inputs.fast = true', 'plan-present': '=inputs.fast = false and seed.hasPlan = true', think: 'always',
   });
@@ -758,6 +781,14 @@ test('development workflow routes both plan decisions, milestones, dual failures
   assert.equal(routes('verified-gate')['lead-plan'], '=verified-check.route = "lead"');
   assert.match(card('approve'), /approval-check.summary/);
 });
+
+for (const [script, step] of [[developScript, 'lane'], [refineScript, 'collect']]) {
+  test(`${step} rejects a non-default base before fetching it or writing workflow state`, t => {
+    const { run, artifacts } = workflowFixture(t, script);
+    assert.deepEqual(run(step, { BASE: 'release' }, /仅允许以仓库默认分支 main 作为目标分支.*release/), {});
+    assert.ok(!existsSync(join(artifacts, script === developScript ? 'develop.json' : 'refine.json')));
+  });
+}
 
 test('remote-only starting branch supplies the original task and a bounded preview of every plan layer', t => {
   const { work, origin, dir, git, commit, run, state } = workflowFixture(t);
@@ -1100,7 +1131,7 @@ process.exit(done.status);
   assert.equal(attempt(refine, 'collect', 'push', 1, 'Connection reset by peer'), 2);
 });
 
-test('full dickda-develop lifecycle persists investigation archive onto delivery branch across ephemeral step worktrees', t => {
+test('full dickda lifecycle persists investigation archive onto delivery branch across ephemeral step worktrees', t => {
   const { dir, origin, env, git, ghCallsFile, run: runIsolatedStep } = workflowFixture(t);
 
   const fakeCodaAgent = join(dir, 'bin/coda-agent');
@@ -1353,7 +1384,7 @@ if (prompt.includes('Refine 归档复盘输入')) {
 function refineFixture(t, broken = false) {
   const fixture = workflowFixture(t, refineScript);
   const { work, git, commit, env, run, state } = fixture;
-  env.CODA_PLUGIN_SETTINGS = JSON.stringify({ 'dickda-develop.mergeMethod': 'squash' });
+  env.CODA_PLUGIN_SETTINGS = JSON.stringify({ 'dickda.mergeMethod': 'squash' });
   init(work);
   writeFileSync(join(work, '.dickda/lints/healthy.sh'), 'test ! -e broken\n');
   if (broken) writeFileSync(join(work, 'broken'), 'failed check\n');
@@ -1391,11 +1422,11 @@ test('refine routes hook failures, incomplete reviews, human decisions and confl
   assert.deepEqual(routes('help-choice'), { 'continue-repair': '=repair-help.chose.continue', 'record-stop': 'always' });
   assert.deepEqual(routes('checks'), { 'prepare-review': 'always' });
   // An agent parameter takes a FEEL context. Script outputs alone can only supply text.
-  for (const [name, step] of [['dickda-refine', 'prepare-review'], ['dickda-develop', 'prepare-verify']]) {
+  for (const [name, step] of [['dickda-refine', 'prepare-review'], ['dickda', 'prepare-verify']]) {
     const binding = workflowGraph(name).xml.match(/<coda:param name="reviewer" value='([^']+)'/)[1];
     assert.ok(binding.includes(`${step}.tier = "senior"`));
-    assert.ok(binding.includes('then inputs.verifierSenior else vars.dickda-develop.verifierSenior'));
-    assert.ok(binding.includes('then inputs.verifier else vars.dickda-develop.verifierStandard'));
+    assert.ok(binding.includes('then inputs.verifierSenior else vars.dickda.verifierSenior'));
+    assert.ok(binding.includes('then inputs.verifier else vars.dickda.verifierStandard'));
   }
   assert.deepEqual(routes('review-error'), { 'review-retry': 'always' });
   assert.deepEqual(routes('review-gate'), { deliver: '=reviewed.route = "pr"', adjudicate: '=reviewed.route = "changes"', 'review-retry': 'always' });
@@ -1559,7 +1590,7 @@ test('refine binds review, kept rationale and user approval to the head, revalid
     [repaired, resolved].map(head => ['--squash', '--match-head-commit', head, '--delete-branch']));
 });
 
-test('custom prompts, sidebar panel, and interactive HTML dashboard work cohesively', t => {
+test('custom prompts and interactive HTML dashboard work cohesively', t => {
   const { work, env, dir } = createGitRepo(t);
   init(work);
 
@@ -1569,14 +1600,6 @@ test('custom prompts, sidebar panel, and interactive HTML dashboard work cohesiv
   enablePrompt(work, 'team-arch', true);
   assert.ok(prompts(work).find(p => p.id === 'team-arch')?.enabled);
   assert.match(renderPrompt(builtinPrompts()[0], 'correctness'), /crash early/i);
-
-  const overview = panel(env.CODA_PLUGIN_STATE, { view: 'overview' });
-  assert.ok(overview.items.some(c => c.title.includes('跨项目五层健康度')));
-  const rolesView = panel(env.CODA_PLUGIN_STATE, { view: 'roles' });
-  assert.match(JSON.stringify(rolesView), /claude-opus-5-5/);
-  writeFileSync(join(env.CODA_PLUGIN_STATE, 'view.json'), JSON.stringify({ view: 'project', key: '0'.repeat(64), kind: 'lints' }));
-  const recovered = readPanel(env.CODA_PLUGIN_STATE);
-  assert.ok(recovered.items.length >= 2);
 
   const htmlPath = join(dir, 'console.html');
   const cliOut = execFileSync(process.execPath, [cliScript, 'dashboard', '--root', work, '--output', htmlPath], { env, encoding: 'utf8' });

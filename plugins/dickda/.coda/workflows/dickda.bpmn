@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:coda="https://coda.pub/schema/bpmn/1.0"
-  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="dickda-develop-definitions" targetNamespace="https://coda.pub/plugins/dickda-develop">
-  <process id="dickda-develop" name="Dickda 五层开发" isExecutable="true" coda:title='{{if inputs.title = "" then "Dickda 五层开发" else "Dickda：" + inputs.title}}'>
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="dickda-definitions" targetNamespace="https://coda.pub/plugins/dickda">
+  <process id="dickda" name="dickda模式" isExecutable="true" coda:title='{{if inputs.title = "" then "dickda模式" else "dickda模式：" + inputs.title}}'>
     <extensionElements>
-      <coda:join hook="develop" name="Dickda 五层开发" detail="思考者定五层方案，主控并发调度架构/实现/验证（两级升级）闭环交付" />
+      <coda:join hook="develop" name="dickda模式" detail="思考者定五层方案，主控并发调度架构/实现/验证（两级升级）闭环交付" />
       <coda:input name="title" label="需求标题" type="string" default="" description="PR 标题；留空时由交互者在首张任务填写或取需求首行" />
       <coda:input name="branch" label="起始分支" type="branch" defaultFrom="session.branch" description="从此分支已提交内容拉出需求分支；留空从目标分支开始" />
-      <coda:input name="base" label="目标分支" type="string" default="" description="留空使用仓库默认分支" />
+      <coda:input name="base" label="目标分支" type="string" default="" description="仅允许仓库默认分支，留空自动读取" />
       <coda:input name="fast" label="快速通道" type="boolean" default="false" description="小修或文档改动可开启，跳过思考者独立规划步骤直接交执行主控" />
       <coda:input name="devices" label="设备人工验收" type="boolean" default="false" description="交付前是否增加客户端/真机人工验收环节" />
-      <coda:input name="device" label="验收设备" type="string" default="" description="测试设备名称；在实证验收与设备验收阶段独占该设备" />
+      <coda:input name="device" label="验收设备" type="string" default="" description="填写后在开工前用 testbed 预检设备，仅在实证或人工验收时占用" />
       <coda:input name="thinker" label="思考者覆盖" type="agent" description="留空采用插件设置（默认 carbon-high）" />
       <coda:input name="lead" label="执行主控覆盖" type="agent" description="留空采用插件设置（默认 neon-xhigh）" />
       <coda:input name="architect" label="架构（常规）覆盖" type="agent" description="留空采用插件设置（默认 antigravity claude-opus-5-5 high）" />
@@ -21,7 +21,19 @@
     </extensionElements>
 
     <startEvent id="start" />
-    <sequenceFlow id="start-lane" sourceRef="start" targetRef="lane" />
+    <sequenceFlow id="start-preflight" sourceRef="start" targetRef="preflight-gate" />
+    <exclusiveGateway id="preflight-gate" name="是否预检验收设备" default="skip-preflight" />
+    <sequenceFlow id="preflight-needed" sourceRef="preflight-gate" targetRef="device-resolve">
+      <conditionExpression xsi:type="tFormalExpression">=inputs.device != ""</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="skip-preflight" sourceRef="preflight-gate" targetRef="lane" />
+
+    <callActivity id="device-resolve" name="通过 testbed 预检验收设备" calledElement="resolve-testbed">
+      <extensionElements>
+        <coda:param name="device" value="=inputs.device" />
+      </extensionElements>
+    </callActivity>
+    <sequenceFlow id="device-resolved" sourceRef="device-resolve" targetRef="lane" />
 
     <scriptTask id="lane" name="准备需求分支" scriptFormat="bash" coda:timeout="5" coda:retry="2">
       <extensionElements>
@@ -55,7 +67,7 @@
     <sequenceFlow id="to-seed" sourceRef="brief-gate" targetRef="seed" />
 
     <userTask id="brief" name="交互者写入需求原文" coda:noteLabel="第一行写需求标题，换行写完整需求与边界">
-      <documentation>本会话已启动 Dickda 五层开发（需求分支 {{lane.reqBranch}} → {{lane.base}}）。
+      <documentation>本会话已启动 dickda模式（需求分支 {{lane.reqBranch}} → {{lane.base}}）。
 你是顶层交互者（Neon）：请将与用户对齐后的需求写入备注（第一行标题，第二行起为完整需求与验收边界）。
 {{if brief-parse.feedback = null then "" else brief-parse.feedback}}</documentation>
       <extensionElements>
@@ -380,8 +392,8 @@
         <coda:param name="head" value="=prepare-verify.head" />
         <coda:param name="task" value="=prepare-verify.task" />
         <coda:param name="reviewer" value='=if prepare-verify.tier = "senior"
-          then (if inputs.verifierSenior != null then inputs.verifierSenior else vars.dickda-develop.verifierSenior)
-          else (if inputs.verifier != null then inputs.verifier else vars.dickda-develop.verifierStandard)' />
+          then (if inputs.verifierSenior != null then inputs.verifierSenior else vars.dickda.verifierSenior)
+          else (if inputs.verifier != null then inputs.verifier else vars.dickda.verifierStandard)' />
         <coda:param name="evidence" value="=prepare-verify.evidence" />
         <coda:param name="focus" value="请对照 .dickda/tasks/TODO_TASK.md、PLAN_5L.md、.dickda/lints 与 .dickda/verifiers 审查真实可达缺陷与契约一致性。" />
       </extensionElements>
@@ -490,21 +502,14 @@
       <sequenceFlow id="accept-start-gate" sourceRef="accept-start" targetRef="accept-device-gate" />
 
       <exclusiveGateway id="accept-device-gate" name="是否占设备" default="accept-preview" />
-      <sequenceFlow id="accept-hold-flow" sourceRef="accept-device-gate" targetRef="accept-resolve">
+      <sequenceFlow id="accept-hold-flow" sourceRef="accept-device-gate" targetRef="accept-hold">
         <conditionExpression xsi:type="tFormalExpression">=inputs.device != ""</conditionExpression>
       </sequenceFlow>
       <sequenceFlow id="accept-preview" sourceRef="accept-device-gate" targetRef="preview" />
 
-      <callActivity id="accept-resolve" name="解析测试设备" calledElement="resolve-testbed">
-        <extensionElements>
-          <coda:param name="device" value="=inputs.device" />
-        </extensionElements>
-      </callActivity>
-      <sequenceFlow id="accept-resolved" sourceRef="accept-resolve" targetRef="accept-hold" />
-
       <serviceTask id="accept-hold" name="占用测试设备" coda:action="hold-group">
         <extensionElements>
-          <coda:param name="group" value="=accept-resolve.group" />
+          <coda:param name="group" value="=device-resolve.group" />
           <coda:param name="capacity" value="1" />
         </extensionElements>
       </serviceTask>

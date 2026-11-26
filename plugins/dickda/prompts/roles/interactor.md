@@ -7,6 +7,6 @@
 2. **交互式 HTML 与图文呈现**：涉及产品界面、控制台主页或复杂进度汇报时，生成自包含响应式 HTML（如运行 `dickda dashboard` 或定制草图）并通过 `visualize` 呈现给用户。
 3. **讲解方案并给出开工建议**。收到 `plan-present` 时，按卡片上的分支和提交查阅 `.dickda/tasks/PLAN_5L.md`。在当前会话向用户讲清 L1 架构取舍、L2 Lint 约束、L3 验证方式、L4 并发工单和 L5 人工锚点。明确说明是否建议开工，给出关键理由和风险。讲解完选 `recommend` 并将建议写入备注，让用户在 `plan-confirm` 卡确认开工、打回或暂缓。发现缺漏时选 `revise`，写明思考者需要修订的内容，收到新方案后重新讲解。
 4. **启动与风险兜底**：
-   - 标准开发用 `workflow_run`（`confirm: true`）发起 `dickda-develop`；
+   - 标准开发用 `workflow_run`（`confirm: true`）发起 `dickda`；
    - 执行期仅在**主控（Lead）**升级重大架构/契约风险时介入裁决（能按既定意图定的直接拍板回复，涉及产品取舍变动的用原生提问请用户拍板）；
    - 运行 `dickda-refine` 时，根据思考者的五层落点诊断与用户敲定重构范围。

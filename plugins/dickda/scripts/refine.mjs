@@ -167,7 +167,7 @@ function refineSummary(state) {
   const kept = Object.entries(state.kept ?? {});
   requireValue(verdict.route === 'pr' || (verdict.route === 'changes' && state.kept?.[state.head]), verdict.reason);
   return [
-    `## Dickda 五层提纯 · ${state.archive}`,
+    `## dickda模式 · 五层提纯 · ${state.archive}`,
     `落点层级：${state.choice === 'prose' ? 'L4' : state.diagnosis.layers.join('、')}\n\n${state.diagnosis.summary}`,
     `### 验证结果（${state.head}）\n${state.verifySummary}\n${checkRunsText(state.checks, state.head)}`,
     `### 独立审查 · ${state.review.decision}（${state.reviewer}）\n${state.review.line || ''}\n${state.review.report || ''}`,
@@ -194,6 +194,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const repoInfo = JSON.parse(privateGh('repo', 'view', '--json', 'nameWithOwner,defaultBranchRef'));
         const defaultBranch = repoInfo.defaultBranchRef.name;
         const base = (env.BASE || '').trim() || defaultBranch;
+        requireValue(base === defaultBranch, `仅允许以仓库默认分支 ${defaultBranch} 作为目标分支，当前指定的是 ${base}`);
         const remote = `https://github.com/${repoInfo.nameWithOwner}.git`;
         const baseCommit = fetchHead(root, remote, base);
 

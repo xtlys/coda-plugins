@@ -6,7 +6,7 @@
 
 主控续跑会拿到需求分支当前 HEAD、相对上次视图的新提交与 `git diff --stat`，按提示同步到这个提交再决策。派工时若提供了里程碑且有主会话，流程通过 `tell-session` 按运行与轮次同步一次。
 
-`dickda-develop` 中的执行主控（`lead`）每轮输出结构化决策 JSON，支持三种核心动作：
+`dickda` 中的执行主控（`lead`）每轮输出结构化决策 JSON，支持三种核心动作：
 
 - **`dispatch`（并发派发 1..N 个工单）**：
   - 每个工单包含 `id`、`trade`（`architect | builder | verifier`）、`difficulty`（`normal | hard`）、可选 `tier`（`standard | senior`）、`title`、`task`、`lockSpec`（`builder` 默认 `true`，禁止修改 `.dickda/lints` 与已锁定 `.dickda/verifiers`）。
@@ -31,7 +31,7 @@
 
 ## 4. 双轨验证与设备
 
-`dickda-verify` 对同一提交并行运行代码轨与可选 Agent/UI 轨。启用 UI 时先检出该 SHA，递归检查 `.dickda/verifiers/`。只有发现 Agent/UI 规约且填写了设备，才执行 `resolve-testbed` 和 `hold-group`。有规约而未指定设备时直接验收。无规约时记录该提交的跳过结果。开发流程将 `verifier`、`verifierSenior` 透传到验证流程，当前运行的覆盖优先于插件设置。
+`dickda-verify` 对同一提交并行运行代码轨与可选 Agent/UI 轨。启用 UI 且指定设备时，在启动代码轨前调用 `resolve-testbed`。Agent/UI 轨检出该 SHA 并递归检查 `.dickda/verifiers/`，发现规约才用解析出的 `group` 调用 `hold-group` 占用指定设备。有规约而未指定设备时直接验收。无规约时记录该提交的跳过结果。开发流程将 `verifier`、`verifierSenior` 透传到验证流程，当前运行的覆盖优先于插件设置。
 
 ## 5. 提纯归档与合并
 

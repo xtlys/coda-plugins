@@ -348,6 +348,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const repoInfo = JSON.parse(gh('repo', 'view', '--json', 'nameWithOwner,defaultBranchRef'));
         const defaultBranch = repoInfo.defaultBranchRef.name;
         const base = (env.BASE || '').trim() || defaultBranch;
+        requireValue(base === defaultBranch, `仅允许以仓库默认分支 ${defaultBranch} 作为目标分支，当前指定的是 ${base}`);
         const remote = `https://github.com/${repoInfo.nameWithOwner}.git`;
         const baseCommit = fetchHead(remote, base);
 
@@ -928,10 +929,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       }
 
       default:
-        throw new Error(`未知 dickda-develop 步骤：${action}`);
+        throw new Error(`未知 dickda 步骤：${action}`);
     }
   } catch (error) {
-    console.error(`dickda-develop: ${error.message}`);
+    console.error(`dickda: ${error.message}`);
     process.exitCode = 1;
   }
 }

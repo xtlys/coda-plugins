@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:coda="https://coda.pub/schema/bpmn/1.0"
-  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="dickda-verify-definitions" targetNamespace="https://coda.pub/plugins/dickda-develop">
-  <process id="dickda-verify" name="Dickda 双轨验证" isExecutable="true" coda:title="Dickda 双轨验证">
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="dickda-verify-definitions" targetNamespace="https://coda.pub/plugins/dickda">
+  <process id="dickda-verify" name="dickda模式 · 双轨验证" isExecutable="true" coda:title="dickda模式 · 双轨验证">
     <extensionElements>
       <coda:input name="commit" label="待验证提交" type="string" default="" description="显式指定待验证的提交 SHA；留空使用本次运行的提交 (run.commit)" />
       <coda:input name="branch" label="待拉取分支" type="string" default="" description="可选：若待验证提交在远端需求分支上，先从 origin 拉取该分支" />
@@ -9,13 +9,27 @@
       <coda:input name="verifier" label="验证（常规）覆盖" type="agent" />
       <coda:input name="verifierSenior" label="验证（高级）覆盖" type="agent" />
       <coda:input name="ui" label="启用 Agent / UI 实证验收" type="boolean" default="true" description="是否调用验证工种（Sol）运行 .dickda/verifiers 中的实证与 UI 规约" />
-      <coda:input name="device" label="验收设备锁" type="string" default="" description="可选测试机名称；填写后在 Agent/UI 验收期间独占该设备" />
+      <coda:input name="device" label="验收设备" type="string" default="" description="启用 UI 且填写设备时，在双轨验证前用 testbed 预检，仅在执行 Agent/UI 规约时占用" />
       <coda:input name="task" label="任务说明" type="string" default="" description="本次需求与验收背景摘要" />
     </extensionElements>
 
     <startEvent id="start" />
-    <sequenceFlow id="start-fork" sourceRef="start" targetRef="tracks-fork" />
+    <sequenceFlow id="start-preflight" sourceRef="start" targetRef="preflight-gate" />
+    <exclusiveGateway id="preflight-gate" name="是否预检验收设备" default="skip-preflight" />
+    <sequenceFlow id="preflight-needed" sourceRef="preflight-gate" targetRef="device-resolve">
+      <conditionExpression xsi:type="tFormalExpression">=inputs.ui = true and inputs.device != ""</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="skip-preflight" sourceRef="preflight-gate" targetRef="preflight-done" />
 
+    <callActivity id="device-resolve" name="通过 testbed 预检验收设备" calledElement="resolve-testbed">
+      <extensionElements>
+        <coda:param name="device" value="=inputs.device" />
+      </extensionElements>
+    </callActivity>
+    <sequenceFlow id="device-resolved" sourceRef="device-resolve" targetRef="preflight-done" />
+
+    <exclusiveGateway id="preflight-done" />
+    <sequenceFlow id="preflight-to-fork" sourceRef="preflight-done" targetRef="tracks-fork" />
     <parallelGateway id="tracks-fork" name="并行双轨验证" />
     <sequenceFlow id="fork-to-code" sourceRef="tracks-fork" targetRef="code-verify" />
     <sequenceFlow id="fork-to-agent-gate" sourceRef="tracks-fork" targetRef="agent-gate" />
@@ -60,17 +74,10 @@
       <sequenceFlow id="no-specs" sourceRef="specs-gate" targetRef="agent-sub-end" />
 
       <exclusiveGateway id="device-gate" name="是否占用测试设备" default="device-skip" />
-      <sequenceFlow id="device-needed" sourceRef="device-gate" targetRef="device-resolve">
+      <sequenceFlow id="device-needed" sourceRef="device-gate" targetRef="device-hold">
         <conditionExpression xsi:type="tFormalExpression">=inputs.device != ""</conditionExpression>
       </sequenceFlow>
       <sequenceFlow id="device-skip" sourceRef="device-gate" targetRef="agent-verify" />
-
-      <callActivity id="device-resolve" name="解析验收设备" calledElement="resolve-testbed">
-        <extensionElements>
-          <coda:param name="device" value="=inputs.device" />
-        </extensionElements>
-      </callActivity>
-      <sequenceFlow id="device-resolved" sourceRef="device-resolve" targetRef="device-hold" />
 
       <serviceTask id="device-hold" name="独占验收设备" coda:action="hold-group" coda:status="等待设备 {{inputs.device}}">
         <extensionElements>

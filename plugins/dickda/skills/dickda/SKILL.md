@@ -1,9 +1,9 @@
 ---
-name: dickda-develop
-description: 采用 Dickda 五层倒金字塔开发工作流：以交互者-思考者-执行者（主控/架构/实现/验证，支持两级升级与并发派工）协同推进开发、双轨验证与 refine 五层重构，统一管理 .dickda 工程、测试与知识资产。
+name: dickda
+description: 采用 dickda模式，以交互者-思考者-执行者（主控/架构/实现/验证，支持两级升级与并发派工）协同推进开发、双轨验证与 refine 五层重构，统一管理 .dickda 工程、测试与知识资产。
 ---
 
-# Dickda 五层开发工作流
+# dickda模式工作流
 
 本插件以**五层倒金字塔（Codebase → Static Analysis → Verification → Prose → Human Review）**为核心，将所有项目配置、任务方案、可执行 Lint、结果导向 Verifier、知识库与经验归档统一收归仓库 **`.dickda/`** 目录管理。
 
@@ -42,10 +42,13 @@ description: 采用 Dickda 五层倒金字塔开发工作流：以交互者-思�
 
 ## 3. 标准工作流入口
 
-1. **需求开发与交付（`dickda-develop`）**。交互者对齐需求后，用 `workflow_run`（`workflow: "dickda-develop"`、`confirm: true`）发起流程。思考者提交 `PLAN_5L.md` 后默认暂停。交互者向用户讲解五层方案，说明是否建议开工及理由，用户点击「确认开工」后主控才开始派单。已有完整方案也需确认，显式选择 `fast` 才直接派工。
+`dickda` 和 `dickda-refine` 的目标分支 `base` 须为仓库默认分支，可留空自动读取。要从其他分支开始工作，填写 `branch`。用 `dickda dashboard` 生成自包含的 HTML 控制台，把返回的 `path` 交给 `visualize` 展示。
+
+1. **需求开发与交付（`dickda`）**。交互者对齐需求后，用 `workflow_run`（`workflow: "dickda"`、`confirm: true`）发起流程。思考者提交 `PLAN_5L.md` 后默认暂停。交互者向用户讲解五层方案，说明是否建议开工及理由，用户点击「确认开工」后主控才开始派单。已有完整方案也需确认，显式选择 `fast` 才直接派工。
+   - 填写 `device` 时，开工前先用 `resolve-testbed` 解析设备。项目需要提供 testbed 能力，设备名须可解析。
    - 主控续跑时根据最新提交、提交列表与差异统计恢复代码视图。派工里程碑通过 `tell-session` 同步到交互者会话。打回后重派或升级须带上 `previousHead` 和原因。
    - 每张工单写 `.dickda/tasks/logs/<jobId>.md`。交付前 `remember` 聚合日志、需求与方案到同一归档并提交，随后验证归档所在提交。终审要求修改时可派修，或对同一已验证提交逐条记录客观的不采纳依据，将原结论和依据交用户在批准卡裁决。
-2. **独立双轨验证（`dickda-verify`）**。代码轨运行 L2/L3 检查。启用 Agent/UI 轨时，先检出目标提交查找规约。无规约直接记录跳过，有规约且填写了设备才解析并独占设备。常规和高级验证者均支持本次流程覆盖。
+2. **独立双轨验证（`dickda-verify`）**。启用 Agent/UI 轨且填写了设备时，先解析设备，再并行启动两轨。代码轨运行 L2/L3 检查。Agent/UI 轨检出目标提交查找规约，只在执行规约时独占指定设备。无规约时记录跳过。常规和高级验证者均支持本次流程覆盖。
 3. **归档提纯（`dickda-refine`）**。思考者诊断最早的归档，交互者选择 L1–L4 重构、仅更新 L4 或保留归档。工程师提交后运行代码验证、项目检查和独立审查。检查失败退回修复，审查未完成可重试或停止。要求修改由交互者派修或写明不采纳依据。私有 PR 通过合并前和 GitHub 检查后，用户批准固定提交合入默认分支。冲突解开后重新检查、审查和批准，暂不合并则保留 PR 与原归档。
 
 详见 [五层方案规范](references/blueprint.md) 与 [工作流编排说明](references/workflows.md)。

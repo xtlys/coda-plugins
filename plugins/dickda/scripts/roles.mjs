@@ -7,17 +7,17 @@ export const TRADES = ['architect', 'builder', 'verifier'];
 export const TIERS = ['standard', 'senior'];
 
 export const DEFAULT_SETTINGS = {
-  'dickda-develop.interactor': { agent: 'antigravity', model: 'gemini-4-neon', effort: 'xhigh' },
-  'dickda-develop.thinker': { agent: 'antigravity', model: 'gemini-4-carbon', effort: 'high' },
-  'dickda-develop.lead': { agent: 'antigravity', model: 'gemini-4-neon', effort: 'xhigh' },
-  'dickda-develop.architectStandard': { agent: 'antigravity', model: 'claude-opus-5-5', effort: 'high' },
-  'dickda-develop.architectSenior': { agent: 'antigravity', model: 'gemini-4-carbon', effort: 'high' },
-  'dickda-develop.builderStandard': { agent: 'codex', model: 'gpt-6.2-astra', effort: 'high' },
-  'dickda-develop.builderSenior': { agent: 'codex', model: 'gpt-6.2-astra', effort: 'max' },
-  'dickda-develop.verifierStandard': { agent: 'codex', model: 'gpt-6.1-sol', effort: 'high' },
-  'dickda-develop.verifierSenior': { agent: 'codex', model: 'gpt-6.1-sol', effort: 'max' },
-  'dickda-develop.escalationThreshold': 2,
-  'dickda-develop.mergeMethod': 'merge',
+  'dickda.interactor': { agent: 'antigravity', model: 'gemini-4-neon', effort: 'xhigh' },
+  'dickda.thinker': { agent: 'antigravity', model: 'gemini-4-carbon', effort: 'high' },
+  'dickda.lead': { agent: 'antigravity', model: 'gemini-4-neon', effort: 'xhigh' },
+  'dickda.architectStandard': { agent: 'antigravity', model: 'claude-opus-5-5', effort: 'high' },
+  'dickda.architectSenior': { agent: 'antigravity', model: 'gemini-4-carbon', effort: 'high' },
+  'dickda.builderStandard': { agent: 'codex', model: 'gpt-6.2-astra', effort: 'high' },
+  'dickda.builderSenior': { agent: 'codex', model: 'gpt-6.2-astra', effort: 'max' },
+  'dickda.verifierStandard': { agent: 'codex', model: 'gpt-6.1-sol', effort: 'high' },
+  'dickda.verifierSenior': { agent: 'codex', model: 'gpt-6.1-sol', effort: 'max' },
+  'dickda.escalationThreshold': 2,
+  'dickda.mergeMethod': 'merge',
 };
 
 export const ROLE_LABELS = {
@@ -47,25 +47,25 @@ export function loadSettings(rawEnv = process.env.CODA_PLUGIN_SETTINGS, override
   for (const [k, v] of Object.entries(overrides)) {
     if (v !== undefined && v !== null && v !== '') merged[k] = v;
   }
-  const threshold = Number(merged['dickda-develop.escalationThreshold']);
+  const threshold = Number(merged['dickda.escalationThreshold']);
   requireValue(Number.isInteger(threshold) && threshold >= 1 && threshold <= 5, 'escalationThreshold 须为 1–5 的整数');
-  const mergeMethod = merged['dickda-develop.mergeMethod'];
+  const mergeMethod = merged['dickda.mergeMethod'];
   requireValue(['merge', 'squash', 'rebase'].includes(mergeMethod), 'mergeMethod 须为 merge、squash 或 rebase');
   return {
-    interactor: validAgent(merged['dickda-develop.interactor'], 'interactor'),
-    thinker: validAgent(merged['dickda-develop.thinker'], 'thinker'),
-    lead: validAgent(merged['dickda-develop.lead'], 'lead'),
+    interactor: validAgent(merged['dickda.interactor'], 'interactor'),
+    thinker: validAgent(merged['dickda.thinker'], 'thinker'),
+    lead: validAgent(merged['dickda.lead'], 'lead'),
     architect: {
-      standard: validAgent(merged['dickda-develop.architectStandard'], 'architectStandard'),
-      senior: validAgent(merged['dickda-develop.architectSenior'], 'architectSenior'),
+      standard: validAgent(merged['dickda.architectStandard'], 'architectStandard'),
+      senior: validAgent(merged['dickda.architectSenior'], 'architectSenior'),
     },
     builder: {
-      standard: validAgent(merged['dickda-develop.builderStandard'], 'builderStandard'),
-      senior: validAgent(merged['dickda-develop.builderSenior'], 'builderSenior'),
+      standard: validAgent(merged['dickda.builderStandard'], 'builderStandard'),
+      senior: validAgent(merged['dickda.builderSenior'], 'builderSenior'),
     },
     verifier: {
-      standard: validAgent(merged['dickda-develop.verifierStandard'], 'verifierStandard'),
-      senior: validAgent(merged['dickda-develop.verifierSenior'], 'verifierSenior'),
+      standard: validAgent(merged['dickda.verifierStandard'], 'verifierStandard'),
+      senior: validAgent(merged['dickda.verifierSenior'], 'verifierSenior'),
     },
     escalationThreshold: threshold,
     mergeMethod,
@@ -80,14 +80,14 @@ function parseOverrideAgent(raw) {
 
 export function effectiveSettings(env = process.env) {
   return loadSettings(env.CODA_PLUGIN_SETTINGS, {
-    'dickda-develop.thinker': parseOverrideAgent(env.THINKER),
-    'dickda-develop.lead': parseOverrideAgent(env.LEAD),
-    'dickda-develop.architectStandard': parseOverrideAgent(env.ARCHITECT),
-    'dickda-develop.architectSenior': parseOverrideAgent(env.ARCHITECT_SENIOR),
-    'dickda-develop.builderStandard': parseOverrideAgent(env.BUILDER),
-    'dickda-develop.builderSenior': parseOverrideAgent(env.BUILDER_SENIOR),
-    'dickda-develop.verifierStandard': parseOverrideAgent(env.VERIFIER),
-    'dickda-develop.verifierSenior': parseOverrideAgent(env.VERIFIER_SENIOR),
+    'dickda.thinker': parseOverrideAgent(env.THINKER),
+    'dickda.lead': parseOverrideAgent(env.LEAD),
+    'dickda.architectStandard': parseOverrideAgent(env.ARCHITECT),
+    'dickda.architectSenior': parseOverrideAgent(env.ARCHITECT_SENIOR),
+    'dickda.builderStandard': parseOverrideAgent(env.BUILDER),
+    'dickda.builderSenior': parseOverrideAgent(env.BUILDER_SENIOR),
+    'dickda.verifierStandard': parseOverrideAgent(env.VERIFIER),
+    'dickda.verifierSenior': parseOverrideAgent(env.VERIFIER_SENIOR),
   });
 }
 

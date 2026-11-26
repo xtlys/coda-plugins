@@ -7,7 +7,6 @@ import { fileURLToPath } from 'node:url';
 export const plugin = fileURLToPath(new URL('..', import.meta.url));
 export const base = '.dickda';
 export const hash = value => createHash('sha256').update(value).digest('hex');
-export const now = () => new Date().toISOString();
 export function requireValue(ok, message) { if (!ok) throw new Error(message); }
 
 export function text(value, field, max = 20000) {
@@ -113,14 +112,6 @@ export function projectGroup(root) {
   return `dickda:${hash(commonDir)}`;
 }
 
-export function register(root) {
-  if (!process.env.CODA_PLUGIN_STATE) return;
-  const cfg = config(root);
-  save(join(process.env.CODA_PLUGIN_STATE, 'projects', `${hash(root)}.json`), {
-    root, projectId: cfg.projectId, name: cfg.name, registeredAt: now(),
-  });
-}
-
 export const INVESTIGATE_MARKER = '# !!!DICKDA_INVESTIGATE!!!\n';
 export const DEFAULT_PLAN = '# 五层技术方案\n\n## L1 · Codebase\n\n## L2 · Static Analysis\n\n## L3 · Verification\n\n## L4 · Work Graph & Prose\n\n## L5 · Human Review\n';
 
@@ -171,7 +162,6 @@ export function init(root) {
     }
   }
 
-  register(root);
   return config(root);
 }
 

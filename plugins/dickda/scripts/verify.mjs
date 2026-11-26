@@ -116,7 +116,7 @@ export function runAgentVerifiers(root, { tier, difficulty = 'normal', rejection
   try {
     const args = [
       ...(commit ? ['--commit', commit] : []),
-      '--title', `Dickda 实证验收（${resolved.tier}）`,
+      '--title', `dickda模式 · 实证验收（${resolved.tier}）`,
       ...agentArgs(resolved.agent),
       '--json',
       '--prompt-file', promptFile,
@@ -198,7 +198,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         findings: JSON.stringify(agentRes.findings ?? []),
       });
       if (process.env.GITHUB_STEP_SUMMARY) {
-        writeFileSync(process.env.GITHUB_STEP_SUMMARY, `## Dickda 双轨验证（${codeRes.commit.slice(0, 12)}）：${passed ? '通过' : '未通过'}\n\n${report}\n`, { flag: 'a' });
+        writeFileSync(process.env.GITHUB_STEP_SUMMARY, `## dickda模式 · 双轨验证（${codeRes.commit.slice(0, 12)}）：${passed ? '通过' : '未通过'}\n\n${report}\n`, { flag: 'a' });
       }
     } else {
       throw new Error(`未知 verify 动作：${action}`);

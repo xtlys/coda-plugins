@@ -40,7 +40,7 @@ export function renderDashboardHtml(data) {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>${escapeHtml(data.project.name)} · Dickda 五层工程控制台</title>
+<title>${escapeHtml(data.project.name)} · dickda模式 · 五层工程控制台</title>
 <style>
   :root {
     --bg: #0f172a;

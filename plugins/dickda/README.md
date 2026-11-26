@@ -1,6 +1,8 @@
-# Dickda 五层开发（`dickda-develop`）
+# dickda模式（`dickda`）
 
 以五层倒金字塔（**Codebase → Static Analysis → Verification → Prose → Human Review**）为核心的 Coda 多 Agent 工程插件：采用**交互者-思考者-执行者（主控 / 架构 / 实现 / 验证四工种，支持两级难度升级与并发派工）**架构，并将项目全部配置、任务方案、可执行规约、测试验证器与知识经验统一收归 **`.dickda/`** 目录管理。
+
+从旧插件切换时，先记下自定义设置，在项目中停用旧插件并启用 `dickda`。仓库里的 `.dickda/` 资产可直接复用。在原设置生效的范围内，把自定义值填入新插件的对应项，例如交互者用 `dickda.interactor`，合并方式用 `dickda.mergeMethod`。各项只更换键前缀，值的格式相同。
 
 ## 1. 三角色 · 四工种体系
 
@@ -36,9 +38,11 @@ flowchart TD
     P -->|"用户批准合并"| F["默认分支保留归档，供 dickda-refine 提纯"]
 ```
 
-- **`dickda-develop`** 加入 `hook="develop"`。常规流程复用已有五层方案时也会暂停讲解和确认。显式选择 `fast` 可直接派工。主控续跑时收到当前提交、相对上轮的提交与改动统计，以及同步工作树的命令。终审要求修改时，主控可重派工单，或对同一已验证提交逐条给出客观依据。PR 和批准卡同时展示原结论与依据，交用户裁决。
-- **`dickda-verify`** 并行检查同一提交。代码轨运行 L2 Lint 和 L3 脚本。启用 UI 轨时先检出该提交，只有发现 Agent/UI 规约且指定设备才解析并占锁。没有规约会记录跳过，有规约且未指定设备则直接验收。`verifier` 和 `verifierSenior` 可覆盖插件设置。
+- **`dickda`** 加入 `hook="develop"`。显式填写 `device` 时，流程先调用 `resolve-testbed`，设备解析成功才创建需求分支。常规流程复用已有五层方案时也会暂停讲解和确认。显式选择 `fast` 可直接派工。主控续跑时收到当前提交、相对上轮的提交与改动统计，以及同步工作树的命令。终审要求修改时，主控可重派工单，或对同一已验证提交逐条给出客观依据。PR 和批准卡同时展示原结论与依据，交用户裁决。
+- **`dickda-verify`** 在启用 UI 轨且指定设备时先调用 `resolve-testbed`，成功后才并行检查同一提交。代码轨运行 L2 Lint 和 L3 脚本。UI 轨检出该提交，有 Agent/UI 规约时才占用指定设备并验收，未指定设备可直接验收。没有规约会记录跳过。`verifier` 和 `verifierSenior` 可覆盖插件设置。
 - **`dickda-refine`** 从最早的未消费归档开始，由思考者诊断、交互者选择落点。工程师提交后运行代码验证和项目检查，再做独立审查。审查未完成可重试或停止，要求修改可派修或写明不采纳依据。私有 PR 通过合并前和 GitHub 检查后，用户批准该提交合入默认分支，归档才在主干完成消费。冲突会退回同步、修复、重验和重新批准。「暂不合并」保留 PR、分支与主干归档。
+
+`dickda` 和 `dickda-refine` 只接受仓库默认分支作为 `base`，留空时自动读取。可用 `branch` 指定工作的起始分支。
 
 ## 3. `.dickda/` 统一资产目录
 
@@ -68,14 +72,16 @@ dickda role list
 dickda role resolve builder --rejections 2
 dickda lint
 dickda verify --track code
-dickda dashboard --output /tmp/dickda-console.html
+dickda dashboard
 ```
+
+`dickda dashboard` 生成自包含的交互式 HTML 控制台。用返回的 `path` 在 Coda 会话中通过 `visualize` 展示。
 
 开发自检：
 
 ```sh
-node bin/check.mjs plugins/dickda-develop
-node --test test/plugins/dickda-develop.test.mjs
+node bin/check.mjs plugins/dickda
+node --test test/plugins/dickda.test.mjs
 ```
 
 内置通用与 C++ 规范片段遵循 Apache-2.0，归因详见 [NOTICE](NOTICE)。

@@ -5,7 +5,7 @@ import { assetsByKind, backups, layerHealth, remember, runLints } from './assets
 import { writeDashboard } from './dashboard.mjs';
 import { enablePrompt, promptTemplate, prompts, putPrompt, renderPrompt } from './prompts.mjs';
 import { listRoles, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
-import { config, init, json, lock, register, repo, requireValue } from './store.mjs';
+import { config, init, json, lock, repo, requireValue } from './store.mjs';
 import { runAgentVerifiers, runCodeVerifiers } from './verify.mjs';
 
 const HELP = `dickda init [--root <目录>]
@@ -50,7 +50,6 @@ try {
       output = { root, ...init(root) };
     } else {
       config(root);
-      register(root);
       if (p[0] === 'status') {
         output = { root, ...layerHealth(root), roles: listRoles(settings) };
       } else if (p[0] === 'lint') {
