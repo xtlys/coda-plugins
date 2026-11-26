@@ -100,6 +100,7 @@ export function enrichDispatchBatch(rawJobs, ledger = {}, settings = loadSetting
       previousHead: prev.lastRejectedHead ?? null,
       previousRef: prev.lastRejectedRef ?? null,
       previousFeedback: prev.lastFeedback ?? '',
+      ...(job.trade === 'verifier' && prev.openMusts?.length ? { openMusts: prev.openMusts } : {}),
     };
   });
 }
@@ -112,6 +113,7 @@ export function evaluateVerifierAnswer(answerText = '') {
       passed: false,
       summary: '',
       findings: [],
+      resolved: [],
       error: '验证工程师未输出含布尔值 passed 的结构化 JSON 结论',
     };
   }
@@ -124,6 +126,7 @@ export function evaluateVerifierAnswer(answerText = '') {
     passed,
     summary,
     findings,
+    resolved: Array.isArray(verdict.resolved) ? verdict.resolved.filter(id => typeof id === 'string' && id.trim()) : [],
     ...(passed ? {} : { error: summary || (hasMust ? '验证发现必须修（must）缺陷' : '验证结论为未通过（passed=false）') }),
   };
 }
@@ -144,35 +147,39 @@ export function integrateWorkerResults(cwd, baseTip, workerResults, ledger = {},
       ...(w.previousHead ? { lastRejectedHead: w.previousHead, lastRejectedRef: w.previousRef } : {}),
     };
     if (w.trade === 'verifier') {
-      const passed = w.status === 'succeeded' && w.passed === true;
-      if (w.status === 'rejected' || passed) {
-        const previous = [...(entry.openMusts ?? [])];
-        entry.openMusts = [];
-        for (const f of w.findings ?? []) {
-          const finding = { ...f, sourceJob: w.id, verifier: w.agentSummary };
-          if (finding.level === 'must') {
-            finding.title ||= finding.detail || '未命名的必须修缺陷';
-            const index = previous.findIndex(item => item.title === finding.title && item.detail === finding.detail);
-            if (index >= 0) {
-              finding.id = previous.splice(index, 1)[0].id;
-            } else {
-              entry.mustCount = (entry.mustCount ?? 0) + 1;
-              finding.id = `${w.id}#${entry.mustCount}`;
-            }
-            entry.openMusts.push({ id: finding.id, title: finding.title, detail: finding.detail });
-          }
-          findings.push(finding);
-        }
-      } else {
-        entry.openMusts ??= [];
+      if (w.replaces && !entry.openMusts) {
+        const original = ledger[w.replaces];
+        entry.openMusts = original.openMusts;
+        original.openMusts = [];
       }
-      if (passed && !entry.openMusts.length) {
+      const resolved = w.status === 'rejected' ? w.resolved ?? [] : [];
+      const unresolvedMusts = (entry.openMusts ?? []).filter(f => !resolved.includes(f.id));
+      const reportedMusts = new Set();
+      for (const f of w.findings ?? []) {
+        const finding = { ...f, sourceJob: w.id, verifier: w.agentSummary };
+        if (finding.level === 'must') {
+          finding.title ||= finding.detail || '未命名的必须修缺陷';
+          let must = unresolvedMusts.find(item => item.id === finding.id)
+            ?? unresolvedMusts.find(item => item.title === finding.title && item.detail === finding.detail);
+          if (!must) {
+            entry.mustCount = (entry.mustCount ?? 0) + 1;
+            must = { id: `${w.id}#${entry.mustCount}`, title: finding.title, detail: finding.detail };
+            unresolvedMusts.push(must);
+          }
+          finding.id = must.id;
+          reportedMusts.add(must);
+        }
+        findings.push(finding);
+      }
+      if (w.status === 'succeeded' && w.passed === true && !reportedMusts.size) {
+        entry.openMusts = [];
         entry.status = 'verified';
         entry.tier = w.tier;
         entry.agentSummary = w.agentSummary;
         entry.lastAnswer = w.summary ?? '';
         entry.lastFeedback = '';
       } else {
+        entry.openMusts = [...reportedMusts, ...unresolvedMusts.filter(f => !reportedMusts.has(f))];
         entry.rejections = (entry.rejections ?? 0) + 1;
         entry.status = 'rejected';
         entry.lastFeedback = w.error || w.summary || '验证工单未通过或结论缺失';
@@ -585,10 +592,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         if (decision.action === 'dispatch') {
           const jobs = enrichDispatchBatch(decision.jobs, state.ledger, settings);
           // Bind a ticket-level ruling to the report it judged before a retry can change the findings.
-          const verifiers = new Map(jobs.filter(job => job.trade === 'verifier').map(job => [job.id, state.ledger[job.id]?.openMusts ?? []]));
+          const verifiers = new Set(jobs.filter(job => job.trade === 'verifier').flatMap(job => [job.id, job.replaces].filter(Boolean)));
           nextState.ignoredFindings = nextState.ignoredFindings.map(ruling => {
-            const musts = verifiers.get(ruling.id);
-            if (!musts || ruling.jobOnly) return ruling;
+            if (!verifiers.has(ruling.id) || ruling.jobOnly) return ruling;
+            const musts = state.ledger[ruling.id]?.openMusts ?? [];
             return musts.length === 1 ? { ...ruling, id: musts[0].id } : { ...ruling, jobOnly: true };
           });
           mkdirSync(join(env.CODA_ARTIFACTS, 'workers'), { recursive: true });
@@ -610,9 +617,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         } else if (decision.action === 'verify') {
           const available = nextState.ignoredFindings.filter(hasReason);
           const unresolved = [];
-          for (const job of Object.values(state.ledger)) {
-            if (job.status !== 'rejected') continue;
+          const rejected = Object.values(state.ledger).filter(job => job.status === 'rejected');
+          const replacedVerifiers = new Set(rejected.filter(job => job.trade === 'verifier').map(job => job.replaces));
+          for (const job of rejected) {
             const musts = job.openMusts ?? [];
+            // The replacement carries the findings, so its predecessor needs no separate ruling.
+            if (!musts.length && replacedVerifiers.has(job.id)) continue;
             for (const { id, title } of musts.length ? musts : [job]) {
               const index = available.findIndex(f => f.id === id || (musts.length === 1 && f.id === job.id && !f.jobOnly));
               if (index >= 0) available.splice(index, 1);
@@ -675,11 +685,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           `## 当前项目已启用规范摘要\n${enabledGuidelinesDigest(root)}`,
           `## 工单信息\n- 工单 ID：\`${job.id}\`\n- 工种级别：\`${job.trade} / ${job.tier}\`（${job.agentSummary}，原因：${job.escalationReason}）\n- 标题：${job.title}\n${job.lockSpec ? '- 规约锁定：禁止修改 `.dickda/lints/` 与 `.dickda/verifiers/`\n' : ''}`,
           job.previousFeedback ? `## 前序打回原因（第 ${job.rejections} 次打回）\n${job.previousFeedback}` : '',
+          job.openMusts?.length ? `## 前序未闭环的必须修缺陷\n${JSON.stringify(job.openMusts, null, 2)}\n请逐项复测，复报缺陷时沿用其 id。全部通过（"passed": true 且 findings 中无 must）将关闭全部历史必须修。若 "passed": false，仅在 "resolved": ["<id>"] 中列出实际复测确认已修复的历史 ID，未列出的继续保持开启。` : '',
           job.previousHead && job.previousRef ? `## 复用前序提交\npreviousHead：${job.previousHead}\n保留分支：${job.previousRef}\n先运行 git fetch ${state.remote} ${job.previousRef}，用 git show ${job.previousHead} 查看改动。可用 git cherry-pick ${job.previousHead} 或挑选其中需要的提交，复用后修订。` : '',
           upstreamCommit ? `处理合并冲突时，可拉取目标分支 ${state.base}，将上游提交 ${upstreamCommit} 合入当前工单。规约锁允许从该提交原样合入的规约。` : '',
           `## 任务书\n${job.task}`,
           job.trade === 'verifier'
-            ? `完成后必须在回复最后附上结构化 \`\`\`json 块：\`{"passed": true, "summary": "结论", "findings": [{"level": "must", "title": "...", "detail": "..."}]}\`（未通过必须写 "passed": false）`
+            ? `完成后必须在回复最后附上结构化 \`\`\`json 块，例如 \`{"passed": false, "summary": "结论", "findings": [{"level": "must", "title": "...", "detail": "..."}]}\`。全部通过且无 must 时写 "passed": true。`
             : `完成后确保改动已提交到当前分支（不要推送或开 PR），并以单独一行「交付说明」汇报完成情况与自检命令。`,
         ].filter(Boolean).join('\n\n');
         writeFileSync(promptFile, prompt);
@@ -707,6 +718,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
             passed: evaluated.passed,
             summary: evaluated.summary,
             findings: evaluated.findings,
+            resolved: evaluated.resolved,
             ...(evaluated.error ? { error: evaluated.error } : {}),
           };
         } else {

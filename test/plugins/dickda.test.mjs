@@ -532,9 +532,10 @@ test('verifier worker failures and missing/failed review-commit calls never sile
   const baseTip = commit(work, 'base');
 
   // 1) Verifier worker returning passed=false or missing JSON must be rejected and counted toward senior escalation
-  const failedEval = evaluateVerifierAnswer('```json\n{"passed": false, "summary": "按钮点击无响应", "findings": []}\n```');
+  const failedEval = evaluateVerifierAnswer('```json\n{"passed": false, "summary": "按钮点击无响应", "findings": [], "resolved": ["ver-ui#1", "", "  ", null, 2]}\n```');
   assert.equal(failedEval.valid, true);
   assert.equal(failedEval.passed, false);
+  assert.deepEqual(failedEval.resolved, ['ver-ui#1']);
 
   const missingJsonEval = evaluateVerifierAnswer('Looks fine to me without structured JSON.');
   assert.equal(missingJsonEval.valid, false);
@@ -1214,13 +1215,25 @@ test('must findings on verifier jobs block verification until exact-ID retries, 
   run('integrate');
   lead({ action: 'verify' }, /验证工单：checkout.*重派.*ignoredFindings/);
 
-  lead({ action: 'dispatch', jobs: [job('login'), { ...job('checkout-2'), replaces: 'checkout' }] });
+  const beforeRetry = state().ledger;
+  const retries = JSON.parse(lead({ action: 'dispatch', jobs: [job('login'), { ...job('checkout-2'), replaces: 'checkout' }] }).jobs);
+  for (const retry of retries) assert.deepEqual(retry.openMusts, beforeRetry[retry.replaces ?? retry.id].openMusts);
   assert.equal(worker('login', []), 'succeeded');
-  assert.equal(worker('checkout-2', must), 'rejected');
+  assert.equal(worker('checkout-2', [
+    { ...must[0], id: 'checkout#1', detail: '重试时仍无响应' },
+    must[0],
+    { level: 'must', title: '结算金额错误' },
+  ]), 'rejected');
   run('integrate');
   assert.equal(state().ledger.login.status, 'verified');
   assert.deepEqual(state().ledger.login.openMusts, []);
   assert.equal(state().ledger.checkout.status, 'rejected');
+  assert.deepEqual(state().ledger.checkout.openMusts, []);
+  const checkoutIds = state().ledger['checkout-2'].openMusts.map(f => f.id).sort();
+  assert.deepEqual(checkoutIds, ['checkout#1', 'checkout#2', 'checkout-2#1']);
+  lead({
+    action: 'verify', ignoredFindings: checkoutIds.map(id => ({ id, reason: '结算入口已从本次方案移除' })),
+  }, /仍有被打回的验证工单：legacy 缺少 legacy#1 提交没有响应 的依据。请重派/);
   lead({ action: 'dispatch', jobs: [{ ...job('checkout-3'), replaces: 'checkout-2' }] });
   assert.equal(worker('checkout-3', []), 'succeeded');
   run('integrate');
@@ -1288,7 +1301,7 @@ test('two musts on one verifier require separate rulings across lead rounds', t 
 });
 
 test('failed verifier retries preserve both musts at the verify gate', t => {
-  const { run, seedFast, lead, state } = workflowFixture(t);
+  const { run, seedFast, lead, state, env } = workflowFixture(t);
   run('lane', { GOAL: '验收保存流程' });
   seedFast();
   const job = { id: 'save', trade: 'verifier', title: '保存验证', task: '检查提交与回读' };
@@ -1307,16 +1320,37 @@ test('failed verifier retries preserve both musts at the verify gate', t => {
     { level: 'must', title: '保存丢数据', detail: '重新打开后为空' },
   ] }), 'rejected');
   const original = state().ledger.save.openMusts;
+  assert.deepEqual(original.map(f => f.id), ['save#1', 'save#2']);
   const verify = { action: 'verify', ignoredFindings: [{ id: job.id, reason: '旧入口已移除' }] };
-  for (const [answer, exitCode] of [[verdict({ passed: true }), '1'], ['未返回结构化结论', '0']]) {
+  for (const [answer, exitCode] of [[verdict({ passed: true, resolved: ['save#1'] }), '1'], ['未返回结构化结论', '0']]) {
     attempt(answer, 'failed', exitCode);
     lead(verify, /save#1 重复提交.*save#2 保存丢数据/);
     assert.deepEqual(state().ledger.save.openMusts, original);
   }
 
   attempt(verdict({ passed: false, findings: [] }), 'rejected');
+  assert.deepEqual(state().ledger.save.openMusts, original);
+  lead(verify, /save#1 重复提交.*save#2 保存丢数据/);
+  const workerPrompt = readFileSync(join(env.RUNNER_TEMP, 'worker-save.md'), 'utf8');
+  const ledgerSummary = readFileSync(join(env.RUNNER_TEMP, `lead-${state().round + 1}.md`), 'utf8').split('## 最新待裁决反馈')[0];
+  assert.match(workerPrompt, /"resolved"/);
+  for (const { id, title, detail } of original) {
+    for (const text of [id, title, detail]) assert.ok(workerPrompt.includes(text), text);
+    assert.ok(state().pendingFeedback.includes(`${id} [must] ${title}：${detail}`));
+    assert.ok(ledgerSummary.includes(`${id} ${title}`));
+  }
+
+  attempt(verdict({ passed: false, resolved: ['save#1'], findings: [] }), 'rejected');
+  assert.deepEqual(state().ledger.save.openMusts, [original[1]]);
+  assert.doesNotMatch(state().pendingFeedback, /save#1/);
+  assert.match(state().pendingFeedback, /save#2 \[must\] 保存丢数据/);
+  const waiver = { id: 'save#2', reason: '回读测试确认数据已保存' };
+  assert.equal(lead({ action: 'verify', ignoredFindings: [waiver] }).route, 'verify');
+
+  attempt(verdict({ passed: true, summary: '已修复', findings: [] }), 'succeeded');
   assert.deepEqual(state().ledger.save.openMusts, []);
-  assert.equal(lead(verify).route, 'verify');
+  assert.equal(state().ledger.save.status, 'verified');
+  assert.equal(lead({ action: 'verify' }).route, 'verify');
 });
 
 test('cancelled coding jobs retain strict descendant commits for redispatch without integrating them', t => {
