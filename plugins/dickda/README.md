@@ -1,6 +1,8 @@
-# Dickda 五层开发（`dickda-develop`）
+# dickda模式（`dickda`）
 
 以五层倒金字塔（**Codebase → Static Analysis → Verification → Prose → Human Review**）为核心的 Coda 多 Agent 工程插件：采用**交互者-思考者-执行者（主控 / 架构 / 实现 / 验证四工种，支持两级难度升级与并发派工）**架构，并将项目全部配置、任务方案、可执行规约、测试验证器与知识经验统一收归 **`.dickda/`** 目录管理。
+
+从旧插件切换时，先记下自定义设置，在项目中停用旧插件并启用 `dickda`。仓库里的 `.dickda/` 资产可直接复用。在原设置生效的范围内，把自定义值填入新插件的对应项，例如交互者用 `dickda.interactor`，合并方式用 `dickda.mergeMethod`。各项只更换键前缀，值的格式相同。
 
 ## 1. 三角色 · 四工种体系
 
@@ -22,9 +24,9 @@ flowchart TD
     T["思考者提交 PLAN_5L.md"] --> I["暂停派工，交互者向用户讲解并给出开工建议"]
     I --> U{"用户开工确认卡"}
     U -->|"修订"| T
-    U -->|"确认开工"| L["主控按当前需求分支派工，用 tell-session 同步里程碑"]
+    U -->|"确认开工"| L["主控核对批准的提交后派工，用 tell-session 同步里程碑"]
     L --> W["架构、实现、验证并发执行，各写一份工单日志"]
-    W --> M["合入工单并运行项目检查"]
+    W --> M["按派单 ID 收齐结果后合入并运行项目检查"]
     M -->|"打回时保留 previousHead"| L
     M -->|"实现齐备"| A["remember 聚合日志、需求与方案，提交归档"]
     A --> V["双轨验证，Agent/UI 按规约占设备"]
@@ -36,9 +38,13 @@ flowchart TD
     P -->|"用户批准合并"| F["默认分支保留归档，供 dickda-refine 提纯"]
 ```
 
-- **`dickda-develop`** 加入 `hook="develop"`。常规流程复用已有五层方案时也会暂停讲解和确认。显式选择 `fast` 可直接派工。主控续跑时收到当前提交、相对上轮的提交与改动统计，以及同步工作树的命令。终审要求修改时，主控可重派工单，或对同一已验证提交逐条给出客观依据。PR 和批准卡同时展示原结论与依据，交用户裁决。
-- **`dickda-verify`** 并行检查同一提交。代码轨运行 L2 Lint 和 L3 脚本。启用 UI 轨时先检出该提交，只有发现 Agent/UI 规约且指定设备才解析并占锁。没有规约会记录跳过，有规约且未指定设备则直接验收。`verifier` 和 `verifierSenior` 可覆盖插件设置。
-- **`dickda-refine`** 从最早的未消费归档开始，由思考者诊断、交互者选择落点。工程师提交后运行代码验证和项目检查，再做独立审查。审查未完成可重试或停止，要求修改可派修或写明不采纳依据。私有 PR 通过合并前和 GitHub 检查后，用户批准该提交合入默认分支，归档才在主干完成消费。冲突会退回同步、修复、重验和重新批准。「暂不合并」保留 PR、分支与主干归档。
+- **`dickda`** 加入 `hook="develop"`。显式填写 `device` 时，流程先调用 `resolve-testbed`，设备解析成功才创建需求分支。思考者只能提交 `.dickda/tasks/PLAN_5L.md` 的改动。复用或修订方案都需用户确认，首轮派单前核对确认卡上的提交 SHA。显式选择 `fast` 时以 `seed.head` 开工。主控续跑时收到当前提交、相对上轮的提交与改动统计，以及同步工作树的命令。终审会收到项目检查摘要、双轨报告、实证证据与发现。终审要求修改时，主控可重派工单，或对同一已验证提交逐条给出客观依据。PR 和批准卡同时展示原结论与依据，交用户裁决。
+- **`dickda-verify`** 在启用 UI 轨且指定设备时先调用 `resolve-testbed`，成功后才并行检查同一提交。代码轨运行 L2 Lint 和 L3 脚本。UI 轨检出该提交，有 Agent/UI 规约时才占用指定设备并验收，未指定设备可直接验收。通过结论须附非空摘要和至少一项实证证据。没有规约会记录跳过。`verifier` 和 `verifierSenior` 可覆盖插件设置。
+- **`dickda-refine`** 取得项目独占锁后拉取最新默认分支，再选择最早的未消费归档。指定的起始分支有独立提交时也会跳过主干已消费的批次。没有待处理归档时直接结束。
+  思考者须给出有效工单或具体的 L4 文档条目，交互者据此选择落点。首次执行和每轮修复都须在目标归档之外留下实际改动。「仅更新 L4」限于 `.dickda/knowledge/` 下的 Markdown 文档和 `.dickda/learning/Learning_*.md`，同步默认分支时须原样保留其他路径的上游变更。
+  工程师提交后运行代码验证和项目检查，再做独立审查。审查未完成可重试或停止，要求修改可派修或写明不采纳依据。私有 PR 通过合并前和 GitHub 检查后，用户批准该提交合入默认分支，归档才在主干完成消费。冲突会退回同步、修复、重验和重新批准。「暂不合并」保留 PR、分支与主干归档。
+
+`dickda` 和 `dickda-refine` 只接受仓库默认分支作为 `base`，留空时自动读取。可用 `branch` 指定工作的起始分支。
 
 ## 3. `.dickda/` 统一资产目录
 
@@ -68,14 +74,16 @@ dickda role list
 dickda role resolve builder --rejections 2
 dickda lint
 dickda verify --track code
-dickda dashboard --output /tmp/dickda-console.html
+dickda dashboard
 ```
+
+`dickda dashboard` 生成自包含的交互式 HTML 控制台。用返回的 `path` 在 Coda 会话中通过 `visualize` 展示。
 
 开发自检：
 
 ```sh
-node bin/check.mjs plugins/dickda-develop
-node --test test/plugins/dickda-develop.test.mjs
+node bin/check.mjs plugins/dickda
+node --test test/plugins/dickda.test.mjs
 ```
 
 内置通用与 C++ 规范片段遵循 Apache-2.0，归因详见 [NOTICE](NOTICE)。

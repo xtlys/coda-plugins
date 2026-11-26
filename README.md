@@ -18,7 +18,7 @@ plugins/cursor/          Cursor：在运行机的 cursor-agent acp 与 Coda 之�
 plugins/copilot/         GitHub Copilot：转发原生 ACP，接入会话指令与答复语义，独立账号额度面板
 plugins/dsh/             DeepSeek Harness：锁定官方 harness，默认 deepseek-flash，适配会话、审批、提问及后台活动
 plugins/dsh-upstreams/   DSH 多上游：保存成组的 base_url 与 API Key，在资源面板切换，下次模型调用生效
-plugins/dickda-develop/  Dickda 五层开发：面向五层倒金字塔的三角色四工种并发协同工作流、双轨验证与 .dickda 统一工程资产台
+plugins/dickda/          dickda模式，提供三角色四工种协同工作流、双轨验证与 .dickda 资产控制台
 templates/agent/         最小的 Agent 插件：手写 ACP 的回声 Agent，演示会话指令、插话、Agent 活动与自主轮次
 templates/panel/         最小的面板插件：一张卡片、一条进度条、一个按钮
 bin/、check/             契约检查（仓库根的 package.json 就是它，@coda-console/plugin-check）
@@ -30,7 +30,7 @@ GitHub Copilot 的运行机安装、登录与验收见 [Copilot 插件说明](pl
 独立 `codex-custom` 二进制的接入与配置隔离见 [Codex Custom 插件说明](plugins/codex-custom/README.md)。
 DeepSeek Harness 的 API Key 配置、1017 模型说明与 Coda 语义适配见 [DSH 插件说明](plugins/dsh/README.md)。
 多组 DSH 地址和密钥的配置、选择与删除见 [DSH 多上游插件说明](plugins/dsh-upstreams/README.md)。
-Dickda 五层开发工作流、三角色四工种分级协同与 `.dickda` 资产管理见 [Dickda 五层开发插件说明](plugins/dickda-develop/README.md)。
+dickda模式工作流、三角色四工种分级协同与 `.dickda` 资产管理见 [dickda模式插件说明](plugins/dickda/README.md)。
 
 ## Coda 自带的插件
 
@@ -158,7 +158,7 @@ Dependabot（`.github/dependabot.yml`）每周为它们各开一个 PR，连同 
 - `name` 是插件 ID：小写字母、数字和 `-`，以字母开头，至多 40 个字符；不能与 Coda 内置插件同名（`claude`、`codex`、`grok`、`kimi`、`opencode`、`review` 等，完整列表见 `check/coda.mjs`）。
 - `displayName`、`description`、`version` 显示在安装确认与插件页。
 - `contributes` 只能有 Coda 认识的贡献：`agents`、`panels`、`configuration`、`capabilities`、`instructions`、`skills`、`extensionPoints`、`extensions`、`groups`、`commands`、`services`、`setup`；读不懂的键一律报错，不会被悄悄忽略。
-- `contributes.skills` 是插件内 Skill 目录的数组，例如 `["skills/dickda-develop"]`；每个目录须有 `SKILL.md`，目录名不能重复。当前 Coda 将它们提供给启用了该插件的项目会话。
+- `contributes.skills` 是插件内 Skill 目录的数组，例如 `["skills/dickda"]`；每个目录须有 `SKILL.md`，目录名不能重复。当前 Coda 将它们提供给启用了该插件的项目会话。
 - `setup` 是插件的设置动作：`{ "command": "…" }`，一行、不超过 4000 字（与面板命令同样的规则），没有别的键。
 
 **从仓库安装的限制**：带 npm 依赖（`dependencies`、`optionalDependencies`）就要把 `package-lock.json` 一起提交，Coda 在插件的版本目录里

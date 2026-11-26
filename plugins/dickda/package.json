@@ -1,38 +1,28 @@
 {
-  "name": "dickda-develop",
-  "displayName": "Dickda 五层开发",
+  "name": "dickda",
+  "displayName": "dickda模式",
   "description": "面向五层倒金字塔的多 Agent 协同开发流：交互者-思考者-执行者（主控/架构/实现/验证两级升级），资产统一收归 .dickda。",
   "version": "1.0.0",
   "type": "module",
   "license": "Apache-2.0",
+  "engines": {
+    "coda": 1
+  },
   "contributes": {
     "skills": [
-      "skills/dickda-develop"
+      "skills/dickda"
     ],
-    "instructions": "采用 Dickda 五层开发时先读 dickda role show interactor。发起 dickda-develop 后，思考者提交 PLAN_5L.md，交互者向用户讲解并给出开工建议。用户点确认开工后主控并发派单、同步里程碑。工单分文件记录并聚合归档，双轨验证按规约占设备。不采纳终审意见须向用户列明依据。dickda-refine 独立审查后，由用户批准合并消费归档。",
+    "instructions": "采用 dickda模式时先读 dickda role show interactor。发起 dickda 后，思考者提交 PLAN_5L.md，交互者向用户讲解并给出开工建议。用户点确认开工后主控并发派单、同步里程碑。工单分文件记录并聚合归档，双轨验证按规约占设备。不采纳终审意见须向用户列明依据。dickda-refine 独立审查后，由用户批准合并消费归档。",
     "commands": [
       {
         "name": "dickda",
         "command": "\"$CODA_NODE\" \"$CODA_PLUGIN_PATH/scripts/cli.mjs\""
       }
     ],
-    "panels": [
-      {
-        "id": "dickda-develop",
-        "title": "Dickda · 五层工程台",
-        "command": "node \"$CODA_PLUGIN_PATH/scripts/panel.mjs\"",
-        "maxAge": "PT1M",
-        "actions": {
-          "browse": {
-            "command": "node \"$CODA_PLUGIN_PATH/scripts/panel.mjs\" --browse"
-          }
-        }
-      }
-    ],
     "configuration": {
-      "title": "Dickda 五层开发",
+      "title": "dickda模式",
       "properties": {
-        "dickda-develop.interactor": {
+        "dickda.interactor": {
           "title": "交互者（Interactor）",
           "description": "驻守主会话：用户沟通澄清、交互式 HTML 控制台与图文汇报、风险与重构拍板。",
           "type": "object",
@@ -44,7 +34,7 @@
           },
           "order": 1
         },
-        "dickda-develop.thinker": {
+        "dickda.thinker": {
           "title": "思考者（Thinker）",
           "description": "顶层规划：输出面向五层抽象的技术方案 PLAN_5L.md，并在 refine 中诊断重构落层。",
           "type": "object",
@@ -56,7 +46,7 @@
           },
           "order": 2
         },
-        "dickda-develop.lead": {
+        "dickda.lead": {
           "title": "执行者 · 主控（Lead）",
           "description": "执行期总指挥：支持并发派发三工种工程师、自主裁决 Review 取舍、控制难度分级升级与向上同步。",
           "type": "object",
@@ -68,7 +58,7 @@
           },
           "order": 3
         },
-        "dickda-develop.architectStandard": {
+        "dickda.architectStandard": {
           "title": "执行者 · 架构（常规级）",
           "description": "负责常规任务的 L1 架构骨架、L2 Executable Spec Lint 实现与 L3 结果导向测试设计。",
           "type": "object",
@@ -80,7 +70,7 @@
           },
           "order": 4
         },
-        "dickda-develop.architectSenior": {
+        "dickda.architectSenior": {
           "title": "执行者 · 架构（高级）",
           "description": "复杂架构演进或常规架构工单多次被打回时升级接手。",
           "type": "object",
@@ -92,7 +82,7 @@
           },
           "order": 5
         },
-        "dickda-develop.builderStandard": {
+        "dickda.builderStandard": {
           "title": "执行者 · 实现（常规级）",
           "description": "负责常规工程编码实现（复现、实验回退、择优重放，遵守锁定的 Lint 与测试契约）。",
           "type": "object",
@@ -104,7 +94,7 @@
           },
           "order": 6
         },
-        "dickda-develop.builderSenior": {
+        "dickda.builderSenior": {
           "title": "执行者 · 实现（高级）",
           "description": "高难实现或常规实现工单多次被打回时升级接手。",
           "type": "object",
@@ -116,7 +106,7 @@
           },
           "order": 7
         },
-        "dickda-develop.verifierStandard": {
+        "dickda.verifierStandard": {
           "title": "执行者 · 验证（常规级）",
           "description": "专职找问题、独立代码审查（review-commit）及运行黑盒/UI 自动化验收测试。",
           "type": "object",
@@ -128,7 +118,7 @@
           },
           "order": 8
         },
-        "dickda-develop.verifierSenior": {
+        "dickda.verifierSenior": {
           "title": "执行者 · 验证（高级）",
           "description": "深水区系统缺陷排查或复杂多端 UI 实证验收时升级接手。",
           "type": "object",
@@ -140,7 +130,7 @@
           },
           "order": 9
         },
-        "dickda-develop.escalationThreshold": {
+        "dickda.escalationThreshold": {
           "title": "自动升级打回阈值",
           "description": "常规级工程师在同一工单连续未通过门禁或被打回达到该次数时，自动提示并升级为高级工程师接手。",
           "type": "integer",
@@ -149,7 +139,7 @@
           "default": 2,
           "order": 10
         },
-        "dickda-develop.mergeMethod": {
+        "dickda.mergeMethod": {
           "title": "合并方式",
           "description": "用户批准合并后将交付 PR 合入默认分支的方式。",
           "type": "string",

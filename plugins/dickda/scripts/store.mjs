@@ -7,7 +7,6 @@ import { fileURLToPath } from 'node:url';
 export const plugin = fileURLToPath(new URL('..', import.meta.url));
 export const base = '.dickda';
 export const hash = value => createHash('sha256').update(value).digest('hex');
-export const now = () => new Date().toISOString();
 export function requireValue(ok, message) { if (!ok) throw new Error(message); }
 
 export function text(value, field, max = 20000) {
@@ -107,18 +106,22 @@ export function config(root) {
   return { verifyCommands: [], ...value };
 }
 
-export function projectGroup(root) {
-  if (existsSync(managed(root, 'project.json'))) return `dickda:${config(root).projectId}`;
+export function projectGroup(root, remote) {
+  if (!remote) {
+    const remotes = git(root, 'remote').split('\n');
+    const name = remotes.includes('origin') ? 'origin' : remotes[0];
+    if (name) remote = git(root, 'config', '--get', `remote.${name}.url`);
+  }
+  if (remote) {
+    const url = URL.parse(remote.includes('://') ? remote : remote.replace(/^([^/:]+):\/*/, 'ssh://$1/'));
+    if (url?.protocol === 'ssh:' && url.port === '22') url.port = '';
+    const repository = url && url.protocol !== 'file:'
+      ? `${url.host}${url.pathname}`.toLowerCase().replace(/\/+$/, '').replace(/\.git$/, '')
+      : resolve(root, url ? fileURLToPath(url) : remote);
+    return `dickda:${hash(repository)}`;
+  }
   const commonDir = realpathSync(resolve(root, git(root, 'rev-parse', '--git-common-dir')));
   return `dickda:${hash(commonDir)}`;
-}
-
-export function register(root) {
-  if (!process.env.CODA_PLUGIN_STATE) return;
-  const cfg = config(root);
-  save(join(process.env.CODA_PLUGIN_STATE, 'projects', `${hash(root)}.json`), {
-    root, projectId: cfg.projectId, name: cfg.name, registeredAt: now(),
-  });
 }
 
 export const INVESTIGATE_MARKER = '# !!!DICKDA_INVESTIGATE!!!\n';
@@ -171,7 +174,6 @@ export function init(root) {
     }
   }
 
-  register(root);
   return config(root);
 }
 

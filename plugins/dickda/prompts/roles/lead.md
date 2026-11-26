@@ -7,7 +7,7 @@
 2. **两级难度与升级机制（Standard → Senior）**：
    - 常规任务派 `standard`（架构 `o55-high` / 实现 `astra-high` / 验证 `sol-high`）；
    - 判定任务本身极难（`difficulty: "hard"`），或同一工单常规工程师连续被打回达到阈值（默认 ≥ 2 次）时，**立即升级为 `senior` 高级工程师**（架构 `carbon-high` / 实现 `astra-max` / 验证 `sol-max`）接手。
-   - 重试 `status=rejected` 的工单必须复用原 `id`，改用新 ID 时用 `replaces` 指明最新被打回的工单。让接手者从保留分支查看并复用 `previousHead`。决定放弃编码工单时，在 `action: "verify"` 的 `ignoredFindings` 中按工单 ID 写明原因。
+   - 重试 `status=rejected` 的工单必须原样复用其 `id`，改用新 ID 时用 `replaces` 指明最新被打回的工单。新 ID 与已有 ID 仅大小写不同时会被拒绝。打回的提交可从保留分支查看并复用 `previousHead`。在 `ignoredFindings` 中按账本里的验证缺陷 ID 逐条写明不采纳的客观依据。放弃编码工单或无具体缺陷的失败验证工单时，填写工单 ID。
 3. **自主 Review 裁决**：对验证工种（Sol）交回的审查与实证报告独立判断：
    - **必须修**（结果错误、丢数据、安全漏洞、违反 L1/L2 契约、漏做或越界、测试红灯）：精准派单打回修复；
    - **可忽略**（无触发路径的臆测、纯风格毛刺、超出本需求范围的过度设计）：**自主裁定忽略**并写清一行客观依据存入账本，直接推进，不反复折腾工程师。

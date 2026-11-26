@@ -3,7 +3,8 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdir
 import { basename, dirname, join, relative } from 'node:path';
 import { INVESTIGATE_MARKER, atomic, base, git, hash, inside, listFiles, lock, managed, requireValue } from './store.mjs';
 
-const ARCHIVE_DIR = /^\d{4}(-\d{2}){5}$/;
+export const CONSUMED_FILE = `${base}/learning/.consumed`;
+export const archiveRoot = path => /^(\.dickda\/learning\/\d{4}(?:-\d{2}){5})(?:\/|$)/.exec(path)?.[1];
 
 export function readMarkdownAsset(file, relPath) {
   const body = readFileSync(file, 'utf8');
@@ -19,7 +20,7 @@ export function readMarkdownAsset(file, relPath) {
   };
 }
 
-export function walkMarkdown(root, folder) {
+export function walkMarkdown(root, folder, excluded) {
   const dir = inside(root, folder);
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true })
@@ -27,7 +28,7 @@ export function walkMarkdown(root, folder) {
     .flatMap(entry => {
       if (entry.isSymbolicLink()) return [];
       const relPath = `${folder}/${entry.name}`;
-      if (entry.isDirectory()) return walkMarkdown(root, relPath);
+      if (entry.isDirectory()) return excluded?.has(relPath) ? [] : walkMarkdown(root, relPath, excluded);
       return entry.isFile() && entry.name.endsWith('.md') ? [readMarkdownAsset(inside(root, relPath), relPath)] : [];
     });
 }
@@ -36,11 +37,8 @@ export function assetsByKind(root, kind) {
   requireValue(['knowledge', 'learning', 'archives', 'lints', 'verifiers', 'tasks'].includes(kind), '未知资产类型');
   if (kind === 'knowledge') return walkMarkdown(root, `${base}/knowledge`);
   if (kind === 'tasks') return walkMarkdown(root, `${base}/tasks`);
-  if (kind === 'learning' || kind === 'archives') {
-    const all = walkMarkdown(root, `${base}/learning`);
-    const isArchive = doc => /^\.dickda\/learning\/\d{4}(-\d{2}){5}\//.test(doc.path);
-    return kind === 'archives' ? all.filter(isArchive) : all.filter(doc => !isArchive(doc));
-  }
+  if (kind === 'archives') return pendingArchives(root).flatMap(dir => walkMarkdown(root, dir));
+  if (kind === 'learning') return walkMarkdown(root, `${base}/learning`, new Set(archiveDirectories(root)));
   if (kind === 'lints') {
     return listFiles(root, 'lints', ['.mjs', '.js', '.sh']).map(file => {
       const relPath = relative(root, file).split('\\').join('/');
@@ -68,15 +66,43 @@ export function hasAgentVerifiers(root) {
   return assetsByKind(root, 'verifiers').some(spec => spec.track === 'agent');
 }
 
-export function backups(root, count = 10) {
-  requireValue(Number.isInteger(count) && count > 0 && count <= 10000, 'earliest 数量须为 1–10000');
+function archiveDirectories(root) {
   const folder = managed(root, 'learning');
   if (!existsSync(folder)) return [];
   return readdirSync(folder, { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && !entry.isSymbolicLink() && ARCHIVE_DIR.test(entry.name))
+    .filter(entry => entry.isDirectory())
     .map(entry => `${base}/learning/${entry.name}`)
-    .sort()
-    .slice(0, count);
+    .filter(archiveRoot)
+    .sort();
+}
+
+function pendingArchives(root, extraConsumed = []) {
+  const consumed = new Set([...consumedArchives(root), ...extraConsumed]);
+  return archiveDirectories(root).filter(path => !consumed.has(path));
+}
+
+export function backups(root, count = 10, extraConsumed = []) {
+  requireValue(Number.isInteger(count) && count > 0 && count <= 10000, 'earliest 数量须为 1–10000');
+  return pendingArchives(root, extraConsumed).slice(0, count);
+}
+
+export function consumedArchives(root, tree) {
+  let contents;
+  if (tree) {
+    const entry = git(root, 'ls-tree', tree, '--', CONSUMED_FILE);
+    if (!entry) return [];
+    requireValue(/^100(?:644|755) blob /.test(entry), `消费记录须为普通文件：${CONSUMED_FILE}`);
+    contents = git(root, 'show', `${tree}:${CONSUMED_FILE}`);
+  } else {
+    const file = inside(root, CONSUMED_FILE);
+    if (!existsSync(file)) return [];
+    contents = readFileSync(file, 'utf8');
+  }
+  return contents.split(/\r?\n/).filter(Boolean);
+}
+
+export function consumptionRecord(history, ...archives) {
+  return [...new Set([...history, ...archives])].sort().join('\n');
 }
 
 export function remember(root, time = new Date()) {
@@ -94,13 +120,14 @@ export function remember(root, time = new Date()) {
 
     let date = new Date(time);
     requireValue(Number.isFinite(date.getTime()), '归档时间无效');
+    const consumed = new Set(consumedArchives(root));
     let dirRel;
     do {
       const parts = [date.getFullYear(), date.getMonth() + 1, date.getDate(), date.getHours(), date.getMinutes(), date.getSeconds()];
       const stamp = parts.map((n, i) => String(n).padStart(i ? 2 : 4, '0')).join('-');
       dirRel = `${base}/learning/${stamp}`;
       date = new Date(date.getTime() + 1000);
-    } while (existsSync(inside(root, dirRel)));
+    } while (consumed.has(dirRel) || existsSync(inside(root, dirRel)));
 
     const target = inside(root, dirRel);
     mkdirSync(dirname(target), { recursive: true });
@@ -132,10 +159,17 @@ export function remember(root, time = new Date()) {
   });
 }
 
-export function consumeBackup(root, archiveRelPath) {
-  requireValue(/^\.dickda\/learning\/\d{4}(-\d{2}){5}$/.test(archiveRelPath), `无效的归档目录路径：${archiveRelPath}`);
+export function pruneConsumedArchives(root, consumed) {
+  const directories = archiveDirectories(root).filter(dir => consumed.has(dir));
+  for (const dir of directories) rmSync(inside(root, dir), { recursive: true });
+  return directories;
+}
+
+export function consumeBackup(root, archiveRelPath, record = consumptionRecord(consumedArchives(root), archiveRelPath)) {
+  requireValue(archiveRoot(archiveRelPath) === archiveRelPath, `无效的归档目录路径：${archiveRelPath}`);
   const target = inside(root, archiveRelPath);
   requireValue(existsSync(target), `归档目录不存在：${archiveRelPath}`);
+  atomic(inside(root, CONSUMED_FILE), `${record}\n`);
   rmSync(target, { recursive: true, force: true });
   return { consumed: archiveRelPath };
 }
@@ -169,51 +203,55 @@ export function runLints(root) {
   };
 }
 
+function changedEntries(root, from, to, paths) {
+  const fields = git(root, 'diff', '--raw', '-z', '--no-renames', '--no-abbrev', from, to, '--', ...paths).split('\0');
+  const changes = new Map();
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const [oldMode, newMode, oldId, newId] = fields[i].slice(1).split(' ');
+    changes.set(fields[i + 1], { before: `${oldMode} ${oldId}`, after: `${newMode} ${newId}` });
+  }
+  return changes;
+}
+
+// Compare against the original branch tree, discounting only faithfully merged upstream entries.
+export function branchChanges(root, baseCommit, tree, { mergedUpstream, paths = [] } = {}) {
+  const changes = changedEntries(root, baseCommit, tree, paths);
+  if (!mergedUpstream) return changes;
+  const ancestor = git(root, 'merge-base', baseCommit, mergedUpstream);
+  if (ancestor === mergedUpstream) return changes;
+  const baseChanges = changedEntries(root, ancestor, baseCommit, paths);
+  for (const [path, upstream] of changedEntries(root, ancestor, mergedUpstream, paths)) {
+    const before = baseChanges.get(path)?.after ?? upstream.before;
+    const after = changes.get(path)?.after ?? before;
+    if (after === upstream.after && (before === upstream.before || before === upstream.after)) {
+      changes.delete(path);
+    } else {
+      // Include a dropped upstream change even when the candidate exactly matches the original branch.
+      changes.set(path, { before, after, upstream: upstream.after });
+    }
+  }
+  return changes;
+}
+
 // Builder jobs with lockSpec=true must never delete or weaken locked .dickda/lints or .dickda/verifiers.
 export function checkSpecLock(root, baseCommit, headCommit, { upstreamCommit = '' } = {}) {
-  const mergeBase = upstreamCommit && spawnSync('git', ['-C', root, 'merge-base', baseCommit, upstreamCommit], { encoding: 'utf8' }).stdout.trim();
-  const mergedUpstream = mergeBase && mergeBase !== git(root, 'rev-parse', `${upstreamCommit}^{commit}`)
-    && spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', upstreamCommit, headCommit]).status === 0;
-  const specDirs = ['.dickda/lints/', '.dickda/verifiers/'];
-  const changedPaths = (from, to) => git(root, 'diff', '--name-only', '-z', '--no-renames', from, to, '--', ...specDirs)
-    .split('\0').filter(Boolean);
-  let violations = changedPaths(baseCommit, headCommit);
-  if (mergedUpstream) {
-    const entries = commit => {
-      const tree = git(root, 'ls-tree', '-rzt', commit, '--', ...specDirs);
-      return new Map(tree.split('\0').filter(Boolean).map(entry => {
-        const tab = entry.indexOf('\t');
-        return [entry.slice(tab + 1), entry.slice(0, tab)];
-      }));
-    };
-    const ancestorTree = entries(mergeBase);
-    const baseTree = entries(baseCommit);
-    const upstreamTree = entries(upstreamCommit);
-    const headTree = entries(headCommit);
-    // A merge that keeps the base entry can silently drop an upstream change.
-    const candidates = new Set([...violations, ...changedPaths(mergeBase, upstreamCommit)]);
-    violations = [...candidates].filter(path => {
-      const ancestorEntry = ancestorTree.get(path);
-      const baseEntry = baseTree.get(path);
-      const upstreamEntry = upstreamTree.get(path);
-      const headEntry = headTree.get(path);
-      if (upstreamEntry === ancestorEntry) return headEntry !== baseEntry;
-      if (baseEntry === ancestorEntry) return headEntry !== upstreamEntry;
-      return baseEntry !== upstreamEntry || headEntry !== baseEntry;
-    }).sort();
-  }
+  const merged = upstreamCommit && spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', upstreamCommit, headCommit]).status === 0;
+  const changes = branchChanges(root, baseCommit, headCommit, {
+    mergedUpstream: merged ? upstreamCommit : '', paths: ['.dickda/lints/', '.dickda/verifiers/'],
+  });
+  const violations = [...changes.keys()].sort();
   return {
     ok: violations.length === 0,
     violations,
   };
 }
 
-export function layerHealth(root) {
+export function layerHealth(root, consumed) {
   const lints = assetsByKind(root, 'lints');
   const verifiers = assetsByKind(root, 'verifiers');
   const knowledge = assetsByKind(root, 'knowledge');
   const learning = assetsByKind(root, 'learning');
-  const archives = backups(root, 1000);
+  const archives = backups(root, 1000, consumed);
   const planFile = managed(root, 'tasks/PLAN_5L.md');
   const hasPlan = existsSync(planFile) && readFileSync(planFile, 'utf8').trim().length > 100;
   return {

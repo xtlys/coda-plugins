@@ -1,4 +1,4 @@
-dickda-develop Coda plugin
+dickda Coda plugin
 
 Built-in engineering guideline excerpts in prompts/general.json and prompts/cpp.json
 are derived from shared guideline excerpts in vczh-libraries/Tools, Copilot/, by
@@ -13,8 +13,8 @@ edit markers and SHA-256 hashes in prompts/general.json, prompts/cpp.json and
 prompts/manifest.json.
 
 The five-layer agentic architecture, three-role / four-trade workflow orchestration,
-.dickda unified asset layout, HTML console generator, and Coda BPMN/panel integration
-are independent features of dickda-develop and are not upstream projects or
+.dickda unified asset layout, HTML console generator, and Coda BPMN integration
+are independent features of dickda and are not upstream projects or
 endorsements by the original authors.
 
 GitHub check waiting in scripts/checks.mjs and post-merge hook helpers in
