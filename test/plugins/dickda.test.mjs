@@ -3493,7 +3493,7 @@ console.log(JSON.stringify(results));
     assert.equal(status, signal === 'SIGINT' ? 130 : 143, error);
     const results = JSON.parse(output.trim());
     for (const [index, role] of ['carbon', 'astra'].entries()) {
-      assert.equal(readFileSync(join(f.dir, `${role}.stopped`), 'utf8'), signal);
+      assert.equal(readFileSync(join(f.dir, `${role}.stopped`), 'utf8'), 'SIGTERM');
       const result = results[index];
       assert.equal(result.status, null);
       assert.equal(result.signal, signal);
@@ -3502,6 +3502,77 @@ console.log(JSON.stringify(results));
       assert.equal(result.head, 'abc');
       assert.equal(result.answer, 'waiting for input');
       assert.ok(result.detail.includes('waiting for input'));
+    }
+  });
+}
+
+for (const mode of ['ignore-term', 'inherited-pipes']) {
+  test(`Heavy Mode cancellation reaps ${mode} within a bound and preserves the peer failure`, { skip: process.platform === 'win32' }, async t => {
+    const f = workflowFixture(t, developScript, true);
+    f.run('lane', { GOAL: '取消进程组回归', HEAVY_THINK: 'true' });
+    f.run('seed');
+    const ready = join(f.dir, 'stubborn.ready');
+    const stopped = join(f.dir, 'stubborn.stopped');
+    writeFileSync(join(f.dir, 'bin/coda-agent'), `#!${process.execPath}
+const fs = require('node:fs');
+const cp = require('node:child_process');
+const args = process.argv.slice(2);
+const prompt = fs.readFileSync(args[args.indexOf('--prompt-file') + 1], 'utf8');
+const ready = ${JSON.stringify(ready)};
+const stopped = ${JSON.stringify(stopped)};
+if (prompt.includes('Stage 1 · Carbon')) {
+  const wait = setInterval(() => {
+    if (!fs.existsSync(ready)) return;
+    clearInterval(wait);
+    console.log(JSON.stringify({ session: 'original-peer', answer: 'policy_blocked: original peer failure' }));
+    console.error('original stderr evidence');
+    process.exitCode = 1;
+  }, 10);
+} else if (${JSON.stringify(mode)} === 'ignore-term') {
+  process.on('SIGTERM', () => fs.writeFileSync(stopped, 'SIGTERM'));
+  fs.writeFileSync(ready, JSON.stringify([process.pid]));
+  setInterval(() => {}, 1000);
+} else {
+  process.on('SIGTERM', () => { fs.writeFileSync(stopped, 'SIGTERM'); process.exit(0); });
+  cp.spawn(process.execPath, ['-e', \`
+    const fs = require('node:fs');
+    process.on('SIGTERM', () => {});
+    fs.writeFileSync(\${JSON.stringify(ready)}, JSON.stringify([\${process.pid}, process.pid]));
+    setInterval(() => {}, 1000);
+  \`], { stdio: ['ignore', 'inherit', 'inherit'] });
+}
+`);
+    let pids = [];
+    try {
+      const start = Date.now();
+      const result = spawnSync(process.execPath, [developScript, 'think'], {
+        cwd: f.work,
+        env: { ...f.env, HEAVY_THINK: 'true', DICKDA_AGENT_KILL_GRACE_MS: '50' },
+        encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL',
+      });
+      if (existsSync(ready)) pids = JSON.parse(readFileSync(ready, 'utf8'));
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 1, result.stderr);
+      assert.ok(Date.now() - start < 5000);
+      assert.match(result.stderr, /original-peer[\s\S]*policy_blocked: original peer failure[\s\S]*original stderr evidence/);
+      assert.equal(readFileSync(stopped, 'utf8'), 'SIGTERM');
+      assert.equal(pids.length, mode === 'ignore-term' ? 1 : 2);
+      const manifest = JSON.parse(readFileSync(join(persistentRunDir(f), 'heavy-think/round-1/manifest.json')));
+      assert.equal(manifest.failure.role, 'Carbon');
+      assert.equal(manifest.failure.session, 'original-peer');
+      assert.match(manifest.failure.detail, /original stderr evidence/);
+      for (const pid of pids) {
+        const deadline = Date.now() + 1000;
+        while (Date.now() < deadline) {
+          try { process.kill(pid, 0); } catch { break; }
+          await delay(10);
+        }
+        assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+      }
+    } finally {
+      for (const pid of pids) {
+        try { process.kill(pid, 'SIGKILL'); } catch {}
+      }
     }
   });
 }

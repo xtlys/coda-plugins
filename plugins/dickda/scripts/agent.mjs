@@ -37,33 +37,19 @@ function parseAgentResult(res) {
 const activeChildren = new Map();
 function stopChildren(signal) {
   process.exitCode = signal === 'SIGINT' ? 130 : 143;
-  for (const child of activeChildren.keys()) {
-    activeChildren.set(child, signal);
-    child.kill(signal);
-  }
+  for (const stop of activeChildren.values()) stop(signal);
 }
 
 // Keep the event loop free so independent planning sessions actually overlap.
 export function callCodaAgentAsync(args, cwd = process.cwd(), { signal } = {}) {
   return new Promise(resolve => {
-    const child = spawn('coda-agent', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-    if (!activeChildren.size) {
-      process.on('SIGINT', stopChildren);
-      process.on('SIGTERM', stopChildren);
-    }
-    activeChildren.set(child, null);
-    const abort = () => {
-      activeChildren.set(child, 'SIGTERM');
-      child.kill('SIGTERM');
-    };
-    signal?.addEventListener('abort', abort, { once: true });
-    if (signal?.aborted) abort();
-    let stdout = '', stderr = '', error;
-    child.stdout.setEncoding('utf8').on('data', data => { stdout += data; });
-    child.stderr.setEncoding('utf8').on('data', data => { stderr += data; });
-    child.on('error', value => { error = value; });
-    child.on('close', (status, childSignal) => {
-      const cancelled = activeChildren.get(child);
+    const grouped = process.platform !== 'win32';
+    const child = spawn('coda-agent', args, { cwd, detached: grouped, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '', error, cancelled, killTimer, finished = false;
+    const finish = (status, childSignal) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(killTimer);
       activeChildren.delete(child);
       signal?.removeEventListener('abort', abort);
       if (!activeChildren.size) {
@@ -71,7 +57,41 @@ export function callCodaAgentAsync(args, cwd = process.cwd(), { signal } = {}) {
         process.removeListener('SIGTERM', stopChildren);
       }
       resolve(parseAgentResult({ status: cancelled ? null : status, signal: cancelled || childSignal, stdout, stderr, error }));
-    });
+    };
+    const kill = signal => {
+      if (grouped && child.pid) {
+        try {
+          process.kill(-child.pid, signal);
+          if (signal !== 'SIGKILL') return;
+        } catch {}
+      }
+      child.kill(signal);
+    };
+    const stop = reason => {
+      if (cancelled || finished) return;
+      cancelled = reason;
+      kill('SIGTERM');
+      killTimer = setTimeout(() => {
+        kill('SIGKILL');
+        child.stdin?.destroy();
+        child.stdout.destroy();
+        child.stderr.destroy();
+        // Inherited pipes must not keep cancellation waiting for close forever.
+        finish(null, 'SIGKILL');
+      }, Number(process.env.DICKDA_AGENT_KILL_GRACE_MS) || 1500);
+    };
+    const abort = () => stop('SIGTERM');
+    if (!activeChildren.size) {
+      process.on('SIGINT', stopChildren);
+      process.on('SIGTERM', stopChildren);
+    }
+    activeChildren.set(child, stop);
+    child.stdout.setEncoding('utf8').on('data', data => { stdout += data; });
+    child.stderr.setEncoding('utf8').on('data', data => { stderr += data; });
+    child.on('error', value => { error = value; });
+    child.on('close', finish);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
   });
 }
 

@@ -9,7 +9,7 @@ description: 采用 dickda Mode，以 Interactor-Thinker-Executors（Lead/Archit
 
 ## 1. 三角色 · 四工种体系
 
-使用 `dickda role list` 查看当前生效的模型映射，`dickda role show <角色>` 读取对应极简职责 Prompt：
+6 个职责角色（`interactor` / `thinker` / `lead` / `architect` / `builder` / `verifier`）支持 `dickda role show <role>`，3 个 Heavy Mode 模型配置槽位（`thinkerCoordinator` / `thinkerCarbon` / `thinkerAstra`）通过 `dickda role list` 查看并共用 Thinker 职责。
 
 | 角色 / 工种 | 标识 | 默认 Standard 配置 | 默认 Senior 配置（难任务 / 多次打回升级） | 职责边界 |
 | --- | --- | --- | --- | --- |

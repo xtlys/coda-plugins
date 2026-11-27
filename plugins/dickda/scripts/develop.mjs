@@ -549,7 +549,7 @@ function recordInvestigationLogs(root, baseTip, results, ledger, runId, round) {
     if (entry.status === 'landed' && hasCommit && git('ls-tree', '--name-only', result.head, '--', path)
       && substantive(git('show', `${result.head}:${path}`))
       && git('diff', '--name-only', result.baseHead ?? baseTip, result.head, '--', path)) continue;
-    const diff = hasCommit ? git('diff', '--stat', result.baseHead ?? baseTip, result.head) : '无有效代码提交（验证工单或未交付）';
+    const diff = hasCommit ? git('diff', '--stat', result.baseHead ?? baseTip, result.head) : '无有效代码提交（Verifier Work Order或未交付）';
     const section = [
       marker,
       `## Execution · ${runId} · round ${round}`,
@@ -679,7 +679,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         merged.ledger[job.id] = {
           ...job, ...(job.previousHead ? { lastRejectedHead: job.previousHead, lastRejectedRef: job.previousRef } : {}),
           ...merged.ledger[job.id], status: 'pending',
-          lastFeedback: '本轮中断前未回收到 Worker 结果，请在最新 Requirement Branch 上继续此工单。',
+          lastFeedback: '本轮中断前未回收到 Worker 结果，请在最新 Requirement Branch 上继续此 Work Order。',
         };
       }
       for (const r of results) {

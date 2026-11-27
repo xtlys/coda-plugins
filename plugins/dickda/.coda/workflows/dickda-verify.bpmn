@@ -5,7 +5,7 @@
     <extensionElements>
       <coda:input name="commit" label="待验证提交" type="string" default="" description="显式指定待验证的提交 SHA；留空使用本次运行的提交 (run.commit)" />
       <coda:input name="branch" label="待拉取分支" type="string" default="" description="可选：若待验证提交在远端Requirement Branch上，先从 origin 拉取该分支" />
-      <coda:input name="tier" label="验证级别" type="string" default="standard" description="standard或 senior（sol-max）" />
+      <coda:input name="tier" label="验证级别" type="string" default="standard" description="Standard（standard）或 Senior（senior）" />
       <coda:input name="verifier" label="Verifier（Standard）覆盖" type="agent" />
       <coda:input name="verifierSenior" label="Verifier（Senior）覆盖" type="agent" />
       <coda:input name="ui" label="启用 Agent / UI 实证验收" type="boolean" default="true" description="是否调用Verifier运行 .dickda/verifiers 中的实证与 UI 规约" />
