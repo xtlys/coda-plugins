@@ -9,6 +9,9 @@ export const TIERS = ['standard', 'senior'];
 export const DEFAULT_SETTINGS = {
   'dickda.interactor': { agent: 'antigravity', mode: 'full', model: 'gemini-4-neon', effort: 'xhigh' },
   'dickda.thinker': { agent: 'antigravity', mode: 'full', model: 'gemini-4-carbon', effort: 'high' },
+  'dickda.thinkerCoordinator': { agent: 'antigravity', mode: 'full', model: 'gemini-4-neon', effort: 'xhigh' },
+  'dickda.thinkerCarbon': { agent: 'antigravity', mode: 'full', model: 'gemini-4-carbon', effort: 'high' },
+  'dickda.thinkerAstra': { agent: 'codex', model: 'gpt-6.2-astra', effort: 'high' },
   'dickda.lead': { agent: 'antigravity', mode: 'full', model: 'gemini-4-neon', effort: 'xhigh' },
   'dickda.architectStandard': { agent: 'antigravity', mode: 'full', model: 'claude-opus-5-5', effort: 'high' },
   'dickda.architectSenior': { agent: 'antigravity', mode: 'full', model: 'gemini-4-carbon', effort: 'high' },
@@ -23,13 +26,16 @@ export const DEFAULT_SETTINGS = {
 export const ROLE_LABELS = {
   interactor: { group: 'Interactor', title: 'Interactor', tiered: false },
   thinker: { group: 'Thinker', title: 'Thinker', tiered: false },
+  thinkerCoordinator: { group: 'Thinker', title: 'Thinker · Heavy Mode · Coordinator', tiered: false },
+  thinkerCarbon: { group: 'Thinker', title: 'Thinker · Heavy Mode · Carbon', tiered: false },
+  thinkerAstra: { group: 'Thinker', title: 'Thinker · Heavy Mode · Astra', tiered: false },
   lead: { group: 'Executors', title: 'Executors · Lead', tiered: false },
   architect: { group: 'Executors', title: 'Executors · Architect', tiered: true },
   builder: { group: 'Executors', title: 'Executors · Builder', tiered: true },
   verifier: { group: 'Executors', title: 'Executors · Verifier', tiered: true },
 };
 
-function validAgent(spec, label) {
+function normalizeAgent(spec, label) {
   requireValue(spec && typeof spec === 'object' && !Array.isArray(spec) && typeof spec.agent === 'string' && spec.agent.trim(), `${label} 须包含有效的 agent 字段`);
   const clean = { agent: spec.agent.trim() };
   for (const key of ['model', 'effort', 'mode']) {
@@ -53,20 +59,23 @@ export function loadSettings(rawEnv = process.env.CODA_PLUGIN_SETTINGS, override
   const mergeMethod = merged['dickda.mergeMethod'];
   requireValue(['merge', 'squash', 'rebase'].includes(mergeMethod), 'mergeMethod 须为 merge、squash 或 rebase');
   return {
-    interactor: validAgent(merged['dickda.interactor'], 'interactor'),
-    thinker: validAgent(merged['dickda.thinker'], 'thinker'),
-    lead: validAgent(merged['dickda.lead'], 'lead'),
+    interactor: normalizeAgent(merged['dickda.interactor'], 'interactor'),
+    thinker: normalizeAgent(merged['dickda.thinker'], 'thinker'),
+    thinkerCoordinator: normalizeAgent(merged['dickda.thinkerCoordinator'], 'thinkerCoordinator'),
+    thinkerCarbon: normalizeAgent(merged['dickda.thinkerCarbon'], 'thinkerCarbon'),
+    thinkerAstra: normalizeAgent(merged['dickda.thinkerAstra'], 'thinkerAstra'),
+    lead: normalizeAgent(merged['dickda.lead'], 'lead'),
     architect: {
-      standard: validAgent(merged['dickda.architectStandard'], 'architectStandard'),
-      senior: validAgent(merged['dickda.architectSenior'], 'architectSenior'),
+      standard: normalizeAgent(merged['dickda.architectStandard'], 'architectStandard'),
+      senior: normalizeAgent(merged['dickda.architectSenior'], 'architectSenior'),
     },
     builder: {
-      standard: validAgent(merged['dickda.builderStandard'], 'builderStandard'),
-      senior: validAgent(merged['dickda.builderSenior'], 'builderSenior'),
+      standard: normalizeAgent(merged['dickda.builderStandard'], 'builderStandard'),
+      senior: normalizeAgent(merged['dickda.builderSenior'], 'builderSenior'),
     },
     verifier: {
-      standard: validAgent(merged['dickda.verifierStandard'], 'verifierStandard'),
-      senior: validAgent(merged['dickda.verifierSenior'], 'verifierSenior'),
+      standard: normalizeAgent(merged['dickda.verifierStandard'], 'verifierStandard'),
+      senior: normalizeAgent(merged['dickda.verifierSenior'], 'verifierSenior'),
     },
     escalationThreshold: threshold,
     mergeMethod,
@@ -82,6 +91,9 @@ function parseOverrideAgent(raw) {
 export function effectiveSettings(env = process.env) {
   return loadSettings(env.CODA_PLUGIN_SETTINGS, {
     'dickda.thinker': parseOverrideAgent(env.THINKER),
+    'dickda.thinkerCoordinator': parseOverrideAgent(env.THINKER_COORDINATOR),
+    'dickda.thinkerCarbon': parseOverrideAgent(env.THINKER_CARBON),
+    'dickda.thinkerAstra': parseOverrideAgent(env.THINKER_ASTRA),
     'dickda.lead': parseOverrideAgent(env.LEAD),
     'dickda.architectStandard': parseOverrideAgent(env.ARCHITECT),
     'dickda.architectSenior': parseOverrideAgent(env.ARCHITECT_SENIOR),
@@ -139,7 +151,7 @@ export function formatAgent(spec) {
 }
 
 export function agentArgs(spec) {
-  const clean = validAgent(spec, 'coda-agent');
+  const clean = normalizeAgent(spec, 'coda-agent');
   const args = [];
   for (const key of ['agent', 'model', 'effort', 'mode']) {
     if (clean[key]) args.push(`--${key}`, clean[key]);
@@ -156,7 +168,7 @@ export function rolePrompt(role) {
 }
 
 export function listRoles(settings = loadSettings()) {
-  return ROLES.map(role => {
+  return Object.keys(ROLE_LABELS).map(role => {
     const meta = ROLE_LABELS[role];
     if (!meta.tiered) {
       return {

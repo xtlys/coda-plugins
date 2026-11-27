@@ -12,12 +12,21 @@
 | --- | --- | --- | --- | --- |
 | **Interactor** | `interactor` | `antigravity / gemini-4-neon (xhigh)` | — | 主会话用户沟通、HTML 控制台与图文汇报（`visualize`）、风险与重构拍板 |
 | **Thinker** | `thinker` | `antigravity / gemini-4-carbon (high)` | — | 输出面向五层抽象的 `.dickda/tasks/PLAN_5L.md` 顶层方案，并在 `refine` 中诊断落层 |
+| **Thinker · Heavy Mode · Coordinator** | `thinkerCoordinator` | `antigravity / gemini-4-neon (xhigh)` | — | 综合双方修订稿、裁决分歧并提交定稿 |
+| **Thinker · Heavy Mode · Carbon** | `thinkerCarbon` | `antigravity / gemini-4-carbon (high)` | — | 独立初稿、交叉 Review、按意见修订 |
+| **Thinker · Heavy Mode · Astra** | `thinkerAstra` | `codex / gpt-6.2-astra (high)` | — | 独立初稿、交叉 Review、按意见修订 |
 | **Executors · Lead** | `lead` | `antigravity / gemini-4-neon (xhigh)` | — | 执行期总调度：支持**并发派发**三工种任务、自主裁决 Review 取舍、控制升级与向上风控 |
 | **Executors · Architect** | `architect` | `antigravity / claude-opus-5-5 (high)` | `antigravity / gemini-4-carbon (high)` | 落地 L1 架构骨架、实现 L2 `.dickda/lints/` Executable Spec、设计 L3 `.dickda/verifiers/` 测试靶子 |
 | **Executors · Builder** | `builder` | `codex / gpt-6.2-astra (high)` | `codex / gpt-6.2-astra (max)` | 科学复现、实验回退与工程编码实现（默认锁定规约，禁止擅自弱化 Lint 与 Verifier） |
 | **Executors · Verifier** | `verifier` | `codex / gpt-6.1-sol (high)` | `codex / gpt-6.1-sol (max)` | 专职找问题、独立 `review-commit` 代码审查与黑盒 / UI 自动化实证验收 |
 
 所有内部 `antigravity` 会话统一使用 `mode: "full"`，包括自定义设置和工作流覆盖；其他 Agent 保留原模式。续跑会话沿用已有模式，不传 `--mode`。
+
+`heavyThink` 默认 `false`，普通规划及 `dickda-refine diagnose` 继续使用 `dickda.thinker`（Refine 保持单 Thinker JSON 诊断）。开启 **Heavy Mode** 后，Carbon 与 Astra 并发独立出稿 → 并发交叉 Review → 并发各自修订 → Coordinator（默认 Neon）综合定稿，共 7 次模型调用。每阶段收齐并校验两份产物后才继续。三个独立槽位的优先级为本次工作流输入覆盖 > 插件设置 > 内置默认值；所有 `antigravity` 槽位强制 `mode: "full"`，`codex` 默认不带 mode。
+
+**Fast Mode 与 Heavy Mode 互斥**，在 `lane` 创建或推送分支前拒绝冲突。Heavy Mode 即使继承已有 `PLAN_5L.md` 也重新规划，旧方案作为背景；本运行已确认方案的恢复一律直接回到 Lead。Interactor 或用户退回会递增独立的 **Plan Round**（`planRound`，与 Lead 的 `round` 分离），携带最新反馈完整重跑四阶段。只有定稿通过严格后代、仅修改 `PLAN_5L.md` 和 L1–L5 正文门禁后才推送、清除反馈并进入 Plan Confirmation。
+
+中间产物仅存于 `<git-dir>/dickda/heavy-think/<runId>/round-<planRound>/` 和 `CODA_PLUGIN_STATE/runs/<project>/<runId>/heavy-think/round-<planRound>/`，不进入 Git 工作树。同轮同输入指纹可复用已完成阶段；成功产出当前 HEAD 且无新反馈时可幂等返回。格式不完整可同会话补齐一次；普通 Thinker 与 Coordinator 未提交时最多续跑两次完成交付。`dickda dashboard` 展示 Heavy Mode 槽位及最近运行的 Plan Round、Dispatch Round。
 
 ## 2. 工作流概览
 

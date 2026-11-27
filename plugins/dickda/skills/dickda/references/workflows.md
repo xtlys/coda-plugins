@@ -4,6 +4,24 @@
 
 Standard 开发从 Requirement Branch 读取或生成 `.dickda/tasks/PLAN_5L.md`，Thinker 的提交只能改动这份方案。Interactor 先向用户讲解各层取舍，填写开工建议、理由与风险。用户可在确认卡选择开工、打回修订或暂不开工。首轮派单要求 Requirement Branch HEAD 与本次 Plan Confirmation 卡的 SHA 一致。显式选择 `fast` 时以 `seed.head` 为基线。
 
+
+### Thinker Heavy Mode
+
+`heavyThink: false` 默认走单 Thinker；`true` 启用以下严格屏障，每次从同一 `thinkBase` 启动独立会话：
+
+| Stage | 调用 | 可见输入与交付 |
+| --- | --- | --- |
+| 1 | Carbon + Astra 并发 | 相同 Frozen Context（需求、项目配置、已启用规范、旧方案、Plan Round 与最新反馈），互不可见初稿；各交完整 L1–L5 Markdown |
+| 2 | Carbon + Astra 并发 | Carbon 仅审阅 Astra 初稿，Astra 仅审阅 Carbon 初稿；各交非空 Review |
+| 3 | Carbon + Astra 并发 | 自己初稿 + 对方给自己的 Review；逐条给出 Review Decisions（采纳/不采纳与客观依据）及完整修订方案 |
+| 4 | Coordinator（默认 Neon） | 获得全部六份产物与 Frozen Context，综合优势、裁决分歧，仅提交 `.dickda/tasks/PLAN_5L.md` |
+
+槽位 `thinkerCoordinator`、`thinkerCarbon`、`thinkerAstra` 均支持本次输入 > 插件设置 > 默认值；`antigravity` 自动带 `--mode full`，`codex` 默认不带。Stage 1/3 允许从独立会话提交提取方案，格式不足时同 session `--continue` 补齐一次；Stage 4 和普通 Thinker 最多两次 Delivery Completion 续跑。续跑不重复传 Agent 模式参数。Refine 的 `diagnose` 始终使用原 `thinker` JSON 契约。
+
+`lane` 在任何分支副作用前拒绝同时启用 Fast Mode 与 Heavy Mode。`think-gate` 优先检查 `seed.alreadyConfirmed`，为真时直接进入 `lead-plan`，不重新规划或发确认卡；其次 Fast Mode 直达 Lead；普通模式已有方案走 `plan-present`；其余进入 `think`。因此 Heavy Mode 会重新规划继承的旧方案。
+
+`plan-feedback` 每次递增 `planRound` 并保留反馈，下一轮重新冻结上下文。各轮私有 `context.json`、六份 Markdown、`manifest.json` 存放在 `<git-dir>/dickda/heavy-think/<runId>/round-<planRound>/`，镜像到 `CODA_PLUGIN_STATE/runs/<project>/<runId>/heavy-think/round-<planRound>/`；持久目录为恢复依据。同轮同输入指纹复用已完成阶段，输入或反馈变化不复用旧稿。失败包含 Stage、角色、Session、signal、failureKind 与原因，不推送半成品且不清除反馈。只有严格后代、净改动仅限方案且五层非空的定稿才推送 Requirement Branch。返回相同 `head`、`preview` 契约，经 `plan-present` → `plan-confirm` 交 Interactor 和用户；首轮 Lead 仍精确核验 Approved HEAD。
+
 Lead 续跑会拿到 Requirement Branch 当前 HEAD、相对上次视图的新提交与 `git diff --stat`，按提示同步到这个提交再决策。派工时若提供了 Milestone 且有主会话，流程通过 `tell-session` 按运行与轮次同步一次。
 
 `dickda` 中的执行 Lead（`lead`）每轮输出结构化决策 JSON，支持三种核心动作：

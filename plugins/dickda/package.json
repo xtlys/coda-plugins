@@ -48,6 +48,44 @@
           },
           "order": 2
         },
+        "dickda.thinkerCoordinator": {
+          "title": "Thinker · Heavy Mode · Coordinator",
+          "description": "Heavy Mode 协调并综合定稿。",
+          "type": "object",
+          "format": "coda-agent",
+          "default": {
+            "agent": "antigravity",
+            "model": "gemini-4-neon",
+            "effort": "xhigh",
+            "mode": "full"
+          },
+          "order": 3
+        },
+        "dickda.thinkerCarbon": {
+          "title": "Thinker · Heavy Mode · Carbon",
+          "description": "Heavy Mode 独立规划、交叉 Review 与修订。",
+          "type": "object",
+          "format": "coda-agent",
+          "default": {
+            "agent": "antigravity",
+            "model": "gemini-4-carbon",
+            "effort": "high",
+            "mode": "full"
+          },
+          "order": 4
+        },
+        "dickda.thinkerAstra": {
+          "title": "Thinker · Heavy Mode · Astra",
+          "description": "Heavy Mode 独立规划、交叉 Review 与修订。",
+          "type": "object",
+          "format": "coda-agent",
+          "default": {
+            "agent": "codex",
+            "model": "gpt-6.2-astra",
+            "effort": "high"
+          },
+          "order": 5
+        },
         "dickda.lead": {
           "title": "Executors · Lead",
           "description": "执行期总指挥：支持并发派发三工种工程师、自主裁决 Review 取舍、控制难度分级升级与向上同步。",
@@ -59,7 +97,7 @@
             "effort": "xhigh",
             "mode": "full"
           },
-          "order": 3
+          "order": 6
         },
         "dickda.architectStandard": {
           "title": "Executors · Architect（Standard）",
@@ -72,7 +110,7 @@
             "effort": "high",
             "mode": "full"
           },
-          "order": 4
+          "order": 7
         },
         "dickda.architectSenior": {
           "title": "Executors · Architect（Senior）",
@@ -85,7 +123,7 @@
             "effort": "high",
             "mode": "full"
           },
-          "order": 5
+          "order": 8
         },
         "dickda.builderStandard": {
           "title": "Executors · Builder（Standard）",
@@ -97,7 +135,7 @@
             "model": "gpt-6.2-astra",
             "effort": "high"
           },
-          "order": 6
+          "order": 9
         },
         "dickda.builderSenior": {
           "title": "Executors · Builder（Senior）",
@@ -109,7 +147,7 @@
             "model": "gpt-6.2-astra",
             "effort": "max"
           },
-          "order": 7
+          "order": 10
         },
         "dickda.verifierStandard": {
           "title": "Executors · Verifier（Standard）",
@@ -121,7 +159,7 @@
             "model": "gpt-6.1-sol",
             "effort": "high"
           },
-          "order": 8
+          "order": 11
         },
         "dickda.verifierSenior": {
           "title": "Executors · Verifier（Senior）",
@@ -133,7 +171,7 @@
             "model": "gpt-6.1-sol",
             "effort": "max"
           },
-          "order": 9
+          "order": 12
         },
         "dickda.escalationThreshold": {
           "title": "Escalation Threshold",
@@ -142,7 +180,7 @@
           "minimum": 1,
           "maximum": 5,
           "default": 2,
-          "order": 10
+          "order": 13
         },
         "dickda.mergeMethod": {
           "title": "合并方式",
@@ -154,7 +192,7 @@
             "rebase"
           ],
           "default": "merge",
-          "order": 11
+          "order": 14
         }
       }
     }

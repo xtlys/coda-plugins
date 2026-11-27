@@ -8,9 +8,13 @@
       <coda:input name="branch" label="起始分支" type="branch" defaultFrom="session.branch" description="从此分支已提交内容拉出Requirement Branch；留空从目标分支开始" />
       <coda:input name="base" label="目标分支" type="string" default="" description="仅允许仓库Default Branch，留空自动读取" />
       <coda:input name="fast" label="Fast Mode" type="boolean" default="false" description="小修或文档改动可开启，跳过Thinker独立规划步骤直接交执行Lead" />
+      <coda:input name="heavyThink" label="Heavy Mode" type="boolean" default="false" description="Thinker 多模型协同规划；与 Fast Mode 互斥" />
       <coda:input name="devices" label="设备人工验收" type="boolean" default="false" description="交付前是否增加客户端/真机人工验收环节" />
       <coda:input name="device" label="验收设备" type="string" default="" description="填写后在开工前用 testbed 预检设备，仅在实证或人工验收时占用" />
       <coda:input name="thinker" label="Thinker覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="thinkerCoordinator" label="Heavy Mode · Coordinator 覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="thinkerCarbon" label="Heavy Mode · Carbon 覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="thinkerAstra" label="Heavy Mode · Astra 覆盖" type="agent" description="留空采用插件设置" />
       <coda:input name="lead" label="执行Lead覆盖" type="agent" description="留空采用插件设置" />
       <coda:input name="architect" label="Architect（Standard）覆盖" type="agent" description="留空采用插件设置（默认 antigravity claude-opus-5-5 high）" />
       <coda:input name="architectSenior" label="Architect（Senior）覆盖" type="agent" description="留空采用插件设置" />
@@ -37,6 +41,8 @@
 
     <scriptTask id="lane" name="准备Requirement Branch" scriptFormat="bash" coda:timeout="5" coda:retry="2">
       <extensionElements>
+        <coda:env name="FAST" value="=inputs.fast" />
+        <coda:env name="HEAVY_THINK" value="=inputs.heavyThink" />
         <coda:env name="BRANCH" value="=inputs.branch" />
         <coda:env name="BASE" value="=inputs.base" />
         <coda:env name="TITLE" value="=inputs.title" />
@@ -108,13 +114,17 @@
       <conditionExpression xsi:type="tFormalExpression">=seed.alreadyConfirmed = true or inputs.fast = true</conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="reuse-plan" sourceRef="think-gate" targetRef="plan-present">
-      <conditionExpression xsi:type="tFormalExpression">=seed.alreadyConfirmed = false and inputs.fast = false and seed.hasPlan = true</conditionExpression>
+      <conditionExpression xsi:type="tFormalExpression">=seed.alreadyConfirmed = false and inputs.fast = false and inputs.heavyThink = false and seed.hasPlan = true</conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="run-think" sourceRef="think-gate" targetRef="think" />
 
-    <scriptTask id="think" name="Thinker制定Five-Layer Plan（PLAN_5L.md）" scriptFormat="bash" coda:timeout="30" coda:status="Thinker正在制定Five-Layer Plan">
+    <scriptTask id="think" name="Thinker制定Five-Layer Plan（PLAN_5L.md）" scriptFormat="bash" coda:timeout="120" coda:status="Thinker正在制定Five-Layer Plan">
       <extensionElements>
         <coda:env name="THINKER" value="=inputs.thinker" />
+        <coda:env name="HEAVY_THINK" value="=inputs.heavyThink" />
+        <coda:env name="THINKER_COORDINATOR" value="=inputs.thinkerCoordinator" />
+        <coda:env name="THINKER_CARBON" value="=inputs.thinkerCarbon" />
+        <coda:env name="THINKER_ASTRA" value="=inputs.thinkerAstra" />
         <coda:output name="head" />
         <coda:output name="preview" />
       </extensionElements>

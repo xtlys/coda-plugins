@@ -1,8 +1,9 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { assetsByKind, backups, layerHealth } from './assets.mjs';
 import { prompts } from './prompts.mjs';
 import { listRoles, loadSettings } from './roles.mjs';
-import { atomic, config, managed } from './store.mjs';
+import { atomic, config, managed, projectGroup } from './store.mjs';
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -12,16 +13,23 @@ function escapeHtml(value) {
     .replaceAll('"', '&quot;');
 }
 
-export function buildDashboardData(root, settings = loadSettings()) {
+export function buildDashboardData(root, settings = loadSettings(), env = process.env) {
   const cfg = config(root);
   const health = layerHealth(root);
   const roles = listRoles(settings);
   const plan = existsSync(managed(root, 'tasks/PLAN_5L.md')) ? readFileSync(managed(root, 'tasks/PLAN_5L.md'), 'utf8') : '';
   const todo = existsSync(managed(root, 'tasks/TODO_TASK.md')) ? readFileSync(managed(root, 'tasks/TODO_TASK.md'), 'utf8') : '';
+  const runs = env.CODA_PLUGIN_STATE && join(env.CODA_PLUGIN_STATE, 'runs', projectGroup(root).replace(/^dickda:/, ''));
+  const runIds = runs && existsSync(runs) ? (env.GITHUB_RUN_ID ? [env.GITHUB_RUN_ID] : readdirSync(runs)) : [];
+  const states = runIds.map(id => ({ id, file: join(runs, id, 'develop.json') })).filter(run => existsSync(run.file))
+    .sort((a, b) => statSync(b.file).mtimeMs - statSync(a.file).mtimeMs);
+  const latest = states[0];
+  const state = latest ? JSON.parse(readFileSync(latest.file, 'utf8')) : null;
   return {
     project: { name: cfg.name, root, projectId: cfg.projectId },
     health,
     roles,
+    planning: state ? { runId: latest.id, mode: state.heavyThink ? 'Heavy Mode' : 'Standard Mode', planRound: state.planRound ?? 1, dispatchRound: state.round ?? 0 } : null,
     todo: todo.slice(0, 4000),
     plan: plan.slice(0, 6000),
     lints: assetsByKind(root, 'lints').map(({ title, path, summary }) => ({ title, path, summary })),
@@ -131,6 +139,7 @@ export function renderDashboardHtml(data) {
   <div class="header">
     <h1>${escapeHtml(data.project.name)} · Five-Layer Dashboard</h1>
     <div class="sub">统一资产目录：.dickda/ ｜ 点击Inverted Pyramid任意层级切换详情</div>
+    ${data.planning ? `<div class="sub">${escapeHtml(data.planning.mode)} · Plan Round ${data.planning.planRound} · Dispatch Round ${data.planning.dispatchRound} · Run ${escapeHtml(data.planning.runId)}</div>` : ''}
     <div class="pyramid" id="pyramid">
       <button class="layer-btn w1 active" data-layer="L1"><strong>L1 · Codebase</strong><span>架构契约 / 接口骨架 / 重构方案</span></button>
       <button class="layer-btn w2" data-layer="L2"><strong>L2 · Static Analysis</strong><span>Executable Spec Lints (${data.health.l2LintCount})</span></button>

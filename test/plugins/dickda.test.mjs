@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -900,7 +902,7 @@ test('development workflow routes both plan decisions, milestones, dual failures
   const { xml, routes, card } = workflowGraph('dickda');
   assert.deepEqual(routes('think-gate'), {
     'lead-plan': '=seed.alreadyConfirmed = true or inputs.fast = true',
-    'plan-present': '=seed.alreadyConfirmed = false and inputs.fast = false and seed.hasPlan = true', think: 'always',
+    'plan-present': '=seed.alreadyConfirmed = false and inputs.fast = false and inputs.heavyThink = false and seed.hasPlan = true', think: 'always',
   });
   assert.deepEqual(routes('think'), { 'plan-present': 'always' });
   assert.deepEqual(routes('plan-present'), { 'present-gate': 'always' });
@@ -3105,3 +3107,401 @@ test('investigation logs bind deduplication to run, round, session and commit wh
   run('integrate');
   assert.deepEqual(markers(git(origin, 'show', `${reqBranch}:${path}`)), expected, 'replaying the exact execution must not duplicate its trace');
 });
+
+const heavySlots = [
+  ['thinkerCoordinator', 'THINKER_COORDINATOR', 'Coordinator'],
+  ['thinkerCarbon', 'THINKER_CARBON', 'Carbon'],
+  ['thinkerAstra', 'THINKER_ASTRA', 'Astra'],
+];
+
+test('Heavy Mode slots obey override precedence, normalize modes, and appear in the Dashboard', t => {
+  const properties = JSON.parse(readFileSync(join(pluginDir, 'package.json'))).contributes.configuration.properties;
+  const defaults = [
+    { agent: 'antigravity', model: 'gemini-4-neon', effort: 'xhigh', mode: 'full' },
+    { agent: 'antigravity', model: 'gemini-4-carbon', effort: 'high', mode: 'full' },
+    { agent: 'codex', model: 'gpt-6.2-astra', effort: 'high' },
+  ];
+  for (const [i, [slot, env]] of heavySlots.entries()) {
+    assert.equal(properties[`dickda.${slot}`].format, 'coda-agent');
+    assert.deepEqual(properties[`dickda.${slot}`].default, defaults[i]);
+    assert.deepEqual(effectiveSettings({})[slot], defaults[i]);
+    const plugin = { agent: 'codex', model: 'plugin-choice' };
+    const input = { agent: ' antigravity ', model: 'workflow-choice', mode: 'auto' };
+    const settings = { CODA_PLUGIN_SETTINGS: JSON.stringify({ [`dickda.${slot}`]: plugin }) };
+    assert.deepEqual(effectiveSettings(settings)[slot], plugin);
+    const selected = effectiveSettings({ ...settings, [env]: JSON.stringify(input) })[slot];
+    assert.deepEqual(selected, { agent: 'antigravity', model: 'workflow-choice', mode: 'full' });
+    assert.deepEqual(agentArgs(selected), ['--agent', 'antigravity', '--model', 'workflow-choice', '--mode', 'full']);
+    assert.ok(!agentArgs(effectiveSettings(settings)[slot]).includes('--mode'));
+    assert.deepEqual(effectiveSettings({ ...settings, [env]: '' })[slot], plugin);
+  }
+  const f = workflowFixture(t);
+  init(f.work);
+  f.git(f.work, 'remote', 'set-url', 'origin', 'https://github.com/fixture/dickda-demo.git');
+  f.run('lane', { HEAVY_THINK: 'true', GOAL: '控制台规划轮次' });
+  f.run('plan-feedback', { FEEDBACK: '补充并发边界' });
+  const dashboard = buildDashboardData(f.work, loadSettings('{}'), f.env);
+  for (const [slot] of heavySlots) assert.ok(dashboard.roles.some(role => role.id === slot && role.title.includes('Heavy Mode')));
+  assert.deepEqual(dashboard.planning, { runId: f.env.GITHUB_RUN_ID, mode: 'Heavy Mode', planRound: 2, dispatchRound: 0 });
+});
+
+test('Heavy Mode routing preserves confirmed recovery and rejects Fast Mode before any branch side effects', t => {
+  const { xml, routes } = workflowGraph('dickda');
+  assert.match(xml, /name="heavyThink"[^>]*type="boolean" default="false"/);
+  const lane = xml.match(/<scriptTask id="lane"[\s\S]*?<\/scriptTask>/)[0];
+  const think = xml.match(/<scriptTask id="think"[\s\S]*?<\/scriptTask>/)[0];
+  for (const [env, input] of [['FAST', 'fast'], ['HEAVY_THINK', 'heavyThink']]) assert.ok(lane.includes(`name="${env}" value="=inputs.${input}"`));
+  assert.match(think, /coda:timeout="120"/);
+  assert.ok(think.includes('name="HEAVY_THINK" value="=inputs.heavyThink"'));
+  for (const [slot, env] of heavySlots) {
+    assert.match(xml, new RegExp(`name="${slot}"[^>]*type="agent"`));
+    assert.ok(think.includes(`name="${env}" value="=inputs.${slot}"`));
+  }
+  // Evaluate the actual FEEL boolean guards for every routing combination.
+  const route = (seed, inputs) => Object.entries(routes('think-gate')).find(([, guard]) => guard === 'always'
+    || Function('seed', 'inputs', `return ${guard.slice(1).replaceAll(' = ', ' === ').replaceAll(' or ', ' || ').replaceAll(' and ', ' && ')}`)(seed, inputs))[0];
+  for (const fast of [false, true]) for (const heavyThink of [false, true]) for (const hasPlan of [false, true]) {
+    assert.equal(route({ alreadyConfirmed: true, hasPlan }, { fast, heavyThink }), 'lead-plan');
+    assert.equal(route({ alreadyConfirmed: false, hasPlan }, { fast, heavyThink }), fast ? 'lead-plan' : (!heavyThink && hasPlan ? 'plan-present' : 'think'));
+  }
+  const f = workflowFixture(t);
+  const before = f.git(f.origin, 'show-ref');
+  f.run('lane', { FAST: 'true', HEAVY_THINK: 'true' }, /Fast Mode 与 Heavy Mode 互斥/);
+  assert.equal(f.git(f.origin, 'show-ref'), before);
+  assert.equal(readFileSync(f.ghCallsFile, 'utf8'), '');
+  assert.ok(!existsSync(join(f.artifacts, 'develop.json')));
+  assert.ok(!existsSync(f.env.CODA_PLUGIN_STATE));
+});
+
+function installHeavyAgent(fixture) {
+  const file = join(fixture.dir, 'bin/coda-agent');
+  const original = readFileSync(file, 'utf8');
+  writeFileSync(file, `#!${process.execPath}
+const fs = require('node:fs');
+const path = require('node:path');
+const cp = require('node:child_process');
+const args = process.argv.slice(2);
+const prompt = fs.readFileSync(args[args.indexOf('--prompt-file') + 1], 'utf8');
+const [, stageText, role] = prompt.match(/# Heavy Mode · Stage (\\d) · (\\w+)/);
+const stage = Number(stageText);
+const context = JSON.parse(prompt.match(/## Frozen Context\\n(\\{[\\s\\S]*?\\n\\})/)[1]);
+const round = context.planRound;
+const dir = process.env.FIXTURE_DIR;
+const key = round + '-' + stage + '-' + role;
+const countFile = path.join(dir, key + '.count');
+const attempt = (fs.existsSync(countFile) ? Number(fs.readFileSync(countFile)) : 0) + 1;
+fs.writeFileSync(countFile, String(attempt));
+const session = 'heavy-' + key;
+const event = (event, extra = {}) => fs.appendFileSync(path.join(dir, 'heavy-events.jsonl'), JSON.stringify({ event, at: Number(process.hrtime.bigint()), stage, role, round, attempt, session, ...extra }) + '\\n');
+const git = (...a) => cp.execFileSync('git', a, { encoding: 'utf8' }).trim();
+event('start', { args, prompt, cwd: process.cwd(), context, status: git('status', '--porcelain') });
+const plan = ${JSON.stringify(blueprint)};
+const marker = role.toUpperCase() + '_' + (stage === 1 ? 'DRAFT' : stage === 2 ? 'REVIEW' : stage === 3 ? 'REVISED' : 'FINAL') + '_R' + round + '_' + context.agents.Carbon.model;
+const fault = process.env.HEAVY_FAULT === stage + ':' + role ? process.env.HEAVY_FAULT_KIND : '';
+function commitPlan(body, outside = false) {
+  const work = path.join(dir, 'session-' + key + '-' + attempt);
+  git('worktree', 'add', '--detach', work, context.thinkBase);
+  fs.writeFileSync(path.join(work, '.dickda/tasks/PLAN_5L.md'), body);
+  if (outside) fs.writeFileSync(path.join(work, 'outside.mjs'), 'export const forbidden = true;');
+  git('-C', work, 'add', '-A');
+  git('-C', work, 'commit', '-m', key + '-' + attempt);
+  return git('-C', work, 'rev-parse', 'HEAD');
+}
+(async () => {
+  if (stage <= 3) {
+    // Keep readiness across format continuations and cached-peer retries, but isolate frozen inputs.
+    const fingerprint = require('node:crypto').createHash('sha256').update(JSON.stringify(context)).digest('hex');
+    const barrier = path.join(dir, 'heavy-ready', fingerprint, String(stage));
+    fs.mkdirSync(barrier, { recursive: true });
+    const ready = path.join(barrier, role);
+    const temporary = ready + '.' + process.pid + '.tmp';
+    fs.writeFileSync(temporary, 'ready');
+    fs.renameSync(temporary, ready);
+    const peer = role === 'Carbon' ? 'Astra' : 'Carbon';
+    const deadline = Date.now() + 5000;
+    while (!fs.existsSync(path.join(barrier, peer))) {
+      if (Date.now() >= deadline) throw new Error('Stage ' + stage + ' ' + role + ': timed out waiting for ' + peer + ' readiness');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  let answer = stage === 2 ? marker + ': 1. 补足并发状态的 L3 验证。' : plan + '\\n' + marker;
+  if (stage === 3) answer = '## Review Decisions\\n- 1. 采纳对方的 L3 建议，依据是状态转换存在并发风险。\\n\\n' + answer;
+  let head;
+  if (fault === 'fail') {
+    event('end');
+    console.log(JSON.stringify({ session, answer: 'policy_blocked: review denied' }));
+    process.exitCode = 1;
+    return;
+  }
+  if (fault === 'invalid') answer = answer.replace(/## L5[\\s\\S]*/, '');
+  if (fault === 'empty') answer = '  ';
+  if (fault === 'decisions') answer = '## Review Decisions\\n\\n' + plan;
+  if (stage === 1 && role === 'Carbon' && process.env.HEAVY_COMMITTED_DRAFT) {
+    head = commitPlan(answer);
+    answer = '初稿已在独立会话提交。';
+  }
+  if (fault === 'format-once' && attempt === 1) answer = '正在整理方案。';
+  if (stage === 4) {
+    if (process.env.HEAVY_FINISH_LATE && attempt === 1) {
+      head = context.thinkBase;
+      answer = '等待后台检查结束。';
+    } else if (fault === 'base') head = context.thinkBase;
+    else head = commitPlan(answer, fault === 'outside');
+  }
+  event('end', { answer, head });
+  console.log(JSON.stringify({ session, answer, ...(head ? { head } : {}) }));
+})().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
+`);
+  return () => writeFileSync(file, original);
+}
+
+function heavyEvents(f) {
+  return readFileSync(join(f.dir, 'heavy-events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+}
+
+function assertHeavyRound(f, round, feedback = '') {
+  const events = heavyEvents(f).filter(e => e.round === round);
+  const starts = events.filter(e => e.event === 'start');
+  const ends = events.filter(e => e.event === 'end');
+  assert.deepEqual(starts.map(e => e.stage).sort(), [1, 1, 2, 2, 3, 3, 4]);
+  for (let stage = 1; stage <= 3; stage++) {
+    const current = starts.filter(e => e.stage === stage);
+    const done = ends.filter(e => e.stage === stage);
+    assert.ok(Math.max(...current.map(e => e.at)) < Math.min(...done.map(e => e.at)), `Stage ${stage} must overlap`);
+    assert.ok(Math.min(...starts.filter(e => e.stage === stage + 1).map(e => e.at)) > Math.max(...done.map(e => e.at)), `Stage ${stage + 1} must wait for both results`);
+  }
+  const find = (stage, role) => starts.find(e => e.stage === stage && e.role === role);
+  const token = (role, kind) => `${role.toUpperCase()}_${kind}_R${round}`;
+  assert.deepEqual(find(1, 'Carbon').context, find(1, 'Astra').context);
+  for (const call of starts) {
+    assert.equal(call.status, '', 'No intermediate files in the workflow worktree');
+    assert.equal(call.context.planRound, round);
+    assert.equal(call.context.planFeedback, feedback);
+    assert.equal(call.args[call.args.indexOf('--commit') + 1], call.context.thinkBase);
+    assert.ok(call.context.project && call.context.projectDoc && call.context.guidelines && call.context.task);
+    assert.equal(call.args.includes('--mode'), call.role !== 'Astra');
+    if (call.role !== 'Astra') assert.equal(call.args[call.args.indexOf('--mode') + 1], 'full');
+  }
+  for (const [own, other] of [['Carbon', 'Astra'], ['Astra', 'Carbon']]) {
+    assert.ok(!find(1, own).prompt.includes(token(other, 'DRAFT')));
+    assert.ok(!find(1, own).prompt.includes(token(own, 'DRAFT')));
+    assert.ok(find(2, own).prompt.includes(token(other, 'DRAFT')));
+    assert.ok(!find(2, own).prompt.includes(token(own, 'DRAFT')));
+    assert.ok(find(3, own).prompt.includes(token(own, 'DRAFT')));
+    assert.ok(find(3, own).prompt.includes(token(other, 'REVIEW')));
+    assert.ok(!find(3, own).prompt.includes(token(own, 'REVIEW')));
+    for (const kind of ['DRAFT', 'REVIEW', 'REVISED']) assert.ok(find(4, 'Coordinator').prompt.includes(token(own, kind)));
+  }
+}
+
+test('Heavy Mode replans inherited plans with real parallel barriers, isolated inputs, idempotent recovery and feedback rounds', t => {
+  const f = workflowFixture(t, developScript, true);
+  const { work, origin, git, commit, run, lead, state } = f;
+  init(work);
+  writeFileSync(join(work, '.dickda/tasks/TODO_TASK.md'), '# 已有需求\n\n交付入口');
+  writeFileSync(join(work, '.dickda/tasks/PLAN_5L.md'), blueprint + '\nINHERITED_REFERENCE');
+  const inherited = commit(work, 'existing plan');
+  const { reqBranch } = run('lane', { BRANCH: 'main', GOAL: '新的入口需求', HEAVY_THINK: 'true' });
+  assert.equal(run('seed').hasPlan, 'true');
+  const restore = installHeavyAgent(f);
+  const first = run('think', { HEAVY_THINK: 'true' });
+  assert.notEqual(first.head, inherited);
+  assertHeavyRound(f, 1);
+  assert.ok(heavyEvents(f)[0].context.previousPlan.includes('INHERITED_REFERENCE'));
+  assert.equal(git(origin, 'rev-parse', reqBranch), first.head);
+  assert.deepEqual(git(origin, 'diff', '--name-only', heavyEvents(f)[0].context.thinkBase, first.head).split('\n'), ['.dickda/tasks/PLAN_5L.md']);
+  const store = join(persistentRunDir(f), 'heavy-think/round-1');
+  for (const file of ['context.json', 'carbon-draft.md', 'astra-draft.md', 'carbon-review-astra.md', 'astra-review-carbon.md', 'carbon-revised.md', 'astra-revised.md', 'manifest.json']) {
+    assert.ok(existsSync(join(store, file)), file);
+    const local = runtime(heavyEvents(f)[0].cwd, `heavy-think/${f.env.GITHUB_RUN_ID}/round-1/${file}`);
+    assert.equal(readFileSync(local, 'utf8'), readFileSync(join(store, file), 'utf8'));
+  }
+  // Reclaim the private checkout cache and artifacts, leaving the durable run state only.
+  rmSync(runtime(heavyEvents(f)[0].cwd, `heavy-think/${f.env.GITHUB_RUN_ID}`), { recursive: true });
+  rmSync(f.artifacts, { recursive: true });
+  assert.deepEqual(run('think', { HEAVY_THINK: 'true' }), first);
+  assert.equal(heavyEvents(f).length, 14);
+  const feedback = 'Interactor 与用户要求补充离线重试验证';
+  run('plan-feedback', { FEEDBACK: feedback });
+  assert.equal(state().planRound, 2);
+  assert.equal(state().round, 0);
+  const second = run('think', { HEAVY_THINK: 'true' });
+  assert.notEqual(second.head, first.head);
+  assertHeavyRound(f, 2, feedback);
+  assert.equal(state().planFeedback, '');
+  restore();
+  const dispatch = { action: 'dispatch', jobs: [codingJob] };
+  lead(dispatch, /基线提交不一致/, { APPROVED_HEAD: first.head, FAST: 'false' });
+  assert.equal(lead(dispatch, undefined, { APPROVED_HEAD: second.head, FAST: 'false' }).route, 'dispatch');
+  assert.equal(state().approvedPlanHead, second.head);
+  assert.equal(state().confirmedPlanHead, second.head);
+  assert.equal(state().round, 1);
+  assert.equal(state().planRound, 2);
+  rmSync(f.artifacts, { recursive: true });
+  run('lane', { HEAVY_THINK: 'true' });
+  const seed = run('seed');
+  assert.equal(seed.alreadyConfirmed, 'true');
+  assert.equal(seed.head, second.head);
+  assert.equal(heavyEvents(f).length, 28, 'Recovery does not repeat planning');
+});
+
+for (const [stage, role, kind, expected] of [
+  [1, 'Carbon', 'invalid', /L1–L5/],
+  [2, 'Astra', 'fail', /policy_blocked/],
+  [2, 'Carbon', 'empty', /Review 须为非空/],
+  [3, 'Carbon', 'invalid', /L1–L5/],
+  [3, 'Astra', 'decisions', /Review Decisions/],
+  [4, 'Coordinator', 'outside', /只可修改.*outside.mjs/],
+  [4, 'Coordinator', 'base', /严格后代/],
+]) {
+  test(`Heavy Mode Stage ${stage} ${role} ${kind} stops without publishing or dropping feedback`, t => {
+    const f = workflowFixture(t, developScript, true);
+    const { run, state, git, origin } = f;
+    const { reqBranch } = run('lane', { GOAL: '完整规划失败门禁', HEAVY_THINK: 'true' });
+    const seed = run('seed');
+    run('plan-feedback', { FEEDBACK: '保留这条修订意见直到完整交付' });
+    installHeavyAgent(f);
+    run('think', { HEAVY_THINK: 'true', HEAVY_FAULT: `${stage}:${role}`, HEAVY_FAULT_KIND: kind }, expected);
+    assert.equal(git(origin, 'rev-parse', reqBranch), seed.head);
+    assert.equal(state().planFeedback, '保留这条修订意见直到完整交付');
+    const events = heavyEvents(f);
+    assert.ok(events.every(e => e.stage <= stage));
+    assert.ok(events.filter(e => e.event === 'start').every(e => e.status === ''));
+    const manifest = JSON.parse(readFileSync(join(persistentRunDir(f), 'heavy-think/round-2/manifest.json')));
+    assert.equal(manifest.failure.stage, stage);
+    assert.equal(manifest.failure.role, role);
+    assert.ok(manifest.failure.failureKind);
+    assert.ok(manifest.failure.session);
+    assert.ok(manifest.failure.detail);
+    assert.ok(!git(origin, 'ls-tree', '-r', '--name-only', reqBranch).match(/carbon-|astra-|context.json|manifest.json/));
+    if (kind === 'invalid' || kind === 'decisions') assert.equal(events.filter(e => e.event === 'start' && e.stage === stage && e.role === role).length, 2);
+    if (kind === 'base') assert.equal(events.filter(e => e.event === 'start' && e.stage === 4).length, 3);
+  });
+}
+
+test('Heavy Mode retries completed stages from durable state, but fingerprints invalidate changed input', t => {
+  const f = workflowFixture(t);
+  const { run, state } = f;
+  run('lane', { GOAL: '阶段恢复', HEAVY_THINK: 'true' });
+  run('seed');
+  installHeavyAgent(f);
+  run('think', { HEAVY_THINK: 'true', HEAVY_FAULT: '2:Astra', HEAVY_FAULT_KIND: 'empty' }, /Stage 2/);
+  const count = heavyEvents(f).length;
+  rmSync(f.artifacts, { recursive: true });
+  const first = run('think', { HEAVY_THINK: 'true' });
+  assert.ok(heavyEvents(f).slice(count).every(e => e.stage >= 2), 'Completed drafts are reused after the checkout is reclaimed');
+  assert.equal(state().planRound, 1);
+  const beforeChange = heavyEvents(f).length;
+  const second = run('think', { HEAVY_THINK: 'true', THINKER_CARBON: '{"agent":"codex","model":"changed-model"}' });
+  assert.notEqual(first.head, second.head);
+  const restarted = heavyEvents(f).slice(beforeChange).filter(e => e.event === 'start');
+  assert.equal(restarted.length, 7);
+  assert.ok(restarted.some(e => e.stage === 1 && e.args.includes('changed-model') && !e.args.includes('--mode')));
+});
+
+test('Heavy Mode extracts committed drafts, repairs a format once and finishes Coordinator delivery in the same session', t => {
+  const f = workflowFixture(t);
+  f.run('lane', { GOAL: '有界补齐', HEAVY_THINK: 'true' });
+  f.run('seed');
+  installHeavyAgent(f);
+  const result = f.run('think', { HEAVY_THINK: 'true', HEAVY_COMMITTED_DRAFT: 'true', HEAVY_FAULT: '1:Astra', HEAVY_FAULT_KIND: 'format-once', HEAVY_FINISH_LATE: 'true' });
+  assert.match(result.preview, /COORDINATOR_FINAL/);
+  const events = heavyEvents(f).filter(e => e.event === 'start');
+  assert.equal(events.length, 9);
+  assert.equal(events.filter(e => e.stage === 1 && e.role === 'Carbon').length, 1);
+  assertContinueOnly(events.find(e => e.stage === 1 && e.role === 'Astra' && e.attempt === 2).args, 'heavy-1-1-Astra');
+  assertContinueOnly(events.find(e => e.stage === 4 && e.attempt === 2).args, 'heavy-1-4-Coordinator');
+  assert.ok(events.find(e => e.stage === 2 && e.role === 'Astra').prompt.includes('CARBON_DRAFT_R1'));
+});
+
+test('ordinary Thinker remains single-model and completes delivery with bounded continuation', t => {
+  const f = workflowFixture(t);
+  const { run, work, git, commit, origin, state } = f;
+  const { reqBranch } = run('lane', { GOAL: '普通规划续跑' });
+  const seed = run('seed');
+  git(work, 'fetch', 'origin', reqBranch);
+  git(work, 'checkout', '--detach', seed.head);
+  writeFileSync(join(work, '.dickda/tasks/PLAN_5L.md'), blueprint);
+  const head = commit(work, 'single Thinker plan');
+  const waiting = { reply: { session: 'single-thinker', head: seed.head, answer: '后台检查未完成' } };
+  assert.equal(run('think', queuedAgent(f, [waiting, { reply: { session: 'single-thinker', head } }])).head, head);
+  const calls = agentCalls(f);
+  assert.equal(calls.length, 2);
+  assert.ok(calls[0].args.includes('gemini-4-carbon'));
+  assertContinueOnly(calls[1].args, 'single-thinker');
+  assert.equal(state().heavyThink, false);
+  assert.ok(!existsSync(join(persistentRunDir(f), 'heavy-think')));
+  run('plan-feedback', { FEEDBACK: '继续普通规划' });
+  const blocked = { reply: { session: 'blocked-thinker', head, answer: '后台工作未提交' } };
+  run('think', queuedAgent(f, [blocked, blocked, blocked]), /严格后代/);
+  assert.equal(agentCalls(f).length, 5);
+  assert.equal(state().planFeedback, '继续普通规划');
+  assert.equal(git(origin, 'rev-parse', reqBranch), head);
+});
+
+test('Refine diagnose ignores Heavy Mode and keeps its single Thinker JSON contract', t => {
+  const f = refineFixture(t);
+  const before = agentCalls(f).length;
+  const diagnosis = { layers: ['L4'], summary: '继续单 Thinker 诊断', learningUpdates: ['保持 JSON 契约'] };
+  const inputs = Object.fromEntries(heavySlots.map(([slot, env]) => [env, JSON.stringify({ agent: 'antigravity', model: `unused-${slot}` })]));
+  f.run('diagnose', { ...inputs, HEAVY_THINK: 'true', THINKER: '{"agent":"codex","model":"single-refine"}', AGENT_REPLY: JSON.stringify({ answer: JSON.stringify(diagnosis) }) });
+  const calls = agentCalls(f).slice(before);
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].args.includes('single-refine'));
+  assert.ok(!calls[0].args.includes('--mode'));
+  assert.ok(calls[0].args.every(arg => !arg.startsWith('unused-')));
+  assert.deepEqual(f.state().diagnosis.layers, ['L4']);
+});
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  test(`async coda-agent cleans up concurrent children on ${signal} and preserves structured diagnostics`, async t => {
+    const f = createGitRepo(t);
+    const script = join(f.dir, 'async-agent.mjs');
+    writeFileSync(join(f.dir, 'bin/coda-agent'), `#!${process.execPath}
+const fs = require('node:fs');
+const session = process.argv[2];
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
+  fs.writeFileSync(process.env.FIXTURE_DIR + '/' + session + '.stopped', signal);
+  process.exit(0);
+});
+console.log(JSON.stringify({ session, head: 'abc', answer: 'waiting for input' }));
+fs.writeFileSync(process.env.FIXTURE_DIR + '/' + session + '.ready', String(process.pid));
+setInterval(() => {}, 1000);
+`, { mode: 0o755 });
+    const agentModule = new URL('../../plugins/dickda/scripts/agent.mjs', import.meta.url).href;
+    writeFileSync(script, `import { callCodaAgentAsync } from ${JSON.stringify(agentModule)};
+const results = await Promise.all([callCodaAgentAsync(['carbon']), callCodaAgentAsync(['astra'])]);
+console.log(JSON.stringify(results));
+`);
+    const parent = spawn(process.execPath, [script], { cwd: f.work, env: f.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    t.after(() => parent.kill('SIGKILL'));
+    let output = '', error = '';
+    parent.stdout.on('data', data => { output += data; });
+    parent.stderr.on('data', data => { error += data; });
+    const exited = once(parent, 'exit');
+    for (const role of ['carbon', 'astra']) {
+      while (!existsSync(join(f.dir, `${role}.ready`))) {
+        assert.equal(parent.exitCode, null, error);
+        await delay(10);
+      }
+    }
+    parent.kill(signal);
+    const [status] = await exited;
+    assert.equal(status, signal === 'SIGINT' ? 130 : 143, error);
+    const results = JSON.parse(output.trim());
+    for (const [index, role] of ['carbon', 'astra'].entries()) {
+      assert.equal(readFileSync(join(f.dir, `${role}.stopped`), 'utf8'), signal);
+      const result = results[index];
+      assert.equal(result.status, null);
+      assert.equal(result.signal, signal);
+      assert.equal(result.failureKind, 'cancelled');
+      assert.equal(result.session, role);
+      assert.equal(result.head, 'abc');
+      assert.equal(result.answer, 'waiting for input');
+      assert.ok(result.detail.includes('waiting for input'));
+    }
+  });
+}
