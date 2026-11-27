@@ -8,7 +8,8 @@ import { listRoles, loadSettings, resolveEngineer, rolePrompt } from './roles.mj
 import { config, init, json, lock, repo, requireValue } from './store.mjs';
 import { runAgentVerifiers, runCodeVerifiers } from './verify.mjs';
 
-const HELP = `dickda init [--root <目录>]
+const HELP = `dickda --help | -h | help
+dickda init [--root <目录>]
 dickda status [--root <目录>]
 dickda role list | show <interactor|thinker|lead|architect|builder|verifier> | resolve <architect|builder|verifier> [--tier standard|senior] [--difficulty normal|hard] [--rejections <次数>]
 dickda prompt list | show <id> [--topic <主题id>] | put --file <json> | enable <id> | disable <id> | template <新id>
@@ -21,18 +22,24 @@ dickda dashboard [--output <HTML输出路径>] [--root <目录>]`;
 try {
   const { positionals: p, values: v } = parseArgs({
     allowPositionals: true,
-    options: Object.fromEntries(
-      ['root', 'file', 'topic', 'tier', 'difficulty', 'rejections', 'track', 'kind', 'earliest', 'output']
-        .map(k => [k, { type: 'string' }])
-    ),
+    options: {
+      help: { type: 'boolean', short: 'h' },
+      ...Object.fromEntries(
+        ['root', 'file', 'topic', 'tier', 'difficulty', 'rejections', 'track', 'kind', 'earliest', 'output']
+          .map(k => [k, { type: 'string' }])
+      ),
+    },
   });
+
+  if (v.help || !p.length || p[0] === 'help') {
+    console.log(HELP);
+    process.exit(0);
+  }
 
   const settings = loadSettings();
   let output;
 
-  if (!p.length || p[0] === 'help') {
-    output = HELP;
-  } else if (p[0] === 'role') {
+  if (p[0] === 'role') {
     if (p[1] === 'list') output = listRoles(settings);
     else if (p[1] === 'show') output = rolePrompt(p[2]);
     else if (p[1] === 'resolve') {

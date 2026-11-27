@@ -7,11 +7,11 @@ export const TRADES = ['architect', 'builder', 'verifier'];
 export const TIERS = ['standard', 'senior'];
 
 export const DEFAULT_SETTINGS = {
-  'dickda.interactor': { agent: 'antigravity', model: 'gemini-4-neon', effort: 'xhigh' },
-  'dickda.thinker': { agent: 'antigravity', model: 'gemini-4-carbon', effort: 'high' },
-  'dickda.lead': { agent: 'antigravity', model: 'gemini-4-neon', effort: 'xhigh' },
-  'dickda.architectStandard': { agent: 'antigravity', model: 'claude-opus-5-5', effort: 'high' },
-  'dickda.architectSenior': { agent: 'antigravity', model: 'gemini-4-carbon', effort: 'high' },
+  'dickda.interactor': { agent: 'antigravity', mode: 'full', model: 'gemini-4-neon', effort: 'xhigh' },
+  'dickda.thinker': { agent: 'antigravity', mode: 'full', model: 'gemini-4-carbon', effort: 'high' },
+  'dickda.lead': { agent: 'antigravity', mode: 'full', model: 'gemini-4-neon', effort: 'xhigh' },
+  'dickda.architectStandard': { agent: 'antigravity', mode: 'full', model: 'claude-opus-5-5', effort: 'high' },
+  'dickda.architectSenior': { agent: 'antigravity', mode: 'full', model: 'gemini-4-carbon', effort: 'high' },
   'dickda.builderStandard': { agent: 'codex', model: 'gpt-6.2-astra', effort: 'high' },
   'dickda.builderSenior': { agent: 'codex', model: 'gpt-6.2-astra', effort: 'max' },
   'dickda.verifierStandard': { agent: 'codex', model: 'gpt-6.1-sol', effort: 'high' },
@@ -21,12 +21,12 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const ROLE_LABELS = {
-  interactor: { group: '交互者', title: '交互者（Interactor）', tiered: false },
-  thinker: { group: '思考者', title: '思考者（Thinker）', tiered: false },
-  lead: { group: '执行者', title: '执行者 · 主控（Lead）', tiered: false },
-  architect: { group: '执行者', title: '执行者 · 架构（Architect）', tiered: true },
-  builder: { group: '执行者', title: '执行者 · 实现（Builder）', tiered: true },
-  verifier: { group: '执行者', title: '执行者 · 验证（Verifier）', tiered: true },
+  interactor: { group: 'Interactor', title: 'Interactor', tiered: false },
+  thinker: { group: 'Thinker', title: 'Thinker', tiered: false },
+  lead: { group: 'Executors', title: 'Executors · Lead', tiered: false },
+  architect: { group: 'Executors', title: 'Executors · Architect', tiered: true },
+  builder: { group: 'Executors', title: 'Executors · Builder', tiered: true },
+  verifier: { group: 'Executors', title: 'Executors · Verifier', tiered: true },
 };
 
 function validAgent(spec, label) {
@@ -38,6 +38,7 @@ function validAgent(spec, label) {
   if (spec.options && typeof spec.options === 'object' && !Array.isArray(spec.options) && Object.keys(spec.options).length) {
     clean.options = spec.options;
   }
+  if (clean.agent === 'antigravity') clean.mode = 'full';
   return clean;
 }
 
@@ -102,20 +103,20 @@ export function resolveEngineer(trade, { tier, difficulty = 'normal', rejections
   const threshold = settings.escalationThreshold;
 
   let resolvedTier = 'standard';
-  let reason = '常规任务';
+  let reason = 'Normal 任务';
   let escalated = false;
 
   if (tier === 'senior') {
     resolvedTier = 'senior';
-    reason = '主控显式指派高级工程师';
+    reason = 'Lead显式指派Senior Engineer';
     escalated = count > 0 || difficulty === 'hard';
   } else if (difficulty === 'hard') {
     resolvedTier = 'senior';
-    reason = '高难任务自动启用高级工程师';
+    reason = 'Hard 任务自动启用Senior Engineer';
     escalated = true;
   } else if (count >= threshold) {
     resolvedTier = 'senior';
-    reason = `常规工程师已连续被打回 ${count} 次（阈值 ${threshold}），自动升级为高级工程师`;
+    reason = `Standard Engineer已连续被打回 ${count} 次（阈值 ${threshold}），自动升级为Senior Engineer`;
     escalated = true;
   }
 
@@ -175,7 +176,7 @@ export function listRoles(settings = loadSettings()) {
       standard: settings[role].standard,
       senior: settings[role].senior,
       escalationThreshold: settings.escalationThreshold,
-      display: `常规 ${formatAgent(settings[role].standard)} ｜ 高级 ${formatAgent(settings[role].senior)}`,
+      display: `Standard ${formatAgent(settings[role].standard)} ｜ Senior ${formatAgent(settings[role].senior)}`,
     };
   });
 }

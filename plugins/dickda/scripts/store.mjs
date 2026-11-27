@@ -125,7 +125,7 @@ export function projectGroup(root, remote) {
 }
 
 export const INVESTIGATE_MARKER = '# !!!DICKDA_INVESTIGATE!!!\n';
-export const DEFAULT_PLAN = '# 五层技术方案\n\n## L1 · Codebase\n\n## L2 · Static Analysis\n\n## L3 · Verification\n\n## L4 · Work Graph & Prose\n\n## L5 · Human Review\n';
+export const DEFAULT_PLAN = '# Five-Layer Plan\n\n## L1 · Codebase\n\n## L2 · Static Analysis\n\n## L3 · Verification\n\n## L4 · Work Graph & Prose\n\n## L5 · Human Review\n';
 
 export function init(root) {
   const cfgFile = managed(root, 'project.json');

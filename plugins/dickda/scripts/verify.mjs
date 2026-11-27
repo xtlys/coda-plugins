@@ -73,7 +73,7 @@ export function runCodeVerifiers(root) {
     verifiers: checks,
     summary: [
       `L2 Lints：${lintOutcome.total ? `${lintOutcome.total - lintOutcome.failed}/${lintOutcome.total} 通过` : '无自定义规则'}`,
-      `L3 代码验证器：${checks.length ? `${checks.length - failedVerifier.length}/${checks.length} 通过` : '无代码验证脚本'}`,
+      `L3 Code Verifier：${checks.length ? `${checks.length - failedVerifier.length}/${checks.length} 通过` : '无代码验证脚本'}`,
       ...lintOutcome.results.filter(r => !r.passed).map(r => `  - [Lint 失败] ${r.path}：${r.output}`),
       ...failedVerifier.map(c => `  - [验证失败] ${c.id}：${c.output}`),
     ].join('\n'),
@@ -91,7 +91,7 @@ export function extractJsonBlock(text, tag = 'VERDICT_JSON') {
   return null;
 }
 
-function skippedAgent(summary = 'L3 Agent/UI 验证器：当前 .dickda/verifiers/ 无 Agent/UI 规约文件，跳过。') {
+function skippedAgent(summary = 'L3 Agent/UI Verifier：当前 .dickda/verifiers/ 无 Agent/UI 规约文件，跳过。') {
   return { passed: true, skipped: true, summary, findings: [], evidence: [] };
 }
 
@@ -116,7 +116,7 @@ export function runAgentVerifiers(root, { tier, difficulty = 'normal', rejection
   try {
     const args = [
       ...(commit ? ['--commit', commit] : []),
-      '--title', `dickda模式 · 实证验收（${resolved.tier}）`,
+      '--title', `dickda Mode · 实证验收（${resolved.tier}）`,
       ...agentArgs(resolved.agent),
       '--json',
       '--prompt-file', promptFile,
@@ -127,7 +127,7 @@ export function runAgentVerifiers(root, { tier, difficulty = 'normal', rejection
     requireValue(res.status === 0, `coda-agent 验证会话异常退出（退出码 ${res.status}）`);
     const payload = JSON.parse(res.stdout);
     const verdict = extractJsonBlock(payload.answer ?? '');
-    requireValue(verdict && typeof verdict.passed === 'boolean', '验证工程师未返回包含 passed 布尔值的结构化 JSON 结论');
+    requireValue(verdict && typeof verdict.passed === 'boolean', 'Verifier未返回包含 passed 布尔值的结构化 JSON 结论');
     const findings = Array.isArray(verdict.findings) ? verdict.findings : [];
     const hasMust = findings.some(f => f.level === 'must');
     const passed = verdict.passed === true && !hasMust;
@@ -145,7 +145,7 @@ export function runAgentVerifiers(root, { tier, difficulty = 'normal', rejection
       escalated: resolved.escalated,
       agent: resolved.summary,
       session: payload.session,
-      summary: `L3 Agent/UI 验证（${resolved.summary}）：${passed ? '通过' : '未通过'} — ${verdict.summary ?? ''}`,
+      summary: `L3 Agent/UI Track（${resolved.summary}）：${passed ? '通过' : '未通过'} — ${verdict.summary ?? ''}`,
       evidence: verdict.evidence ?? [],
       findings,
     };
@@ -173,7 +173,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       } else if (action === 'code') {
         result = runCodeVerifiers(root);
       } else {
-        result = process.env.UI === 'false' ? skippedAgent('L3 Agent/UI 验证已按参数跳过。') : runAgentVerifiers(root, {
+        result = process.env.UI === 'false' ? skippedAgent('L3 Agent/UI Track已按参数跳过。') : runAgentVerifiers(root, {
           tier: process.env.TIER || undefined,
           commit,
           device: process.env.DEVICE || '',
@@ -190,11 +190,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       const codeRes = artifacts && existsSync(join(artifacts, 'code-verify.json'))
         ? JSON.parse(readFileSync(join(artifacts, 'code-verify.json'), 'utf8'))
         : null;
-      requireValue(codeRes && typeof codeRes.passed === 'boolean' && codeRes.commit, '缺少代码验证轨道结果或提交 SHA');
+      requireValue(codeRes && typeof codeRes.passed === 'boolean' && codeRes.commit, '缺少Code Track 结果或提交 SHA');
       const agentRes = artifacts && existsSync(join(artifacts, 'agent-verify.json'))
         ? JSON.parse(readFileSync(join(artifacts, 'agent-verify.json'), 'utf8'))
-        : { passed: true, skipped: true, commit: codeRes.commit, summary: 'L3 Agent/UI 验证未启用。', evidence: [], findings: [] };
-      requireValue(agentRes.commit === codeRes.commit, `双轨验证提交不一致：代码轨道 ${codeRes.commit} vs 实证轨道 ${agentRes.commit}`);
+        : { passed: true, skipped: true, commit: codeRes.commit, summary: 'L3 Agent/UI Track未启用。', evidence: [], findings: [] };
+      requireValue(agentRes.commit === codeRes.commit, `Dual-Track Verification提交不一致：Code Track ${codeRes.commit} vs Agent/UI Track ${agentRes.commit}`);
       const passed = Boolean(codeRes.passed && agentRes.passed);
       const report = [`验证提交：\`${codeRes.commit}\``, codeRes.summary, agentRes.summary].filter(Boolean).join('\n\n');
       appendGithubOutput({
@@ -205,7 +205,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         findings: JSON.stringify(agentRes.findings ?? []),
       });
       if (process.env.GITHUB_STEP_SUMMARY) {
-        writeFileSync(process.env.GITHUB_STEP_SUMMARY, `## dickda模式 · 双轨验证（${codeRes.commit.slice(0, 12)}）：${passed ? '通过' : '未通过'}\n\n${report}\n`, { flag: 'a' });
+        writeFileSync(process.env.GITHUB_STEP_SUMMARY, `## dickda Mode · Dual-Track Verification（${codeRes.commit.slice(0, 12)}）：${passed ? '通过' : '未通过'}\n\n${report}\n`, { flag: 'a' });
       }
     } else {
       throw new Error(`未知 verify 动作：${action}`);

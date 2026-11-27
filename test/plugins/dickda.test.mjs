@@ -11,7 +11,7 @@ import { buildDashboardData } from '../../plugins/dickda/scripts/dashboard.mjs';
 import { enrichDispatchBatch, evaluateVerificationGate, evaluateVerifierAnswer, integrateWorkerResults } from '../../plugins/dickda/scripts/develop.mjs';
 import { builtinPrompts, enablePrompt, promptTemplate, prompts, putPrompt, renderPrompt } from '../../plugins/dickda/scripts/prompts.mjs';
 import { applyProseRefinements, buildRefineContext, executeRefinePlan, normalizeDiagnosis } from '../../plugins/dickda/scripts/refine.mjs';
-import { ROLES, loadSettings, resolveEngineer, rolePrompt } from '../../plugins/dickda/scripts/roles.mjs';
+import { ROLES, DEFAULT_SETTINGS, agentArgs, effectiveSettings, loadSettings, resolveEngineer, rolePrompt } from '../../plugins/dickda/scripts/roles.mjs';
 import { INVESTIGATE_MARKER, hash, init, inside, projectGroup, runtime } from '../../plugins/dickda/scripts/store.mjs';
 import { checkoutTargetCommit, runAgentVerifiers, runCodeVerifiers } from '../../plugins/dickda/scripts/verify.mjs';
 
@@ -91,7 +91,7 @@ function workflowGraph(name) {
   return { xml, routes, card };
 }
 
-const blueprint = ['架构边界', 'Lint 规则', '验证用例', '并发工单', '人工锚点']
+const blueprint = ['架构边界', 'Lint 规则', '验证用例', '并发Work Order', 'Human Review']
   .map((label, index) => `## L${index + 1}\n${label}`).join('\n\n');
 
 function stepRunner({ dir, origin, env, git }, script) {
@@ -179,8 +179,10 @@ process.exitCode = Number(process.env.AGENT_EXIT_CODE || 0);
 test('dickda declares its Coda engine and uses supported contributions', () => {
   const { name, displayName, engines, contributes } = JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf8'));
   assert.equal(name, 'dickda');
-  assert.equal(displayName, 'dickda模式');
+  assert.equal(displayName, 'dickda');
   assert.equal(engines.coda, 1);
+  assert.ok([...contributes.instructions].length <= 200);
+  assert.ok(contributes.instructions.startsWith('采用 dickda Mode 时，先读 `dickda role show interactor`'));
   for (const key of ['endpoints', 'groups', 'events', 'resources', 'panels', 'extensionPoints', 'extensions']) {
     assert.ok(!Object.hasOwn(contributes, key), `retired contribution: ${key}`);
   }
@@ -190,19 +192,19 @@ test('dickda declares its Coda engine and uses supported contributions', () => {
 
 test('three roles and four trades default to exact requested models and escalate to senior on difficulty or rejections', () => {
   const settings = loadSettings('{}');
-  assert.deepEqual(settings.interactor, { agent: 'antigravity', model: 'gemini-4-neon', effort: 'xhigh' });
-  assert.deepEqual(settings.thinker, { agent: 'antigravity', model: 'gemini-4-carbon', effort: 'high' });
-  assert.deepEqual(settings.lead, { agent: 'antigravity', model: 'gemini-4-neon', effort: 'xhigh' });
+  assert.deepEqual(settings.interactor, { agent: 'antigravity', mode: 'full', model: 'gemini-4-neon', effort: 'xhigh' });
+  assert.deepEqual(settings.thinker, { agent: 'antigravity', mode: 'full', model: 'gemini-4-carbon', effort: 'high' });
+  assert.deepEqual(settings.lead, { agent: 'antigravity', mode: 'full', model: 'gemini-4-neon', effort: 'xhigh' });
 
   const archStd = resolveEngineer('architect', { difficulty: 'normal', rejections: 0 }, settings);
   assert.equal(archStd.tier, 'standard');
   assert.equal(archStd.escalated, false);
-  assert.deepEqual(archStd.agent, { agent: 'antigravity', model: 'claude-opus-5-5', effort: 'high' });
+  assert.deepEqual(archStd.agent, { agent: 'antigravity', mode: 'full', model: 'claude-opus-5-5', effort: 'high' });
 
   const archHard = resolveEngineer('architect', { difficulty: 'hard', rejections: 0 }, settings);
   assert.equal(archHard.tier, 'senior');
   assert.equal(archHard.escalated, true);
-  assert.deepEqual(archHard.agent, { agent: 'antigravity', model: 'gemini-4-carbon', effort: 'high' });
+  assert.deepEqual(archHard.agent, { agent: 'antigravity', mode: 'full', model: 'gemini-4-carbon', effort: 'high' });
 
   const buildOnce = resolveEngineer('builder', { rejections: 1 }, settings);
   assert.equal(buildOnce.tier, 'standard');
@@ -220,7 +222,7 @@ test('three roles and four trades default to exact requested models and escalate
 
   for (const role of ROLES) {
     const prompt = rolePrompt(role);
-    assert.ok(prompt.length > 80 && prompt.startsWith('# 角色：'), `role prompt missing for ${role}`);
+    assert.ok(prompt.length > 80 && prompt.startsWith('# Role:'), `role prompt missing for ${role}`);
   }
 });
 
@@ -415,6 +417,11 @@ console.log(JSON.stringify({ session: 'sol-1', answer: '\`\`\`json\\n' + JSON.st
   assert.equal(sumOut.passed, 'true');
   assert.deepEqual(JSON.parse(sumOut.evidence), ['git rev-parse HEAD: ' + goodDeliveryHead]);
   assert.equal(checkoutTargetCommit(stepCodeWork, { commit: goodDeliveryHead }), goodDeliveryHead);
+
+  writeFileSync(join(env.CODA_ARTIFACTS, 'agent-verify.json'), JSON.stringify({ passed: true, commit: mainHead }));
+  const mismatched = spawnSync(process.execPath, [verifyScript, 'summary'], { cwd: stepCodeWork, env, encoding: 'utf8' });
+  assert.equal(mismatched.status, 1);
+  assert.ok(mismatched.stderr.includes(`Code Track ${goodDeliveryHead} vs Agent/UI Track ${mainHead}`));
 });
 
 test('both workflows resolve an explicit device at entry and reuse its group for acceptance', () => {
@@ -519,8 +526,8 @@ test('dispatch IDs and replacement references reserve the same case-insensitive 
   const upper = { ...job, id: 'UI' };
   const ledger = { ui: { ...job, status: 'rejected' } };
   assert.throws(() => enrichDispatchBatch([job, upper]), /重复.*忽略大小写/);
-  assert.throws(() => enrichDispatchBatch([upper], ledger), /UI.*历史工单 ui.*大小写/);
-  assert.throws(() => enrichDispatchBatch([{ ...job, id: 'retry', replaces: 'UI' }], ledger), /UI.*历史工单 ui.*大小写/);
+  assert.throws(() => enrichDispatchBatch([upper], ledger), /UI.*历史Work Order ui.*大小写/);
+  assert.throws(() => enrichDispatchBatch([{ ...job, id: 'retry', replaces: 'UI' }], ledger), /UI.*历史Work Order ui.*大小写/);
   assert.throws(() => enrichDispatchBatch([{ ...job, id: 'retry', replaces: 'ui' }, job], ledger), /重复/);
   assert.equal(enrichDispatchBatch([upper])[0].id, 'UI');
   assert.equal(enrichDispatchBatch([job], ledger)[0].id, 'ui');
@@ -892,7 +899,7 @@ test('development workflow routes both plan decisions, milestones, dual failures
     'lead-plan': '=plan-confirm.chose.start', 'plan-feedback': '=plan-confirm.chose.revise', 'record-stop': 'always',
   });
   const leadPlan = xml.match(/<scriptTask id="lead-plan"[\s\S]*?<\/scriptTask>/)[0];
-  const approvedHead = card('plan-confirm').match(/方案提交 \{\{([^}]+)\}\}/)[1];
+  const approvedHead = card('plan-confirm').match(/Approved HEAD \{\{([^}]+)\}\}/)[1];
   assert.equal(approvedHead, 'if think.head = null then seed.head else think.head');
   assert.ok(leadPlan.includes(`name="APPROVED_HEAD" value="=${approvedHead}"`));
   assert.ok(leadPlan.includes('name="FAST" value="=inputs.fast"'));
@@ -930,7 +937,7 @@ test('development workflow routes both plan decisions, milestones, dual failures
 for (const [script, step] of [[developScript, 'lane'], [refineScript, 'prepare']]) {
   test(`${step} rejects a non-default base before fetching it or writing workflow state`, t => {
     const { run, artifacts } = workflowFixture(t, script);
-    assert.deepEqual(run(step, { BASE: 'release' }, /仅允许以仓库默认分支 main 作为目标分支.*release/), {});
+    assert.deepEqual(run(step, { BASE: 'release' }, /仅允许以仓库Default Branch main 作为目标分支.*release/), {});
     assert.ok(!existsSync(join(artifacts, script === developScript ? 'develop.json' : 'refine.json')));
   });
 }
@@ -955,7 +962,7 @@ test('remote-only starting branch supplies the original task and a bounded previ
   assert.equal(seed.head, start);
   assert.equal(git(origin, 'rev-parse', `${lane.reqBranch}:${todo}`), git(work, 'hash-object', todo));
   assert.ok(seed.preview.length < 3600);
-  assert.match(seed.preview, /架构边界[\s\S]*…[\s\S]*Lint 规则[\s\S]*验证用例[\s\S]*并发工单[\s\S]*人工锚点/);
+  assert.match(seed.preview, /架构边界[\s\S]*…[\s\S]*Lint 规则[\s\S]*验证用例[\s\S]*并发Work Order[\s\S]*Human Review/);
 
   for (const note of ['交互者要求补充验收入口', '用户要求改动并发边界']) {
     run('plan-feedback', { FEEDBACK: note });
@@ -965,7 +972,7 @@ test('remote-only starting branch supplies the original task and a bounded previ
     const revised = run('think', { AGENT_REPLY: JSON.stringify({ session: 'think', head }) });
     assert.equal(revised.head, head);
     assert.ok(revised.preview.includes(note));
-    assert.ok(readFileSync(join(dir, 'tmp/thinker.md'), 'utf8').includes('交互者/用户修订意见\n' + note));
+    assert.ok(readFileSync(join(dir, 'tmp/thinker.md'), 'utf8').includes('Interactor/用户修订意见\n' + note));
     assert.equal(state().planFeedback, '');
   }
   const summary = join(dir, 'summary');
@@ -1114,7 +1121,7 @@ test('a same-head review needs a reason per finding, then goes to the PR and app
 
   const failure = run('verified', { ...dual, VERIFY_PASSED: 'false', VERIFY_REPORT: '这次入口失败', REVIEW: JSON.stringify(review) });
   assert.equal(failure.route, 'lead');
-  assert.doesNotMatch(failure.reason, /独立代码审查/);
+  assert.doesNotMatch(failure.reason, /Independent Code Review/);
   for (const detail of ['这次入口失败', 'entry.png', '按钮文案']) assert.ok(state().pendingFeedback.includes(detail));
   assert.equal(state().verifiedHead, '');
   assert.equal(run('prepare-verify').skipReview, 'false');
@@ -1213,7 +1220,7 @@ test('must findings on verifier jobs block verification until exact-ID retries, 
     assert.equal(worker(id, findings), 'rejected');
   }
   run('integrate');
-  lead({ action: 'verify' }, /验证工单：checkout.*重派.*ignoredFindings/);
+  lead({ action: 'verify' }, /验证Work Order：checkout.*重派.*ignoredFindings/);
 
   const beforeRetry = state().ledger;
   const retries = JSON.parse(lead({ action: 'dispatch', jobs: [job('login'), { ...job('checkout-2'), replaces: 'checkout' }] }).jobs);
@@ -1233,7 +1240,7 @@ test('must findings on verifier jobs block verification until exact-ID retries, 
   assert.deepEqual(checkoutIds, ['checkout#1', 'checkout#2', 'checkout-2#1', 'checkout-2#2']);
   lead({
     action: 'verify', ignoredFindings: checkoutIds.map(id => ({ id, reason: '结算入口已从本次方案移除' })),
-  }, /仍有被打回的验证工单：legacy 缺少 legacy#1 提交没有响应 的依据。请重派/);
+  }, /仍有被打回的验证Work Order：legacy 缺少 legacy#1 提交没有响应 的依据。请重派/);
   lead({ action: 'dispatch', jobs: [{ ...job('checkout-3'), replaces: 'checkout-2' }] });
   assert.equal(worker('checkout-3', []), 'succeeded');
   run('integrate');
@@ -1246,7 +1253,7 @@ test('must findings on verifier jobs block verification until exact-ID retries, 
   }
 
   const waiver = { id: 'legacy', reason: '确认的方案已移除旧入口' };
-  lead({ action: 'verify', ignoredFindings: [{ ...waiver, id: 'Legacy' }] }, /验证工单：legacy/);
+  lead({ action: 'verify', ignoredFindings: [{ ...waiver, id: 'Legacy' }] }, /验证Work Order：legacy/);
   lead({ action: 'verify', ignoredFindings: [{ ...waiver, reason: '  ' }] }, /ignoredFindings.*非空/);
   assert.equal(lead({ action: 'verify', ignoredFindings: [waiver] }).route, 'verify');
   assert.deepEqual(state().ignoredFindings, [waiver]);
@@ -1460,8 +1467,8 @@ test('lint rejection retains worker commits through replacement and senior retry
   assert.equal(git(origin, 'rev-parse', firstRef), failed);
   run('integrate');
   assert.equal(state().ledger.entry.lastRejectedHead, failed);
-  lead({ action: 'verify' }, /被打回的编码工单：entry/);
-  lead({ action: 'verify', ignoredFindings: [{ id: 'other', reason: '无关项' }] }, /被打回的编码工单：entry/);
+  lead({ action: 'verify' }, /被打回的编码Work Order：entry/);
+  lead({ action: 'verify', ignoredFindings: [{ id: 'other', reason: '无关项' }] }, /被打回的编码Work Order：entry/);
   assert.equal(lead({ action: 'verify', ignoredFindings: [{ id: 'entry', reason: '验收范围已移除此入口' }] }).route, 'verify');
 
   const [retry] = JSON.parse(lead({ action: 'dispatch', jobs: [replacement] }).jobs);
@@ -1583,12 +1590,12 @@ const promptFile = args[args.indexOf('--prompt-file') + 1];
 const prompt = fs.readFileSync(promptFile, 'utf8');
 const git = (...a) => execFileSync('git', a, { encoding: 'utf8' }).trim();
 
-if (prompt.includes('思考者（Thinker）')) {
+if (prompt.includes('# Role: Thinker')) {
   fs.writeFileSync('.dickda/tasks/PLAN_5L.md', ${JSON.stringify(blueprint)});
   git('add', '.dickda/tasks/PLAN_5L.md');
   git('commit', '-m', 'docs(dickda): add 5-layer blueprint');
   console.log(JSON.stringify({ session: 'think-1', branch: 'b', head: git('rev-parse', 'HEAD'), answer: 'Blueprint ready' }));
-} else if (prompt.includes('主控决策上下文')) {
+} else if (prompt.includes('Lead决策上下文')) {
   const state = JSON.parse(fs.readFileSync(process.env.CODA_ARTIFACTS + '/develop.json', 'utf8'));
   const action = Object.keys(state.ledger || {}).length === 0
     ? { action: 'dispatch', milestone: 'Dispatch wave 1', jobs: [{ id: 'impl-1', trade: 'builder', title: 'Add feature', task: 'Implement feature.mjs' }] }
@@ -1648,7 +1655,7 @@ if (prompt.includes('思考者（Thinker）')) {
   const goodReview = runIsolatedStep('verified', {
     VERIFY_COMMIT: prep.head,
     VERIFY_PASSED: 'true',
-    VERIFY_REPORT: '双轨全绿',
+    VERIFY_REPORT: 'Dual-Track Verification全绿',
     REVIEW: JSON.stringify({ head: prep.head, decision: 'APPROVE', line: 'LGTM', report: 'Clean' }),
   });
   assert.equal(goodReview.route, 'pr');
@@ -2043,7 +2050,7 @@ test('refine scope permits only deletions in consumed archives and requires a su
     git(work, 'checkout', '--detach', startHead);
     writeFileSync(join(work, '.dickda/knowledge/Entry.md'), '# Retry contract\n');
     writeFileSync(join(work, path), 'Edited investigation\n');
-    reject(commit(work, 'edit an archive alongside a prose change'), new RegExp(`已消费归档仅允许删除：${RegExp.escape(path)}`));
+    reject(commit(work, 'edit an archive alongside a prose change'), new RegExp(`已消费的归档仅允许删除：${RegExp.escape(path)}`));
     assert.ok(existsSync(join(work, path)));
   }
 });
@@ -2073,6 +2080,8 @@ test('refine routes hook failures, incomplete reviews, human decisions and confl
   // An agent parameter takes a FEEL context. Script outputs alone can only supply text.
   for (const [name, step] of [['dickda-refine', 'prepare-review'], ['dickda', 'prepare-verify']]) {
     const binding = workflowGraph(name).xml.match(/<coda:param name="reviewer" value='([^']+)'/)[1];
+    assert.match(binding, /^=\{r: if /);
+    assert.match(binding, /reviewer: if r\.agent = "antigravity" then context put\(r, "mode", "full"\) else r\}\.reviewer$/);
     assert.ok(binding.includes(`${step}.tier = "senior"`));
     assert.ok(binding.includes('then inputs.verifierSenior else vars.dickda.verifierSenior'));
     assert.ok(binding.includes('then inputs.verifier else vars.dickda.verifierStandard'));
@@ -2087,7 +2096,7 @@ test('refine routes hook failures, incomplete reviews, human decisions and confl
   assert.deepEqual(routes('gh-gate'), { 'gh-failed': '=not(github-checks.passed)', joiners: 'always' });
   assert.deepEqual(routes('joiners'), { 'approval-check': 'always' });
   assert.deepEqual(routes('approval-check'), { approve: 'always' });
-  assert.match(card('approve'), /name="批准合并五层提纯 PR" coda:assignee="user"/);
+  assert.match(card('approve'), /name="批准合并五层Refine PR" coda:assignee="user"/);
   assert.match(card('approve'), /approval-check.summary[\s\S]*optionList value="=joiners.list"/);
   assert.deepEqual(routes('approve-gate'), { 'approval-parse': '=approve.chose.merge', 'record-stop': 'always' });
   assert.deepEqual(routes('record-stop'), { stopped: 'always' });
@@ -2121,7 +2130,7 @@ test('refine repairs failed execution and checks only with verified descendant c
   assert.equal(git(origin, 'ls-tree', fixed.head, '--', archive), '');
   assert.match(git(origin, 'show', `${fixed.head}:.dickda/learning/Learning_General.md`), /入口须可重试/);
   assert.ok(git(origin, 'ls-tree', 'main', '--', archive));
-  for (const step of ['项目检查', '合并前检查', 'GitHub 检查']) {
+  for (const step of ['项目检查', 'Premerge Checks', 'GitHub 检查']) {
     run('failed', { STEP: step, LINES: 'smoke failed' });
     assert.ok(state().failure.includes(step));
     assert.match(state().failure, /smoke failed/);
@@ -2153,7 +2162,7 @@ test('refine binds review, kept rationale and user approval to the head, revalid
   assert.match(prep.evidence, /check-1/);
   for (const review of ['', '{broken', '{}', JSON.stringify({ head: first, decision: 'INCOMPLETE' }), JSON.stringify({ head: original, decision: 'APPROVE' })]) {
     assert.equal(run('reviewed', { REVIEW: review }).route, 'retry');
-    run('deliver', {}, /独立代码审查/);
+    run('deliver', {}, /Independent Code Review/);
   }
   const entryDoc = '.dickda/knowledge/Entry.md';
   const finding = { level: 'must', kind: 'contract', title: '入口文档', location: entryDoc, detail: '缺少入口的重试约定' };
@@ -2193,8 +2202,8 @@ test('refine binds review, kept rationale and user approval to the head, revalid
   for (const [env, error] of [
     [{ PR_VIEW: '{"state":"CLOSED"}' }, /PR 已关闭/],
     [{ PR_VIEW: JSON.stringify({ headRefOid: original }) }, /提交已改变/],
-    [{ PR_VIEW: '{"baseRefName":"other"}' }, /默认分支/],
-    [{ DEFAULT_BRANCH: 'trunk' }, /默认分支/],
+    [{ PR_VIEW: '{"baseRefName":"other"}' }, /Default Branch/],
+    [{ DEFAULT_BRANCH: 'trunk' }, /Default Branch/],
   ]) {
     run('approval-check', env, error);
     run('merge', env, error);
@@ -2215,7 +2224,7 @@ test('refine binds review, kept rationale and user approval to the head, revalid
   assert.ok(git(origin, 'ls-tree', 'main', '--', archive));
   checkoutCandidate();
   writeFileSync(join(work, 'unrelated'), 'does not resolve the conflict');
-  run('repair', repair(commit(work, 'unsynced descendant')), /尚未合入默认分支/);
+  run('repair', repair(commit(work, 'unsynced descendant')), /尚未合入Default Branch/);
   assert.equal(git(origin, 'rev-parse', branch), repaired);
   run('continue-repair', { NOTE: '合入最新 main 并保留重试约定' });
   checkoutCandidate();
@@ -2256,7 +2265,7 @@ test('refine binds review, kept rationale and user approval to the head, revalid
   const updated = run('deliver');
   assert.equal(updated.pr, pr.pr);
   assert.match(updated.summary, /check-3/);
-  assert.match(updated.summary, /独立审查 · APPROVE/);
+  assert.match(updated.summary, /Independent Code Review · APPROVE/);
   assert.ok(updated.summary.includes(`${repaired}（REQUEST_CHANGES）：${reason}`));
   assert.equal(run('approval-check').summary, updated.summary);
   const merged = run('merge');
@@ -2293,7 +2302,84 @@ test('custom prompts and interactive HTML dashboard work cohesively', t => {
   const parsedCli = JSON.parse(cliOut);
   assert.equal(parsedCli.path, htmlPath);
   const html = readFileSync(htmlPath, 'utf8');
-  assert.match(html, /五层工程控制台/);
+  assert.match(html, /Five-Layer Dashboard/);
+  for (const title of ['L1 · Codebase', 'L2 · Static Analysis', 'L3 · Verification', 'L4 · Work Graph &amp; Prose', 'L5 · Human Review']) assert.ok(html.includes(title), title);
   assert.match(html, /window\.coda\.submit/);
   assert.ok(Buffer.byteLength(html, 'utf8') < 20 * 1024 * 1024);
+});
+
+
+test('antigravity mode is full for defaults, custom settings, workflow overrides and agent arguments', () => {
+  const properties = JSON.parse(readFileSync(join(pluginDir, 'package.json'))).contributes.configuration.properties;
+  const slots = ['interactor', 'thinker', 'lead', 'architectStandard', 'architectSenior'];
+  for (const slot of slots) {
+    assert.equal(properties[`dickda.${slot}`].default.mode, 'full');
+    assert.equal(DEFAULT_SETTINGS[`dickda.${slot}`].mode, 'full');
+  }
+  for (const mode of [undefined, 'auto', 'default', 'full']) {
+    const spec = { agent: ' antigravity ', model: 'custom', effort: 'high', options: { flag: 'value' }, ...(mode ? { mode } : {}) };
+    const expected = { ...spec, agent: 'antigravity', mode: 'full' };
+    assert.deepEqual(loadSettings(JSON.stringify({ 'dickda.thinker': spec })).thinker, expected);
+    for (const [env, role, tier] of [['THINKER', 'thinker'], ['LEAD', 'lead'], ['ARCHITECT', 'architect', 'standard'], ['ARCHITECT_SENIOR', 'architect', 'senior'], ['BUILDER', 'builder', 'standard'], ['VERIFIER', 'verifier', 'standard'], ['VERIFIER_SENIOR', 'verifier', 'senior']]) {
+      const settings = effectiveSettings({ [env]: JSON.stringify(spec) });
+      assert.deepEqual(tier ? settings[role][tier] : settings[role], expected);
+    }
+    const args = agentArgs(spec);
+    assert.equal(args[args.indexOf('--mode') + 1], 'full');
+    assert.ok(args.includes('flag=value'));
+  }
+  for (const mode of [undefined, 'auto', 'default']) {
+    const spec = { agent: 'codex', ...(mode ? { mode } : {}) };
+    assert.deepEqual(loadSettings({ 'dickda.thinker': spec }).thinker, spec);
+    const args = agentArgs(spec);
+    assert.equal(args.includes('--mode'), !!mode);
+    assert.ok(!args.includes('full'));
+  }
+});
+
+for (const args of [['--help'], ['-h'], ['role', '--help'], ['help']]) {
+  test(`CLI ${args.join(' ')} works outside a project before loading settings`, t => {
+    const cwd = mkdtempSync(join(tmpdir(), 'dickda-help-'));
+    t.after(() => rmSync(cwd, { recursive: true, force: true }));
+    const result = spawnSync(process.execPath, [cliScript, ...args], {
+      cwd, encoding: 'utf8', env: { ...process.env, CODA_PLUGIN_SETTINGS: '{invalid' },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /dickda init[\s\S]*dickda role[\s\S]*dickda verify/);
+  });
+}
+
+
+test('antigravity Lead starts with full mode and continues without a mode argument', t => {
+  const { dir, run, seedFast, lead } = workflowFixture(t);
+  run('lane', { GOAL: '验证续跑参数' });
+  seedFast();
+  lead({ action: 'verify' });
+  const first = JSON.parse(readFileSync(join(dir, 'agent-args.json')));
+  assert.equal(first[first.indexOf('--mode') + 1], 'full');
+  lead({ action: 'verify' });
+  const continued = JSON.parse(readFileSync(join(dir, 'agent-args.json')));
+  assert.ok(continued.includes('--continue'));
+  assert.ok(!continued.includes('--mode'));
+});
+
+
+test('workflow XML escapes ampersands and role copy remains independent of default models', () => {
+  for (const name of ['dickda', 'dickda-refine', 'dickda-verify']) {
+    const { xml } = workflowGraph(name);
+    const markup = xml.replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '').replace(/<!--[\s\S]*?-->/g, '');
+    assert.doesNotMatch(markup, /&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);)/, name);
+    assert.doesNotMatch(xml, /(?:Interactor|Thinker|Lead)\s*(?:（(?:Neon|Carbon|Astra|Sol)）|(?:Neon|Carbon|Astra|Sol)\b)/, name);
+    assert.doesNotMatch(xml, /Track道|Order单|结果导向/, name);
+  }
+  for (const file of ['README.md', 'skills/dickda/SKILL.md']) {
+    const doc = readFileSync(join(pluginDir, file), 'utf8');
+    for (const role of ['Lead', 'Architect', 'Builder', 'Verifier']) assert.ok(doc.includes(`Executors · ${role}`), `${file}: ${role}`);
+    assert.doesNotMatch(doc, /执行 ·|SeniorVerifier|Track道|Order单/);
+  }
+  for (const file of ['prompts/roles/verifier.md', 'scripts/develop.mjs']) {
+    const text = readFileSync(join(pluginDir, file), 'utf8');
+    assert.ok(text.includes('Outcome-Oriented Verification'), file);
+    assert.doesNotMatch(text, /结果导向/, file);
+  }
 });

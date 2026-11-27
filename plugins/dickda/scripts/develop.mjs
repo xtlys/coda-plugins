@@ -45,15 +45,15 @@ function deleteRefs(remote, refs) {
 }
 
 export function enrichDispatchBatch(rawJobs, ledger = {}, settings = loadSettings()) {
-  requireValue(Array.isArray(rawJobs) && rawJobs.length >= 1 && rawJobs.length <= 12, 'dispatch 批次须包含 1–12 个并发工单');
+  requireValue(Array.isArray(rawJobs) && rawJobs.length >= 1 && rawJobs.length <= 12, 'dispatch 批次须包含 1–12 个并发Work Order');
   const seen = new Set();
   const history = Object.keys(ledger);
   function claimId(id) {
-    requireValue(typeof id === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(id), `工单 ID 不合法：${id}`);
+    requireValue(typeof id === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(id), `Work Order ID 不合法：${id}`);
     const folded = id.toLowerCase();
     const conflict = history.find(key => key !== id && key.toLowerCase() === folded);
-    requireValue(!conflict, `工单 ID ${id} 与历史工单 ${conflict} 仅大小写不同`);
-    requireValue(!seen.has(folded), `同一并发批次内工单 ID 重复（含 replaces，忽略大小写）：${id}`);
+    requireValue(!conflict, `Work Order ID ${id} 与历史Work Order ${conflict} 仅大小写不同`);
+    requireValue(!seen.has(folded), `同一Dispatch Batch内Work Order ID 重复（含 replaces，忽略大小写）：${id}`);
     seen.add(folded);
   }
   return rawJobs.map((job, idx) => {
@@ -63,19 +63,19 @@ export function enrichDispatchBatch(rawJobs, ledger = {}, settings = loadSetting
     const replaces = job.replaces ?? (current?.status === 'rejected' ? current.replaces : null);
     if (replaces) {
       claimId(replaces);
-      requireValue(ledger[replaces]?.status === 'rejected' && (!current || current.replaces === replaces), `工单 ${jobId} 的 replaces 须指向原被打回的工单：${replaces}`);
+      requireValue(ledger[replaces]?.status === 'rejected' && (!current || current.replaces === replaces), `Work Order ${jobId} 的 replaces 须指向原被打回的Work Order：${replaces}`);
     }
-    requireValue(TRADES.includes(job.trade), `工单 ${jobId} 的工种须为 architect、builder 或 verifier`);
-    requireValue(typeof job.title === 'string' && job.title.trim(), `工单 ${jobId} 缺少 title`);
-    requireValue(typeof job.task === 'string' && job.task.trim(), `工单 ${jobId} 缺少 task`);
+    requireValue(TRADES.includes(job.trade), `Work Order ${jobId} 的工种须为 architect、builder 或 verifier`);
+    requireValue(typeof job.title === 'string' && job.title.trim(), `Work Order ${jobId} 缺少 title`);
+    requireValue(typeof job.task === 'string' && job.task.trim(), `Work Order ${jobId} 缺少 task`);
 
     const prev = current ?? (replaces ? ledger[replaces] : {});
     if (prev.status === 'rejected') {
       const previousId = current ? jobId : replaces;
       const retry = Object.values(ledger).find(entry => entry.status === 'rejected' && entry.replaces === previousId);
-      if (retry) throw new Error(`工单 ${previousId} 的最新打回记录在 ${retry.id}，请复用该 ID 或在 replaces 中指向它`);
+      if (retry) throw new Error(`Work Order ${previousId} 的最新打回记录在 ${retry.id}，请复用该 ID 或在 replaces 中指向它`);
     }
-    requireValue(prev.status !== 'rejected' || (prev.trade === 'verifier') === (job.trade === 'verifier'), `工单 ${jobId} 重试时不能在编码和验证工种间互换`);
+    requireValue(prev.status !== 'rejected' || (prev.trade === 'verifier') === (job.trade === 'verifier'), `Work Order ${jobId} 重试时不能在编码和验证工种间互换`);
     const difficulty = job.difficulty === 'hard' ? 'hard' : 'normal';
     const resolved = resolveEngineer(job.trade, {
       tier: job.tier,
@@ -114,7 +114,7 @@ export function evaluateVerifierAnswer(answerText = '') {
       summary: '',
       findings: [],
       resolved: [],
-      error: '验证工程师未输出含布尔值 passed 的结构化 JSON 结论',
+      error: 'Verifier未输出含布尔值 passed 的结构化 JSON 结论',
     };
   }
   const findings = Array.isArray(verdict.findings) ? verdict.findings : [];
@@ -127,7 +127,7 @@ export function evaluateVerifierAnswer(answerText = '') {
     summary,
     findings,
     resolved: Array.isArray(verdict.resolved) ? verdict.resolved.filter(id => typeof id === 'string' && id.trim()) : [],
-    ...(passed ? {} : { error: summary || (hasMust ? '验证发现必须修（must）缺陷' : '验证结论为未通过（passed=false）') }),
+    ...(passed ? {} : { error: summary || (hasMust ? '验证发现 must 缺陷' : '验证结论为未通过（passed=false）') }),
   };
 }
 
@@ -159,7 +159,7 @@ export function integrateWorkerResults(cwd, baseTip, workerResults, ledger = {},
       for (const f of w.findings ?? []) {
         const finding = { ...f, sourceJob: w.id, verifier: w.agentSummary };
         if (finding.level === 'must') {
-          finding.title ||= finding.detail || '未命名的必须修缺陷';
+          finding.title ||= finding.detail || '未命名的must缺陷';
           finding.location = typeof finding.location === 'string' ? finding.location.trim() : '';
           const hasId = typeof finding.id === 'string' && finding.id.trim() !== '';
           let must = unresolvedMusts.find(item => !claimed.has(item.id) && (hasId
@@ -189,7 +189,7 @@ export function integrateWorkerResults(cwd, baseTip, workerResults, ledger = {},
         entry.openMusts = [...reportedMusts, ...unresolvedMusts.filter(f => !claimed.has(f.id))];
         entry.rejections = (entry.rejections ?? 0) + 1;
         entry.status = 'rejected';
-        entry.lastFeedback = w.error || w.summary || '验证工单未通过或结论缺失';
+        entry.lastFeedback = w.error || w.summary || '验证Work Order未通过或结论缺失';
         const next = resolveEngineer('verifier', { difficulty: w.difficulty, rejections: entry.rejections }, settings);
         entry.nextTier = next.tier;
         rejected.push({ id: w.id, reason: entry.lastFeedback, rejections: entry.rejections, nextTier: next.tier });
@@ -248,7 +248,7 @@ export function integrateWorkerResults(cwd, baseTip, workerResults, ledger = {},
       entry.rejections = (entry.rejections ?? 0) + 1;
       entry.status = 'rejected';
       entry.lastRejectedHead = w.head;
-      entry.lastFeedback = `并发合入冲突（冲突文件：${conflictFiles.join('、') || '未知'}），请在最新需求分支上复用前序提交并解决冲突`;
+      entry.lastFeedback = `并发合入冲突（冲突文件：${conflictFiles.join('、') || '未知'}），请在最新Requirement Branch上复用前序提交并解决冲突`;
       const next = resolveEngineer(w.trade, { difficulty: w.difficulty, rejections: entry.rejections }, settings);
       entry.nextTier = next.tier;
       ledger[w.id] = entry;
@@ -274,14 +274,14 @@ export function integrateWorkerResults(cwd, baseTip, workerResults, ledger = {},
 export function evaluateVerificationGate({ head, verifyCommit, verifyPassed, verifyReport = '', review = null }) {
   if (!verifyPassed || verifyCommit !== head) {
     const detail = verifyCommit && verifyCommit !== head
-      ? `双轨验证提交（${verifyCommit}）与当前交付 HEAD（${head}）不一致，需重新验证。\n${verifyReport}`
+      ? `Dual-Track Verification提交（${verifyCommit}）与当前交付 HEAD（${head}）不一致，需重新验证。\n${verifyReport}`
       : verifyReport;
     const extraReview = review && review.head === head && review.decision === 'REQUEST_CHANGES'
-      ? `\n\n### 独立代码审查（Sol）结论：REQUEST_CHANGES\n${review.line ?? ''}\n${review.report ?? ''}`
+      ? `\n\n### Independent Code Review（Verifier）结论：REQUEST_CHANGES\n${review.line ?? ''}\n${review.report ?? ''}`
       : '';
     return {
       route: 'lead',
-      reason: `### 双轨验证未通过\n${detail}${extraReview}`,
+      reason: `### Dual-Track Verification未通过\n${detail}${extraReview}`,
     };
   }
 
@@ -299,7 +299,7 @@ function callCodaAgent(args, cwd = process.cwd()) {
 
 function dualReport(state) {
   const sections = [state.verifyReport];
-  for (const [label, raw] of [['双轨发现', state.verifyFindings], ['实证证据', state.verifyEvidence]]) {
+  for (const [label, raw] of [['Dual-Track Verification 发现', state.verifyFindings], ['实证证据', state.verifyEvidence]]) {
     if (!raw) continue;
     const items = jsonList(raw);
     const detail = items ? items.map(item => `- ${typeof item === 'string' ? item : JSON.stringify(item)}`).join('\n') : raw;
@@ -320,19 +320,19 @@ export function buildPrSummary(state) {
     .map(item => `- [${item.trade}/${item.tier}] ${item.id} · ${item.title}（${item.agentSummary ?? ''}）`);
   const rebutted = requestedChanges(state, state.head) && state.rebuttedReviewHead === state.head;
   const review = state.review?.head === state.head
-    ? `**Sol 原审查结论：${state.review.decision}**\n${state.review.line ?? ''}\n${state.review.report ?? ''}` : '';
+    ? `**Verifier 原审查结论：${state.review.decision}**\n${state.review.line ?? ''}\n${state.review.report ?? ''}` : '';
   const dual = dualReport(state);
 
   return [
-    rebutted ? `### 需用户最终裁决：主控建议在 Sol 要求修改的情况下交付\n${review}\n\n#### 主控逐条不采纳依据\n${ignoredLines(state.reviewRebuttals)}` : '',
+    rebutted ? `### 需用户最终裁决：Lead建议在 Verifier 要求修改的情况下交付\n${review}\n\n#### Lead逐条不采纳依据\n${ignoredLines(state.reviewRebuttals)}` : '',
     state.report || `需求：${state.title}`,
     `### 五层交付证据（提交 \`${state.head}\`）`,
     `#### 项目检查（L2）\n${checkRunsText(state.checks, state.head)}`,
-    dual ? `#### 结果导向双轨验证（L3）\n${dual}` : '',
-    review && !rebutted ? `#### 独立代码评审（Sol）\n${review}` : '',
-    landedLines.length ? `#### 已合入工单\n${landedLines.join('\n')}` : '',
-    state.ignoredFindings?.length ? `#### 主控裁定忽略的非阻塞项及依据\n${ignoredLines(state.ignoredFindings)}` : '',
-    state.lastArchive ? `#### 调查归档\n已持久化至 \`${state.lastArchive}\`（待后续 \`dickda-refine\` 提纯）` : '',
+    dual ? `#### Outcome-Oriented Verification · Dual-Track Verification（L3）\n${dual}` : '',
+    review && !rebutted ? `#### Independent Code Review（Verifier）\n${review}` : '',
+    landedLines.length ? `#### 已合入Work Order\n${landedLines.join('\n')}` : '',
+    state.ignoredFindings?.length ? `#### Lead裁定忽略的非阻塞项及依据\n${ignoredLines(state.ignoredFindings)}` : '',
+    state.lastArchive ? `#### Investigation Archive\n已持久化至 \`${state.lastArchive}\`（待后续 \`dickda-refine\` Refine）` : '',
     state.acceptedHead === state.head ? `#### 设备人工验收\n${state.acceptance ?? '已确认通过'}` : '',
   ].filter(Boolean).join('\n\n');
 }
@@ -394,7 +394,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const repoInfo = JSON.parse(gh('repo', 'view', '--json', 'nameWithOwner,defaultBranchRef'));
         const defaultBranch = repoInfo.defaultBranchRef.name;
         const base = (env.BASE || '').trim() || defaultBranch;
-        requireValue(base === defaultBranch, `仅允许以仓库默认分支 ${defaultBranch} 作为目标分支，当前指定的是 ${base}`);
+        requireValue(base === defaultBranch, `仅允许以仓库Default Branch ${defaultBranch} 作为目标分支，当前指定的是 ${base}`);
         const remote = `https://github.com/${repoInfo.nameWithOwner}.git`;
         const baseCommit = fetchHead(remote, base);
 
@@ -499,27 +499,27 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           rolePrompt('thinker'),
           `## 当前项目已启用规范摘要\n${enabledGuidelinesDigest(root)}`,
           `## 本次需求原文（.dickda/tasks/TODO_TASK.md）\n${readFileSync(managed(root, 'tasks/TODO_TASK.md'), 'utf8')}`,
-          state.planFeedback ? `## 交互者/用户修订意见\n${state.planFeedback}` : '',
-          `请将完整的五层技术方案写入 \`${planPath}\`，只提交这一份文件到当前分支（不要推送或开 PR），最后简要汇报五层核心设计。`,
+          state.planFeedback ? `## Interactor/用户修订意见\n${state.planFeedback}` : '',
+          `请将完整的Five-Layer Plan写入 \`${planPath}\`，只提交这一份文件到当前分支（不要推送或开 PR），最后简要汇报五层核心设计。`,
         ].filter(Boolean).join('\n\n');
         writeFileSync(promptFile, prompt);
         const call = callCodaAgent([
           '--commit', thinkBase,
-          '--title', `思考者规划：${state.title}`,
+          '--title', `Thinker规划：${state.title}`,
           ...agentArgs(settings.thinker),
           '--json',
           '--prompt-file', promptFile,
         ], root);
-        requireValue(call.status === 0 && call.parsed?.head, `思考者会话未成功产出五层方案提交（退出码 ${call.status}）`);
+        requireValue(call.status === 0 && call.parsed?.head, `Thinker会话未成功产出Five-Layer Plan提交（退出码 ${call.status}）`);
         const thoughtHead = git('rev-parse', '--verify', `${call.parsed.head}^{commit}`);
         const validDescendant = thoughtHead !== thinkBase
           && spawnSync('git', ['-C', root, 'merge-base', '--is-ancestor', thinkBase, thoughtHead]).status === 0;
-        requireValue(validDescendant, `思考者返回的提交（${thoughtHead}）不是当前需求分支基线（${thinkBase}）的严格后代`);
+        requireValue(validDescendant, `Thinker返回的提交（${thoughtHead}）不是当前Requirement Branch基线（${thinkBase}）的严格后代`);
         const outsidePlan = execFileSync('git', ['diff', '--name-only', '-z', '--no-renames', thinkBase, thoughtHead, '--'], { cwd: root, encoding: 'utf8' })
           .split('\0').filter(path => path && path !== planPath);
-        requireValue(!outsidePlan.length, `思考者只可修改 ${planPath}，提交还改动了：${outsidePlan.join('、')}`);
+        requireValue(!outsidePlan.length, `Thinker只可修改 ${planPath}，提交还改动了：${outsidePlan.join('、')}`);
         const preview = planPreview(git('show', `${thoughtHead}:${planPath}`));
-        requireValue(preview, '思考者提交的 PLAN_5L.md 须含 L1–L5 各层方案正文');
+        requireValue(preview, 'Thinker提交的 PLAN_5L.md 须含 L1–L5 各层方案正文');
         remoteGit('.', 'push', '--quiet', '--no-follow-tags', state.remote, `${thoughtHead}:refs/heads/${state.reqBranch}`);
         saveState({ ...state, head: thoughtHead, planAnswer: call.parsed.answer ?? '', planFeedback: '' });
         appendGithubOutput({ head: thoughtHead, preview });
@@ -528,7 +528,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
       case 'plan-feedback': {
         const planFeedback = env.FEEDBACK?.trim();
-        requireValue(planFeedback, '退回思考者时须填写方案修订意见');
+        requireValue(planFeedback, '退回Thinker时须填写方案修订意见');
         saveState({ ...state, planFeedback });
         break;
       }
@@ -539,7 +539,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const round = (state.round ?? 0) + 1;
         if (round === 1) {
           const approvedPlanHead = env.FAST === 'true' ? env.SEED_HEAD : env.APPROVED_HEAD;
-          requireValue(fetchedHead === approvedPlanHead, `开工基线提交不一致：预期 ${approvedPlanHead || '缺失'}，需求分支 ${state.reqBranch} 当前为 ${fetchedHead}`);
+          requireValue(fetchedHead === approvedPlanHead, `开工基线提交不一致：预期 ${approvedPlanHead || '缺失'}，Requirement Branch ${state.reqBranch} 当前为 ${fetchedHead}`);
           state.approvedPlanHead = approvedPlanHead;
         }
         git('checkout', '-B', state.reqBranch, fetchedHead);
@@ -550,7 +550,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           item.status === 'rejected' && item.nextTier === 'senior' && '下次派单自动升级 senior',
           item.status === 'rejected' && item.lastFeedback,
           ...(item.openMusts ?? []).map(f => `\n  - ${f.id} ${findingTitle(f)}`),
-        ].filter(Boolean).join(' ')).join('\n') || '尚无工单记录。';
+        ].filter(Boolean).join(' ')).join('\n') || '尚无Work Order记录。';
 
         const promptFile = join(env.RUNNER_TEMP, `lead-${round}.md`);
         const last = state.lastLeadHead;
@@ -558,32 +558,32 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           `## 续跑代码视图\n如需查阅最新代码或规约，先执行：\ngit fetch ${state.remote} ${state.reqBranch} && git checkout --detach ${fetchedHead}`,
           last ? `从 ${last} 到 ${fetchedHead} 的新增提交：\n${git('log', '--oneline', '--no-decorate', `${last}..${fetchedHead}`) || '无'}\n\ngit diff --stat：\n${git('diff', '--stat', last, fetchedHead) || '无变化'}` : '',
         ].filter(Boolean).join('\n\n');
-        const initialContext = () => [rolePrompt('lead'), `## 需求原文\n${state.goal}`, `## 五层技术方案（PLAN_5L.md）\n${planBody}`].join('\n\n');
+        const initialContext = () => [rolePrompt('lead'), `## 需求原文\n${state.goal}`, `## Five-Layer Plan（PLAN_5L.md）\n${planBody}`].join('\n\n');
         const prompt = [
           sync || initialContext(),
-          `## 第 ${round} 轮主控决策上下文`,
-          `- 需求分支：\`${state.reqBranch}\`，当前 HEAD：\`${fetchedHead}\``,
-          `- 自动升级阈值：常规工程师连续被打回 >= ${settings.escalationThreshold} 次自动升级高级工程师`,
-          `- 可用工种级别：\n  - architect：常规 ${formatAgent(settings.architect.standard)} ｜ 高级 ${formatAgent(settings.architect.senior)}\n  - builder：常规 ${formatAgent(settings.builder.standard)} ｜ 高级 ${formatAgent(settings.builder.senior)}\n  - verifier：常规 ${formatAgent(settings.verifier.standard)} ｜ 高级 ${formatAgent(settings.verifier.senior)}`,
-          `## 工单账本状态\n${ledgerSummary}`,
+          `## 第 ${round} 轮Lead决策上下文`,
+          `- Requirement Branch：\`${state.reqBranch}\`，当前 HEAD：\`${fetchedHead}\``,
+          `- 自动Escalation Threshold：Standard Engineer连续被打回 >= ${settings.escalationThreshold} 次自动升级Senior Engineer`,
+          `- 可用工种级别：\n  - architect：Standard ${formatAgent(settings.architect.standard)} ｜ Senior ${formatAgent(settings.architect.senior)}\n  - builder：Standard ${formatAgent(settings.builder.standard)} ｜ Senior ${formatAgent(settings.builder.senior)}\n  - verifier：Standard ${formatAgent(settings.verifier.standard)} ｜ Senior ${formatAgent(settings.verifier.senior)}`,
+          `## Work Order Ledger状态\n${ledgerSummary}`,
           state.pendingFeedback ? `## 最新待裁决反馈 / 检查与审查结果\n${state.pendingFeedback}` : '',
-          '重试 status=rejected 的工单必须原样复用其 id，或用 replaces 指明原工单 id。verify 时须在 ignoredFindings 中按验证缺陷 ID 逐条写明不采纳的客观依据。无具体缺陷的失败工单按工单 ID 裁决。前序轮次已记录的依据继续有效。对同一 HEAD 的 REQUEST_CHANGES，须在本轮对每条未采纳意见按编号或标题给出客观 reason。',
-          `## 输出格式要求（严格遵守）\n请在回复末尾输出一个 \`\`\`json 代码块，action 取值之一：\n1. \`"dispatch"\`：并发派发 1–12 个无相互阻塞依赖的工单（可同时涵盖 architect / builder / verifier）：\n\`\`\`json\n{\n  "action": "dispatch",\n  "milestone": "一句话进度说明",\n  "ignoredFindings": [{"id": "#1", "reason": "忽略该非阻塞意见的客观依据"}],\n  "jobs": [\n    {"id": "arch-core", "trade": "architect", "difficulty": "normal", "title": "建立骨架与Lint", "task": "自足任务说明"},\n    {"id": "impl-mod-a", "trade": "builder", "difficulty": "normal", "lockSpec": true, "title": "实现模块A", "task": "自足任务说明"}\n  ]\n}\n\`\`\`\n2. \`"verify"\`：全部实现已合入且必须修均已闭环，进入 Stage 3 全量双轨验证与交付：\n\`\`\`json\n{\n  "action": "verify",\n  "report": "面向用户的 5–8 行改动汇报（做了什么 + 风险提示）",\n  "ignoredFindings": []\n}\n\`\`\`\n3. \`"escalate"\`：发现超出 PLAN_5L.md 边界的重大风险，需请顶层交互者拍板：\n\`\`\`json\n{\n  "action": "escalate",\n  "question": "需要交互者/用户拍板的具体问题与可选方案"\n}\n\`\`\``,
+          '重试 status=rejected 的Work Order必须原样复用其 id，或用 replaces 指明原Work Order id。verify 时须在 ignoredFindings 中按验证缺陷 ID 逐条写明不采纳的客观依据。无具体缺陷的失败Work Order按Work Order ID 裁决。前序轮次已记录的依据继续有效。对同一 HEAD 的 REQUEST_CHANGES，须在本轮对每条未采纳意见按编号或标题给出客观 reason。',
+          `## 输出格式要求（严格遵守）\n请在回复末尾输出一个 \`\`\`json 代码块，action 取值之一：\n1. \`"dispatch"\`：并发派发 1–12 个无相互阻塞依赖的Work Order（可同时涵盖 architect / builder / verifier）：\n\`\`\`json\n{\n  "action": "dispatch",\n  "milestone": "一句话进度说明",\n  "ignoredFindings": [{"id": "#1", "reason": "忽略该非阻塞意见的客观依据"}],\n  "jobs": [\n    {"id": "arch-core", "trade": "architect", "difficulty": "normal", "title": "建立骨架与Lint", "task": "自足任务说明"},\n    {"id": "impl-mod-a", "trade": "builder", "difficulty": "normal", "lockSpec": true, "title": "实现模块A", "task": "自足任务说明"}\n  ]\n}\n\`\`\`\n2. \`"verify"\`：全部实现已合入且must均已闭环，进入 Stage 3 全量Dual-Track Verification与交付：\n\`\`\`json\n{\n  "action": "verify",\n  "report": "面向用户的 5–8 行改动汇报（做了什么 + 风险提示）",\n  "ignoredFindings": []\n}\n\`\`\`\n3. \`"escalate"\`：发现超出 PLAN_5L.md 边界的重大风险，需请顶层Interactor拍板：\n\`\`\`json\n{\n  "action": "escalate",\n  "question": "需要Interactor/用户拍板的具体问题与可选方案"\n}\n\`\`\``,
         ].filter(Boolean).join('\n\n');
         writeFileSync(promptFile, prompt);
 
         const args = state.leadSession
           ? ['--continue', state.leadSession, '--json', '--prompt-file', promptFile]
-          : ['--commit', fetchedHead, '--title', `执行主控：${state.title}`, ...agentArgs(settings.lead), '--json', '--prompt-file', promptFile];
+          : ['--commit', fetchedHead, '--title', `执行Lead：${state.title}`, ...agentArgs(settings.lead), '--json', '--prompt-file', promptFile];
         let call = callCodaAgent(args, root);
         if (call.status !== 0 && state.leadSession && !call.parsed?.session) {
           writeFileSync(promptFile, initialContext() + '\n\n' + prompt);
-          call = callCodaAgent(['--commit', fetchedHead, '--title', `执行主控：${state.title}`, ...agentArgs(settings.lead), '--json', '--prompt-file', promptFile], root);
+          call = callCodaAgent(['--commit', fetchedHead, '--title', `执行Lead：${state.title}`, ...agentArgs(settings.lead), '--json', '--prompt-file', promptFile], root);
         }
-        requireValue(call.status === 0 && call.parsed?.session, `执行主控会话调用失败（退出码 ${call.status}）`);
+        requireValue(call.status === 0 && call.parsed?.session, `执行Lead会话调用失败（退出码 ${call.status}）`);
 
         const decision = extractJsonBlock(call.parsed.answer ?? '');
-        requireValue(decision && ['dispatch', 'verify', 'escalate', 'abort'].includes(decision.action), '执行主控未输出合法的 action JSON（dispatch|verify|escalate|abort）');
+        requireValue(decision && ['dispatch', 'verify', 'escalate', 'abort'].includes(decision.action), '执行Lead未输出合法的 action JSON（dispatch|verify|escalate|abort）');
 
         const ignored = decision.ignoredFindings ?? [];
         const hasReason = item => typeof item?.reason === 'string' && item.reason.trim();
@@ -636,7 +636,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
               const index = available.findIndex(f => f.id === finding.id || (musts.length === 1 && f.id === job.id && !f.jobOnly));
               if (index >= 0) available.splice(index, 1);
               else {
-                const label = `${job.trade === 'verifier' ? '验证' : '编码'}工单：${job.id}`;
+                const label = `${job.trade === 'verifier' ? '验证' : '编码'}Work Order：${job.id}`;
                 unresolved.push(musts.length ? `${label} 缺少 ${finding.id} ${findingTitle(finding)} 的依据` : label);
               }
             }
@@ -661,14 +661,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           }
           nextState.report = (decision.report || state.report || `已完成需求：${state.title}`).trim();
           saveState(nextState);
-          appendGithubOutput({ route: 'verify', jobs: '[]', jobIds: '', milestone: '进入双轨验证', escalation: '' });
+          appendGithubOutput({ route: 'verify', jobs: '[]', jobIds: '', milestone: '进入Dual-Track Verification', escalation: '' });
         } else if (decision.action === 'escalate') {
           const question = String(decision.question || decision.reason || '需要决策层确认方案边界').trim();
           nextState.escalation = question;
           saveState(nextState);
           appendGithubOutput({ route: 'escalate', jobs: '[]', jobIds: '', milestone: '', escalation: question });
         } else {
-          nextState.abortReason = String(decision.reason || '主控中止执行').trim();
+          nextState.abortReason = String(decision.reason || 'Lead中止执行').trim();
           saveState(nextState);
           appendGithubOutput({ route: 'abort', jobs: '[]', jobIds: '', milestone: '', escalation: nextState.abortReason });
         }
@@ -692,11 +692,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const prompt = [
           rolePrompt(job.trade),
           `## 当前项目已启用规范摘要\n${enabledGuidelinesDigest(root)}`,
-          `## 工单信息\n- 工单 ID：\`${job.id}\`\n- 工种级别：\`${job.trade} / ${job.tier}\`（${job.agentSummary}，原因：${job.escalationReason}）\n- 标题：${job.title}\n${job.lockSpec ? '- 规约锁定：禁止修改 `.dickda/lints/` 与 `.dickda/verifiers/`\n' : ''}`,
+          `## Work Order信息\n- Work Order ID：\`${job.id}\`\n- 工种级别：\`${job.trade} / ${job.tier}\`（${job.agentSummary}，原因：${job.escalationReason}）\n- 标题：${job.title}\n${job.lockSpec ? '- Spec Lock：禁止修改 `.dickda/lints/` 与 `.dickda/verifiers/`\n' : ''}`,
           job.previousFeedback ? `## 前序打回原因（第 ${job.rejections} 次打回）\n${job.previousFeedback}` : '',
-          job.openMusts?.length ? `## 前序未闭环的必须修缺陷\n${JSON.stringify(job.openMusts, null, 2)}\n请逐项复测，复报缺陷时沿用其 id。全部通过（"passed": true 且 findings 中无 must）将关闭全部历史必须修。若 "passed": false，仅在 "resolved": ["<id>"] 中列出实际复测确认已修复的历史 ID，未列出的继续保持开启。` : '',
+          job.openMusts?.length ? `## 前序未闭环的must缺陷\n${JSON.stringify(job.openMusts, null, 2)}\n请逐项复测，复报缺陷时沿用其 id。全部通过（"passed": true 且 findings 中无 must）将关闭全部历史must。若 "passed": false，仅在 "resolved": ["<id>"] 中列出实际复测确认已修复的历史 ID，未列出的继续保持开启。` : '',
           job.previousHead && job.previousRef ? `## 复用前序提交\npreviousHead：${job.previousHead}\n保留分支：${job.previousRef}\n先运行 git fetch ${state.remote} ${job.previousRef}，用 git show ${job.previousHead} 查看改动。可用 git cherry-pick ${job.previousHead} 或挑选其中需要的提交，复用后修订。` : '',
-          upstreamCommit ? `处理合并冲突时，可拉取目标分支 ${state.base}，将上游提交 ${upstreamCommit} 合入当前工单。规约锁允许从该提交原样合入的规约。` : '',
+          upstreamCommit ? `处理合并冲突时，可拉取目标分支 ${state.base}，将上游提交 ${upstreamCommit} 合入当前Work Order。Spec Lock允许从该提交原样合入的规约。` : '',
           `## 任务书\n${job.task}`,
           job.trade === 'verifier'
             ? `完成后必须在回复最后附上结构化 \`\`\`json 块，例如 \`{"passed": false, "summary": "结论", "findings": [{"level": "must", "title": "...", "detail": "..."}]}\`。全部通过且无 must 时写 "passed": true。`
@@ -732,9 +732,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           };
         } else {
           if (isAncestor) {
-            record = { ...job, status: 'rejected', head: workerHead, error: '工单未产生新的 Git 提交' };
+            record = { ...job, status: 'rejected', head: workerHead, error: 'Work Order未产生新的 Git 提交' };
           } else if (!isStrictDescendant) {
-            record = { ...job, status: 'rejected', head: workerHead, error: `工单返回的提交（${workerHead}）不是需求分支基线（${baseHead}）的严格后代` };
+            record = { ...job, status: 'rejected', head: workerHead, error: `Work Order返回的提交（${workerHead}）不是Requirement Branch基线（${baseHead}）的严格后代` };
           } else {
             git('checkout', '--quiet', workerHead);
             const lockCheck = job.lockSpec ? checkSpecLock(root, baseHead, workerHead, { upstreamCommit }) : { ok: true, violations: [] };
@@ -742,13 +742,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
               record = {
                 ...job,
                 status: 'rejected',
-                error: `违反规约锁定：实现工单不得擅自修改 ${lockCheck.violations.join('、')}`,
+                error: `违反Spec Lock：实现Work Order不得擅自修改 ${lockCheck.violations.join('、')}`,
               };
             } else {
               const lintRes = runLints(root);
               if (!lintRes.passed) {
                 const detail = lintRes.results.filter(r => !r.passed).map(r => `${r.path}: ${r.output}`).join('; ');
-                record = { ...job, status: 'rejected', error: `L2 Executable Lint 未通过：${detail}` };
+                record = { ...job, status: 'rejected', error: `L2 Executable Spec Lint 未通过：${detail}` };
               } else {
                 const jobRef = `dickda/job-${env.GITHUB_RUN_ID}-${job.id}`;
                 remoteGit('.', 'push', '--quiet', '--force', '--no-follow-tags', state.remote, `${workerHead}:refs/heads/${jobRef}`);
@@ -782,13 +782,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           : [];
         const results = files.map(file => {
           const result = JSON.parse(readFileSync(join(workersDir, file), 'utf8'));
-          requireValue(file === `${prefix}${result.id}.json`, `工单结果文件 ${file} 与其中的 ID ${result.id} 不一致`);
+          requireValue(file === `${prefix}${result.id}.json`, `Work Order结果文件 ${file} 与其中的 ID ${result.id} 不一致`);
           return result;
         });
         const expected = batch.map(job => job.id).sort();
         const received = results.map(result => result.id).sort();
         requireValue(expected.length === received.length && expected.every((id, i) => id === received[i]),
-          `第 ${state.round} 轮派单与回收的工单 ID 不一致：派发 [${expected.join(', ')}]，回收 [${received.join(', ')}]`);
+          `第 ${state.round} 轮派单与回收的Work Order ID 不一致：派发 [${expected.join(', ')}]，回收 [${received.join(', ')}]`);
 
         // A delivery push and ledger update can succeed before a temporary ref deletion needs retrying.
         if (state.integration?.round === state.round) {
@@ -818,13 +818,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const cleanup = [...releasePreviousRefs(merged.ledger), ...results.filter(r => r.jobRef).map(r => `refs/heads/${r.jobRef}`)];
 
         const feedbackParts = [];
-        if (merged.landed.length) feedbackParts.push(`已合入工单：${merged.landed.map(l => `${l.id}(${l.trade}/${l.tier})`).join('、')}`);
-        if (merged.rejected.length) feedbackParts.push(`未通过工单：\n${merged.rejected.map(r => `- ${r.id}（累计未通过 ${r.rejections} 次${r.nextTier === 'senior' ? '，下次派单自动升级 senior' : ''}）：${r.reason}`).join('\n')}`);
+        if (merged.landed.length) feedbackParts.push(`已合入Work Order：${merged.landed.map(l => `${l.id}(${l.trade}/${l.tier})`).join('、')}`);
+        if (merged.rejected.length) feedbackParts.push(`未通过Work Order：\n${merged.rejected.map(r => `- ${r.id}（累计未通过 ${r.rejections} 次${r.nextTier === 'senior' ? '，下次派单自动升级 senior' : ''}）：${r.reason}`).join('\n')}`);
         const findings = [
           ...Object.values(merged.ledger).flatMap(job => job.openMusts ?? []),
           ...merged.findings.filter(f => f.level !== 'must'),
         ];
-        if (findings.length) feedbackParts.push(`验证工种（Sol）报告的问题：\n${findings.map((f, idx) => `- ${f.id ?? `#${idx + 1}`} [${f.level ?? 'must'}] ${findingTitle(f)}：${f.detail ?? ''}`).join('\n')}`);
+        if (findings.length) feedbackParts.push(`Verifier报告的问题：\n${findings.map((f, idx) => `- ${f.id ?? `#${idx + 1}`} [${f.level ?? 'must'}] ${findingTitle(f)}：${f.detail ?? ''}`).join('\n')}`);
 
         saveState({
           ...state,
@@ -857,7 +857,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           appendGithubOutput({ route: 'stop' });
           break;
         }
-        const msg = `顶层交互者对风险升级的指示：\n${reply.note || '请按当前边界继续推进'}`;
+        const msg = `顶层Interactor对风险升级的指示：\n${reply.note || '请按当前边界继续推进'}`;
         saveState({ ...state, pendingFeedback: [state.pendingFeedback, msg].filter(Boolean).join('\n\n') });
         appendGithubOutput({ route: 'continue' });
         break;
@@ -903,7 +903,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       }
 
       case 'review-lost': {
-        const reason = `提交 ${state.head} 调用 review-commit 能力异常失败（运行 coda://workflow-runs/${env.GITHUB_RUN_ID}），尚未完成独立代码审查，不能放行交付。`;
+        const reason = `提交 ${state.head} 调用 review-commit 能力异常失败（运行 coda://workflow-runs/${env.GITHUB_RUN_ID}），尚未完成Independent Code Review，不能放行交付。`;
         saveState({ ...state, reviewRetryReason: reason });
         appendGithubOutput({ reason });
         break;
@@ -982,7 +982,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
       case 'accepted': {
         if (env.ROUTE === 'changed') {
-          saveState({ ...state, pendingFeedback: '预览准备阶段需要调整，请继续修复并合入需求分支。' });
+          saveState({ ...state, pendingFeedback: '预览准备阶段需要调整，请继续修复并合入Requirement Branch。' });
           appendGithubOutput({ route: 'lead' });
           break;
         }
@@ -1017,7 +1017,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       }
 
       case 'stopped': {
-        const reason = env.REASON?.trim() || '用户暂不开工，保留需求分支方案。';
+        const reason = env.REASON?.trim() || '用户暂不开工，保留Requirement Branch方案。';
         saveState({ ...state, stopReason: reason });
         if (env.GITHUB_STEP_SUMMARY) writeFileSync(env.GITHUB_STEP_SUMMARY, `## 停止交付\n\n${reason}\n\n保留分支：\`${state.reqBranch}\`\n`, { flag: 'a' });
         appendGithubOutput({ reason });

@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:coda="https://coda.pub/schema/bpmn/1.0"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="dickda-verify-definitions" targetNamespace="https://coda.pub/plugins/dickda">
-  <process id="dickda-verify" name="dickda模式 · 双轨验证" isExecutable="true" coda:title="dickda模式 · 双轨验证">
+  <process id="dickda-verify" name="dickda Mode · Dual-Track Verification" isExecutable="true" coda:title="dickda Mode · Dual-Track Verification">
     <extensionElements>
       <coda:input name="commit" label="待验证提交" type="string" default="" description="显式指定待验证的提交 SHA；留空使用本次运行的提交 (run.commit)" />
-      <coda:input name="branch" label="待拉取分支" type="string" default="" description="可选：若待验证提交在远端需求分支上，先从 origin 拉取该分支" />
-      <coda:input name="tier" label="验证级别" type="string" default="standard" description="standard（默认 sol-high）或 senior（sol-max）" />
-      <coda:input name="verifier" label="验证（常规）覆盖" type="agent" />
-      <coda:input name="verifierSenior" label="验证（高级）覆盖" type="agent" />
-      <coda:input name="ui" label="启用 Agent / UI 实证验收" type="boolean" default="true" description="是否调用验证工种（Sol）运行 .dickda/verifiers 中的实证与 UI 规约" />
-      <coda:input name="device" label="验收设备" type="string" default="" description="启用 UI 且填写设备时，在双轨验证前用 testbed 预检，仅在执行 Agent/UI 规约时占用" />
+      <coda:input name="branch" label="待拉取分支" type="string" default="" description="可选：若待验证提交在远端Requirement Branch上，先从 origin 拉取该分支" />
+      <coda:input name="tier" label="验证级别" type="string" default="standard" description="standard或 senior（sol-max）" />
+      <coda:input name="verifier" label="Verifier（Standard）覆盖" type="agent" />
+      <coda:input name="verifierSenior" label="Verifier（Senior）覆盖" type="agent" />
+      <coda:input name="ui" label="启用 Agent / UI 实证验收" type="boolean" default="true" description="是否调用Verifier运行 .dickda/verifiers 中的实证与 UI 规约" />
+      <coda:input name="device" label="验收设备" type="string" default="" description="启用 UI 且填写设备时，在Dual-Track Verification前用 testbed 预检，仅在执行 Agent/UI 规约时占用" />
       <coda:input name="task" label="任务说明" type="string" default="" description="本次需求与验收背景摘要" />
     </extensionElements>
 
@@ -30,11 +30,11 @@
 
     <exclusiveGateway id="preflight-done" />
     <sequenceFlow id="preflight-to-fork" sourceRef="preflight-done" targetRef="tracks-fork" />
-    <parallelGateway id="tracks-fork" name="并行双轨验证" />
+    <parallelGateway id="tracks-fork" name="并行Dual-Track Verification" />
     <sequenceFlow id="fork-to-code" sourceRef="tracks-fork" targetRef="code-verify" />
     <sequenceFlow id="fork-to-agent-gate" sourceRef="tracks-fork" targetRef="agent-gate" />
 
-    <scriptTask id="code-verify" name="轨道 A：确定性代码与 Lint 验证" scriptFormat="bash" coda:timeout="30" coda:status="运行 L2 Lint 与 L3 代码验证器">
+    <scriptTask id="code-verify" name="Code Track · Lint &amp; Verification" scriptFormat="bash" coda:timeout="30" coda:status="运行 L2 Lint 与 L3 Code Verifier">
       <extensionElements>
         <coda:env name="COMMIT" value="=inputs.commit" />
         <coda:env name="RUN_COMMIT" value="=run.commit" />
@@ -53,7 +53,7 @@
     </sequenceFlow>
     <sequenceFlow id="agent-skip" sourceRef="agent-gate" targetRef="tracks-join" />
 
-    <subProcess id="agent-sub" name="轨道 B：独立黑盒与 UI 实证">
+    <subProcess id="agent-sub" name="Agent/UI Track · 独立黑盒与 UI 实证">
       <startEvent id="agent-sub-start" />
       <sequenceFlow id="sub-start-to-plan" sourceRef="agent-sub-start" targetRef="agent-plan" />
       <scriptTask id="agent-plan" name="检查目标提交的 Agent/UI 规约" scriptFormat="bash" coda:timeout="5">
@@ -87,7 +87,7 @@
       </serviceTask>
       <sequenceFlow id="device-held" sourceRef="device-hold" targetRef="agent-verify" />
 
-      <scriptTask id="agent-verify" name="执行实证与 UI 验收" scriptFormat="bash" coda:timeout="60" coda:status="验证工程师正在实证验收">
+      <scriptTask id="agent-verify" name="执行实证与 UI 验收" scriptFormat="bash" coda:timeout="60" coda:status="Verifier正在实证验收">
         <extensionElements>
           <coda:env name="TIER" value="=inputs.tier" />
           <coda:env name="VERIFIER" value="=inputs.verifier" />
@@ -107,10 +107,10 @@
     </subProcess>
     <sequenceFlow id="agent-sub-to-join" sourceRef="agent-sub" targetRef="tracks-join" />
 
-    <parallelGateway id="tracks-join" name="汇合双轨结论" />
+    <parallelGateway id="tracks-join" name="汇合Dual-Track Verification结论" />
     <sequenceFlow id="join-to-summary" sourceRef="tracks-join" targetRef="verify-summary" />
 
-    <scriptTask id="verify-summary" name="汇总双轨验证报告" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
+    <scriptTask id="verify-summary" name="汇总Dual-Track Verification报告" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
       <extensionElements>
         <coda:output name="commit" />
         <coda:output name="passed" />
@@ -122,7 +122,7 @@
     </scriptTask>
     <sequenceFlow id="summary-to-end" sourceRef="verify-summary" targetRef="done" />
 
-    <endEvent id="done" name="双轨验证结束">
+    <endEvent id="done" name="Dual-Track Verification结束">
       <extensionElements>
         <coda:output name="commit" value="=verify-summary.commit" />
         <coda:output name="passed" value="=verify-summary.passed" />
