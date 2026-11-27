@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 
 export function callCodaAgent(args, cwd = process.cwd(), runner) {
@@ -29,7 +29,7 @@ function parseAgentResult(res) {
     : parsed ? null : 'invalid_output';
   return {
     status, signal, parsed, stdout, stderr, nonJson,
-    session: parsed?.session || null, head: parsed?.head || null, answer: parsed?.answer ?? '',
+    session: parsed?.session || null, branch: parsed?.branch || null, head: parsed?.head || null, answer: parsed?.answer ?? '',
     failureKind, detail: detail.slice(-6000),
   };
 }
@@ -97,7 +97,7 @@ export function callCodaAgentAsync(args, cwd = process.cwd(), { signal } = {}) {
 
 export function agentResult(call) {
   return {
-    session: call.session, head: call.head, exitCode: call.status, signal: call.signal,
+    session: call.session, branch: call.branch, worktree: call.worktree, dirtyFiles: call.dirtyFiles, inspectionError: call.inspectionError, head: call.head, exitCode: call.status, signal: call.signal,
     failureKind: call.failureKind, answer: call.answer, stderr: call.stderr,
     nonJson: call.nonJson, detail: call.detail,
   };
@@ -107,31 +107,63 @@ export function agentFailure(call) {
   return `coda-agent 退出码 ${call.status}；signal=${call.signal ?? 'none'}；session=${call.session ?? 'none'}；failureKind=${call.failureKind ?? 'gate_rejected'}${call.detail ? `\n${call.detail}` : ''}`;
 }
 
-// A successful turn may only have started background work. Continue that same session at most twice.
-export function callDeliveryAgent(args, { cwd, baseHead, promptFile, runner }) {
-  let call = callCodaAgent(args, cwd, runner);
-  const attempts = [agentResult(call)];
-  const prompt = readFileSync(promptFile, 'utf8');
-  for (let retry = 0; retry < 2 && call.status === 0 && call.session && (!call.head || call.head === baseHead); retry++) {
-    writeFileSync(promptFile, `${prompt}\n\n## 交付完成确认（${retry + 1}/2）\n请确认本会话启动的后台构建/测试已执行完毕，检查真实结果，将改动提交为基线 ${baseHead} 之上的干净 Git commit，并汇报提交 SHA。不要仅回复正在等待；若确实受阻无法完成，请明确说明原因。不要推送或开 PR。\n`);
-    const session = call.session;
-    call = callCodaAgent(['--continue', session, '--json', '--prompt-file', promptFile], cwd, runner);
-    call.session ||= session;
-    attempts.push(agentResult(call));
+function inspectDelivery(call, cwd) {
+  if (call.status !== 0) return call;
+  try {
+    let worktree = cwd;
+    if (call.branch) {
+      const entries = execFileSync('git', ['-C', cwd, 'worktree', 'list', '--porcelain', '-z'], { encoding: 'utf8' }).split('\0\0');
+      const entry = entries.map(record => record.split('\0')).find(lines => lines.includes(`branch refs/heads/${call.branch}`));
+      if (!entry) throw new Error(`找不到 Agent 会话分支 ${call.branch} 的工作树`);
+      worktree = entry.find(line => line.startsWith('worktree ')).slice(9);
+    }
+    const dirtyFiles = execFileSync('git', ['-C', worktree, 'status', '--porcelain', '--untracked-files=normal'], { encoding: 'utf8' }).trimEnd();
+    return { ...call, worktree, dirtyFiles };
+  } catch (error) {
+    return { ...call, inspectionError: error.message };
+  }
+}
+
+const needsCompletion = (call, baseHead) => !call.head || call.head === baseHead || call.dirtyFiles || call.inspectionError;
+const completionPrompt = (prompt, call, baseHead, retry) => `${prompt}\n\n## Delivery Completion · 交付完成确认（${retry + 1}/2）\n请确认本会话启动的后台构建/测试已执行完毕，检查真实结果，将完整交付内容提交为基线 ${baseHead} 之上的干净 Git commit，并汇报提交 SHA。提交交付文件或清理临时文件，使工作树干净。不要仅回复正在等待；若确实受阻无法完成，请明确说明原因。不要推送或开 PR。\n${call.dirtyFiles ? `未干净文件（${call.worktree}）：\n${call.dirtyFiles}\n` : ''}${call.inspectionError ? `工作树检查失败：${call.inspectionError}\n` : ''}`;
+
+function finishDelivery(call, attempts) {
+  if (call.status === 0 && (call.dirtyFiles || call.inspectionError)) {
+    call.failureKind = 'gate_rejected';
+    call.detail = [call.detail, 'Agent 会话工作树未干净交付（最多续跑 2 次）', call.dirtyFiles, call.inspectionError].filter(Boolean).join('\n');
   }
   return { ...call, attempts };
 }
 
-export async function callDeliveryAgentAsync(args, { cwd, baseHead, promptFile, signal }) {
-  let call = await callCodaAgentAsync(args, cwd, { signal });
+// A new commit alone is not delivery: the session must also have a clean worktree.
+export function callDeliveryAgent(args, { cwd, baseHead, promptFile, runner }) {
+  let call = inspectDelivery(callCodaAgent(args, cwd, runner), cwd);
   const attempts = [agentResult(call)];
   const prompt = readFileSync(promptFile, 'utf8');
-  for (let retry = 0; retry < 2 && call.status === 0 && call.session && (!call.head || call.head === baseHead); retry++) {
-    writeFileSync(promptFile, `${prompt}\n\n## Delivery Completion (${retry + 1}/2)\n确认本会话后台检查的实际结果，将完整 PLAN_5L.md 提交为 ${baseHead} 的严格后代，汇报 SHA。受阻则说明原因。不要推送或开 PR。\n`);
-    const session = call.session;
-    call = await callCodaAgentAsync(['--continue', session, '--json', '--prompt-file', promptFile], cwd, { signal });
+  for (let retry = 0; retry < 2 && call.status === 0 && call.session && needsCompletion(call, baseHead); retry++) {
+    writeFileSync(promptFile, completionPrompt(prompt, call, baseHead, retry));
+    const { session, branch } = call;
+    call = callCodaAgent(['--continue', session, '--json', '--prompt-file', promptFile], cwd, runner);
     call.session ||= session;
+    call.branch ||= branch;
+    call = inspectDelivery(call, cwd);
     attempts.push(agentResult(call));
   }
-  return { ...call, attempts };
+  return finishDelivery(call, attempts);
+}
+
+export async function callDeliveryAgentAsync(args, { cwd, baseHead, promptFile, signal }) {
+  let call = inspectDelivery(await callCodaAgentAsync(args, cwd, { signal }), cwd);
+  const attempts = [agentResult(call)];
+  const prompt = readFileSync(promptFile, 'utf8');
+  for (let retry = 0; retry < 2 && call.status === 0 && call.session && needsCompletion(call, baseHead); retry++) {
+    writeFileSync(promptFile, completionPrompt(prompt, call, baseHead, retry));
+    const { session, branch } = call;
+    call = await callCodaAgentAsync(['--continue', session, '--json', '--prompt-file', promptFile], cwd, { signal });
+    call.session ||= session;
+    call.branch ||= branch;
+    call = inspectDelivery(call, cwd);
+    attempts.push(agentResult(call));
+  }
+  return finishDelivery(call, attempts);
 }

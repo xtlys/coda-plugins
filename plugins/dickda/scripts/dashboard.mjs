@@ -19,11 +19,12 @@ export function buildDashboardData(root, settings = loadSettings(), env = proces
   const roles = listRoles(settings);
   const plan = existsSync(managed(root, 'tasks/PLAN_5L.md')) ? readFileSync(managed(root, 'tasks/PLAN_5L.md'), 'utf8') : '';
   const todo = existsSync(managed(root, 'tasks/TODO_TASK.md')) ? readFileSync(managed(root, 'tasks/TODO_TASK.md'), 'utf8') : '';
-  const runs = env.CODA_PLUGIN_STATE && join(env.CODA_PLUGIN_STATE, 'runs', projectGroup(root).replace(/^dickda:/, ''));
+  const runs = env.CODA_PLUGIN_STATE && join(env.CODA_PLUGIN_STATE, 'runs');
   const runIds = runs && existsSync(runs) ? (env.GITHUB_RUN_ID ? [env.GITHUB_RUN_ID] : readdirSync(runs)) : [];
   const states = runIds.map(id => ({ id, file: join(runs, id, 'develop.json') })).filter(run => existsSync(run.file))
     .sort((a, b) => statSync(b.file).mtimeMs - statSync(a.file).mtimeMs);
-  const latest = states[0];
+  const group = projectGroup(root);
+  const latest = states.find(run => JSON.parse(readFileSync(run.file, 'utf8')).group === group);
   const state = latest ? JSON.parse(readFileSync(latest.file, 'utf8')) : null;
   return {
     project: { name: cfg.name, root, projectId: cfg.projectId },

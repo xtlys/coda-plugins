@@ -99,29 +99,95 @@ const blueprint = ['架构边界', 'Lint 规则', '验证用例', '并发Work Or
   .map((label, index) => `## L${index + 1}\n${label}`).join('\n\n');
 
 function stepRunner({ dir, work, origin, env, git }, script, sharedWorktrees = false) {
-  // Each step has its own checkout; only artifacts and published refs survive between steps.
-  let stepCounter = 0;
-  return (step, extra = {}, expectedError) => {
-    const stepDir = join(dir, `ephemeral-step-${++stepCounter}`);
-    if (sharedWorktrees) git(work, 'worktree', 'add', '--detach', stepDir, 'HEAD');
+  const workflow = script === refineScript ? 'dickda-refine' : script === verifyScript ? 'dickda-verify' : 'dickda';
+  const tasks = [...workflowGraph(workflow).xml.matchAll(/<scriptTask\b([^>]*)>([\s\S]*?)<\/scriptTask>/g)];
+  const prepare = (step, extra) => {
+    const task = tasks.find(([, , body]) => body.includes(`/scripts/${script.split('/').at(-1)}"${step ? ` ${step}` : ''}</script>`));
+    assert.ok(task, `Missing BPMN script task for ${script}: ${step}`);
+    const checkout = !task[1].includes('coda:checkout="false"');
+    const jobDir = mkdtempSync(join(dir, 'job-'));
+    const stepDir = join(jobDir, 'work');
+    if (!checkout) {
+      mkdirSync(stepDir);
+      assert.notEqual(spawnSync('git', ['rev-parse', '--git-dir'], { cwd: stepDir }).status, 0);
+      assert.ok(env.CODA_PLUGIN_STATE);
+    } else if (sharedWorktrees) git(work, 'worktree', 'add', '--detach', stepDir, 'HEAD');
     else {
       git(dir, 'clone', '-q', origin, stepDir);
       git(stepDir, 'config', 'user.name', 'Dickda Runner');
       git(stepDir, 'config', 'user.email', 'runner@example.com');
     }
-    writeFileSync(env.GITHUB_OUTPUT, '');
-    const res = spawnSync(process.execPath, [script, step], { cwd: stepDir, env: { ...env, ...extra }, encoding: 'utf8' });
-    if (!sharedWorktrees) rmSync(stepDir, { recursive: true, force: true });
-    if (typeof expectedError === 'string') {
-      assert.equal(res.signal, expectedError, res.stderr);
-    } else if (expectedError) {
+    mkdirSync(join(jobDir, 'bin'));
+    symlinkSync(join(dir, 'bin/coda-agent'), join(jobDir, 'bin/coda-agent'));
+    const output = join(jobDir, 'output');
+    writeFileSync(output, '');
+    return { cwd: stepDir, env: { ...env, ...extra, PATH: `${join(jobDir, 'bin')}:${env.PATH}`, CODA_JOB_DIR: jobDir, GITHUB_OUTPUT: output }, encoding: 'utf8' };
+  };
+  const finish = (res, options, expectedError) => {
+    if (!sharedWorktrees) rmSync(options.cwd, { recursive: true, force: true });
+    if (typeof expectedError === 'string') assert.equal(res.signal, expectedError, res.stderr);
+    else if (expectedError) {
       assert.equal(res.status, 1, res.stderr);
       assert.match(res.stderr, expectedError);
-    } else {
-      assert.equal(res.status, 0, res.stderr || res.stdout);
-    }
-    return parseOutputs(env.GITHUB_OUTPUT);
+    } else assert.equal(res.status, 0, res.stderr || res.stdout);
+    return parseOutputs(options.env.GITHUB_OUTPUT);
   };
+  const run = (step, extra = {}, expectedError) => {
+    const options = prepare(step, extra);
+    return finish(spawnSync(process.execPath, [script, step], options), options, expectedError);
+  };
+  // Native multi-instance steps get independent job directories; a failed instance cancels its peers.
+  run.parallel = async (step, extras, limits = {}) => {
+    const jobs = extras.map(extra => {
+      const options = prepare(step, extra);
+      const child = spawn(process.execPath, [script, step], { ...options, ...limits });
+      const job = { child, options, stdout: '', stderr: '' };
+      child.stdout.on('data', data => { job.stdout += data; });
+      child.stderr.on('data', data => { job.stderr += data; });
+      return job;
+    });
+    const results = await Promise.all(jobs.map(job => new Promise(resolve => {
+      job.child.on('close', (status, signal) => {
+        job.status = status;
+        job.signal = signal;
+        if (status !== 0) for (const peer of jobs) if (peer !== job && peer.child.exitCode === null) peer.child.kill('SIGTERM');
+        resolve(job);
+      });
+    })));
+    for (const job of results) if (!sharedWorktrees) rmSync(job.options.cwd, { recursive: true, force: true });
+    return results.map(job => ({ status: job.status, signal: job.signal, stderr: job.stderr, output: parseOutputs(job.options.env.GITHUB_OUTPUT) }));
+  };
+  return run;
+}
+
+// The host has one in-flight request per job attempt, even if callers are separate processes.
+const agentJobLock = `
+const jobLock = process.env.CODA_JOB_DIR + '/agent';
+try { fs.writeFileSync(jobLock, String(process.pid), { flag: 'wx' }); }
+catch (error) {
+  if (error.code !== 'EEXIST') throw error;
+  console.error('这个步骤已经有一个 Agent 在进行');
+  process.exit(2);
+}
+process.on('exit', () => fs.rmSync(jobLock, { force: true }));
+`;
+
+async function runHeavy(f, extra = {}, expectedError) {
+  for (const step of ['heavy-prepare', 'heavy-draft', 'heavy-review', 'heavy-revise', 'heavy-synthesize']) {
+    const task = workflowGraph('dickda').xml.match(new RegExp(`<scriptTask id="${step}"[\\s\\S]*?</scriptTask>`))[0];
+    const slots = task.match(/coda:inputCollection='=([^']+)' coda:inputElement="slot"/);
+    const results = await f.run.parallel(step, slots ? JSON.parse(slots[1]).map(SLOT => ({ ...extra, SLOT })) : [extra]);
+    if (results.some(result => result.status !== 0)) {
+      const error = results.map(result => result.stderr).join('\n');
+      assert.ok(expectedError, error);
+      assert.match(error, expectedError);
+      return;
+    }
+    if (step === 'heavy-synthesize') {
+      assert.ok(!expectedError, 'Expected Heavy Mode to fail');
+      return results[0].output;
+    }
+  }
 }
 
 function workflowFixture(t, script = developScript, sharedWorktrees = false) {
@@ -139,6 +205,8 @@ const stateFile = process.env.CODA_ARTIFACTS + '/${script === refineScript ? 're
 const state = fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile, 'utf8')) : {};
 if (args[0] === 'repo') {
   console.log(args.includes('--jq') ? (process.env.DEFAULT_BRANCH || 'main') : JSON.stringify({ nameWithOwner: 'fixture/dickda-demo', defaultBranchRef: { name: 'main' } }));
+} else if (args[0] === 'pr' && args[1] === 'checks') {
+  console.log('[]');
 } else if (args[0] === 'pr' && args[1] === 'list') {
   console.log('[]');
 } else if (args[0] === 'pr' && args[1] === 'create') {
@@ -164,6 +232,8 @@ if (args[0] === 'repo') {
   // Return a commit from the simulated agent's worktree without publishing it to origin.
   writeFileSync(join(dir, 'bin/coda-agent'), `#!${process.execPath}
 const fs = require('node:fs');
+${agentJobLock}
+while (process.env.AGENT_HOLD_FILE && fs.existsSync(process.env.AGENT_HOLD_FILE)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
 const args = process.argv.slice(2);
 let response = { reply: JSON.parse(process.env.AGENT_REPLY || '{}'), exitCode: Number(process.env.AGENT_EXIT_CODE || 0) };
 if (process.env.AGENT_RESPONSES_FILE) {
@@ -173,9 +243,25 @@ if (process.env.AGENT_RESPONSES_FILE) {
   fs.writeFileSync(process.env.AGENT_RESPONSES_FILE, JSON.stringify(queue));
 }
 const reply = response.reply || {};
+if (response.delivery) {
+  const cp = require('node:child_process');
+  const git = (...a) => cp.execFileSync('git', a, { encoding: 'utf8' }).trim();
+  const { branch, files, dirty, staged } = response.delivery;
+  const worktree = process.env.FIXTURE_DIR + '/session-' + branch;
+  if (!fs.existsSync(worktree)) git('worktree', 'add', '-b', branch, worktree, args[args.indexOf('--commit') + 1]);
+  if (files) {
+    for (const [name, body] of Object.entries(files)) fs.writeFileSync(worktree + '/' + name, body);
+    git('-C', worktree, 'add', '-A');
+    git('-C', worktree, 'commit', '-m', 'complete delivery');
+  }
+  for (const [name, body] of Object.entries(dirty || {})) fs.writeFileSync(worktree + '/' + name, body);
+  if (staged) git('-C', worktree, 'add', ...staged);
+  reply.head = git('-C', worktree, 'rev-parse', 'HEAD');
+  reply.branch = branch;
+}
 fs.writeFileSync(process.env.FIXTURE_DIR + '/agent-args.json', JSON.stringify(args));
 fs.appendFileSync(process.env.FIXTURE_DIR + '/agent-calls.jsonl', JSON.stringify({ args, prompt: fs.readFileSync(args[args.indexOf('--prompt-file') + 1], 'utf8') }) + '\\n');
-if (reply.head) require('node:child_process').execFileSync('git', ['fetch', process.env.FIXTURE_DIR + '/work', reply.head]);
+if (reply.head && !response.delivery) require('node:child_process').execFileSync('git', ['fetch', process.env.FIXTURE_DIR + '/work', reply.head]);
 console.log(response.stdout ?? JSON.stringify(reply));
 if (response.stderr) console.error(response.stderr);
 process.exitCode = response.exitCode || 0;
@@ -194,6 +280,40 @@ process.exitCode = response.exitCode || 0;
   }, expectedError);
   return { ...fixture, ghCallsFile, run, seedFast, lead, state };
 }
+
+test('fake coda-agent enforces the host single in-flight request per job', async t => {
+  const f = workflowFixture(t);
+  const job = join(f.dir, 'locked-job');
+  mkdirSync(job);
+  const hold = join(f.dir, 'hold');
+  const prompt = join(f.dir, 'prompt.md');
+  writeFileSync(hold, '');
+  writeFileSync(prompt, 'read only');
+  const options = { cwd: f.work, env: { ...f.env, CODA_JOB_DIR: job, AGENT_HOLD_FILE: hold }, encoding: 'utf8' };
+  const first = spawn('coda-agent', ['--json', '--prompt-file', prompt], options);
+  t.after(() => first.kill('SIGKILL'));
+  const ended = once(first, 'close');
+  while (!existsSync(join(job, 'agent'))) {
+    assert.equal(first.exitCode, null);
+    await delay(10);
+  }
+  const second = spawnSync('coda-agent', ['--json', '--prompt-file', prompt], options);
+  assert.equal(second.status, 2);
+  assert.match(second.stderr, /这个步骤已经有一个 Agent 在进行/);
+  unlinkSync(hold);
+  assert.equal((await ended)[0], 0);
+});
+
+test('checkout-free verification, checks and approval entries run in empty non-Git directories', t => {
+  const f = workflowFixture(t);
+  writeFileSync(join(f.artifacts, 'code-verify.json'), JSON.stringify({ passed: true, commit: 'delivery', summary: 'code passed' }));
+  assert.equal(stepRunner(f, verifyScript)('summary').passed, 'true');
+  assert.equal(stepRunner(f, join(pluginDir, 'scripts/checks.mjs'))('', { URL: 'https://github.com/fixture/dickda-demo/pull/7' }).passed, 'true');
+  const approval = stepRunner(f, join(pluginDir, 'scripts/approval.mjs'));
+  assert.equal(approval('parse').notify, 'true');
+  assert.equal(approval('inputs').inputs, '{}');
+  assert.ok(approval('ran').line);
+});
 
 test('dickda declares its Coda engine and uses supported contributions', () => {
   const { name, displayName, engines, contributes } = JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf8'));
@@ -902,7 +1022,7 @@ test('development workflow routes both plan decisions, milestones, dual failures
   const { xml, routes, card } = workflowGraph('dickda');
   assert.deepEqual(routes('think-gate'), {
     'lead-plan': '=seed.alreadyConfirmed = true or inputs.fast = true',
-    'plan-present': '=seed.alreadyConfirmed = false and inputs.fast = false and inputs.heavyThink = false and seed.hasPlan = true', think: 'always',
+    'plan-present': '=seed.alreadyConfirmed = false and inputs.fast = false and inputs.heavyThink = false and seed.hasPlan = true', 'heavy-prepare': '=seed.alreadyConfirmed = false and inputs.fast = false and inputs.heavyThink = true', think: 'always',
   });
   assert.deepEqual(routes('think'), { 'plan-present': 'always' });
   assert.deepEqual(routes('plan-present'), { 'present-gate': 'always' });
@@ -920,12 +1040,13 @@ test('development workflow routes both plan decisions, milestones, dual failures
   });
   const leadPlan = xml.match(/<scriptTask id="lead-plan"[\s\S]*?<\/scriptTask>/)[0];
   const approvedHead = card('plan-confirm').match(/Approved HEAD \{\{([^}]+)\}\}/)[1];
-  assert.equal(approvedHead, 'if think.head = null then seed.head else think.head');
+  assert.equal(approvedHead, 'if inputs.heavyThink = true and heavy-synthesize.head != null then heavy-synthesize.head else if think.head = null then seed.head else think.head');
   assert.ok(leadPlan.includes(`name="APPROVED_HEAD" value="=${approvedHead}"`));
   assert.ok(leadPlan.includes('name="FAST" value="=inputs.fast"'));
   assert.ok(leadPlan.includes('name="SEED_HEAD" value="=seed.head"'));
   assert.match(xml, /name="FEEDBACK" value="=if plan-present.chose.revise then plan-present.note else plan-confirm.note"/);
-  assert.deepEqual(routes('plan-feedback'), { think: 'always' });
+  assert.deepEqual(routes('plan-feedback'), { 'planning-route': 'always' });
+  assert.deepEqual(routes('planning-route'), { 'heavy-prepare': '=inputs.heavyThink = true', think: 'always' });
   assert.deepEqual(routes('record-stop'), { stopped: 'always' });
   assert.match(xml, /<coda:output name="reason" value="=record-stop.reason"/);
   assert.deepEqual(routes('brief-valid'), { brief: '=brief-parse.route = "again"', seed: 'always' });
@@ -1623,13 +1744,13 @@ if (prompt.includes('# Role: Thinker')) {
   fs.writeFileSync('.dickda/tasks/PLAN_5L.md', ${JSON.stringify(blueprint)});
   git('add', '.dickda/tasks/PLAN_5L.md');
   git('commit', '-m', 'docs(dickda): add 5-layer blueprint');
-  console.log(JSON.stringify({ session: 'think-1', branch: 'b', head: git('rev-parse', 'HEAD'), answer: 'Blueprint ready' }));
+  console.log(JSON.stringify({ session: 'think-1', head: git('rev-parse', 'HEAD'), answer: 'Blueprint ready' }));
 } else if (prompt.includes('Lead决策上下文')) {
   const state = JSON.parse(fs.readFileSync(process.env.CODA_ARTIFACTS + '/develop.json', 'utf8'));
   const action = Object.keys(state.ledger || {}).length === 0
     ? { action: 'dispatch', milestone: 'Dispatch wave 1', jobs: [{ id: 'impl-1', trade: 'builder', title: 'Add feature', task: 'Implement feature.mjs' }] }
     : { action: 'verify', report: '做了什么\\n- 完成五层特性实现\\n需要你知道：无', ignoredFindings: [{ id: '#1', reason: '非阻塞样式建议' }] };
-  console.log(JSON.stringify({ session: 'lead-1', branch: 'b', head: git('rev-parse', 'HEAD'), answer: '\`\`\`json\\n' + JSON.stringify(action) + '\\n\`\`\`' }));
+  console.log(JSON.stringify({ session: 'lead-1', head: git('rev-parse', 'HEAD'), answer: '\`\`\`json\\n' + JSON.stringify(action) + '\\n\`\`\`' }));
 } else {
   fs.writeFileSync('feature.mjs', 'export const feature = true;\\n');
   // Exercise delivery with a job log as the only investigation file.
@@ -1637,7 +1758,7 @@ if (prompt.includes('# Role: Thinker')) {
   fs.writeFileSync('.dickda/tasks/logs/impl-1.md', '# Investigation Log\\nConfirmed proposal A.\\n');
   git('add', 'feature.mjs', '.dickda/tasks/logs');
   git('commit', '-m', 'feat: implement feature');
-  console.log(JSON.stringify({ session: 'worker-1', branch: 'b', head: git('rev-parse', 'HEAD'), answer: '交付说明\\n1. 已完成\\n2. node --test 通过' }));
+  console.log(JSON.stringify({ session: 'worker-1', head: git('rev-parse', 'HEAD'), answer: '交付说明\\n1. 已完成\\n2. node --test 通过' }));
 }
 `);
   chmodSync(fakeCodaAgent, 0o755);
@@ -1861,8 +1982,8 @@ if (prompt.includes('Refine 归档复盘输入')) {
   assert.match(slimmed, /require-helper\.mjs/);
 });
 
-function refineFixture(t, broken = false) {
-  const fixture = workflowFixture(t, refineScript);
+function refineFixture(t, broken = false, sharedWorktrees = false) {
+  const fixture = workflowFixture(t, refineScript, sharedWorktrees);
   const { work, git, commit, env, run, state } = fixture;
   env.CODA_PLUGIN_SETTINGS = JSON.stringify({ 'dickda.mergeMethod': 'squash' });
   init(work);
@@ -2110,7 +2231,9 @@ test('refine routes hook failures, incomplete reviews, human decisions and confl
   for (const [name, step] of [['dickda-refine', 'prepare-review'], ['dickda', 'prepare-verify']]) {
     const binding = workflowGraph(name).xml.match(/<coda:param name="reviewer" value='([^']+)'/)[1];
     assert.match(binding, /^=\{r: if /);
-    assert.match(binding, /reviewer: if r\.agent = "antigravity" then context put\(r, "mode", "full"\) else r\}\.reviewer$/);
+    assert.match(binding, /reviewer: context merge\(/);
+    assert.doesNotMatch(binding, /antigravity/);
+    for (const key of ['Agent', 'Model', 'Effort', 'Mode']) assert.ok(binding.includes(`${step}.reviewer${key}`));
     assert.ok(binding.includes(`${step}.tier = "senior"`));
     assert.ok(binding.includes('then inputs.verifierSenior else vars.dickda.verifierSenior'));
     assert.ok(binding.includes('then inputs.verifier else vars.dickda.verifierStandard'));
@@ -2515,6 +2638,85 @@ test('coding workers continue the same session for background completion, stop a
   assert.equal(result('locked').session, 'background-session');
 });
 
+for (const completes of [true, false]) {
+  test(`coding delivery with a new commit and dirty session worktree ${completes ? 'continues to a clean commit' : 'is rejected after bounded continuations'}`, t => {
+    const f = workflowFixture(t, developScript, true);
+    f.run('lane', { GOAL: '完整提交会话工作树' });
+    const { head: base } = f.seedFast();
+    f.lead({ action: 'dispatch', jobs: [codingJob] });
+    const branch = 'delivery-session';
+    const first = { reply: { session: branch }, delivery: { branch, files: { 'feature.mjs': 'first commit\n' },
+      dirty: { 'feature.mjs': 'unstaged changes\n', 'pending.mjs': 'untracked delivery\n', 'staged.mjs': 'staged delivery\n' }, staged: ['staged.mjs'] } };
+    const later = { reply: { session: branch }, delivery: { branch, ...(completes ? { files: { 'feature.mjs': 'complete\n' } } : {}) } };
+    const before = agentCalls(f).length;
+    const result = f.run('worker', { JOB_ID: 'impl', ...queuedAgent(f, completes ? [first, later] : [first, later, later]) });
+    assert.equal(result.status, completes ? 'succeeded' : 'rejected');
+    const record = JSON.parse(readFileSync(join(f.artifacts, 'workers/1-impl.json')));
+    const calls = agentCalls(f).slice(before);
+    assert.equal(calls.length, completes ? 2 : 3);
+    assert.notEqual(record.deliveryAttempts[0].head, base);
+    for (const call of calls.slice(1)) {
+      assertContinueOnly(call.args, branch);
+      for (const file of ['feature.mjs', 'pending.mjs', 'staged.mjs']) assert.ok(call.prompt.includes(file));
+    }
+    const worktree = join(f.dir, 'session-' + branch);
+    assert.equal(record.worktree, worktree);
+    if (completes) {
+      assert.equal(f.git(worktree, 'status', '--porcelain'), '');
+      assert.equal(f.git(worktree, 'rev-parse', `${record.head}^`), record.deliveryAttempts[0].head);
+    } else {
+      assert.equal(record.failureKind, 'gate_rejected');
+      assert.match(record.error, /工作树未干净交付/);
+      f.run('integrate');
+      assert.equal(f.state().ledger.impl.status, 'rejected');
+      assert.equal(f.git(f.origin, 'ls-tree', f.state().head, '--', 'pending.mjs'), '');
+      assert.ok(existsSync(join(worktree, 'pending.mjs')), 'uncommitted delivery is retained for recovery');
+    }
+  });
+}
+
+test('async Coordinator delivery also continues or rejects a committed dirty session', t => {
+  for (const completes of [true, false]) {
+    const f = workflowFixture(t);
+    const promptFile = join(f.dir, 'coordinator.md');
+    writeFileSync(promptFile, 'Complete delivery');
+    const branch = 'coordinator';
+    const first = { reply: { session: branch }, delivery: { branch, files: { 'plan.md': 'committed draft' }, dirty: { 'plan.md': 'remaining revision' } } };
+    const later = { reply: { session: branch }, delivery: { branch, ...(completes ? { files: { 'plan.md': 'final plan' } } : {}) } };
+    const baseHead = f.git(f.work, 'rev-parse', 'HEAD');
+    const script = `import { callDeliveryAgentAsync } from ${JSON.stringify(new URL('../../plugins/dickda/scripts/agent.mjs', import.meta.url).href)};
+const result = await callDeliveryAgentAsync(['--commit', ${JSON.stringify(baseHead)}, '--json', '--prompt-file', ${JSON.stringify(promptFile)}], ${JSON.stringify({ cwd: f.work, baseHead, promptFile })});
+console.log(JSON.stringify(result));`;
+    const result = JSON.parse(execFileSync(process.execPath, ['--input-type=module'], {
+      input: script, cwd: f.work, encoding: 'utf8', env: { ...f.env, CODA_JOB_DIR: f.dir, ...queuedAgent(f, completes ? [first, later] : [first, later, later]) },
+    }));
+    assert.equal(result.attempts.length, completes ? 2 : 3);
+    assert.notEqual(result.attempts[0].head, baseHead);
+    assert.equal(result.failureKind, completes ? null : 'gate_rejected');
+    assert.equal(Boolean(result.dirtyFiles), !completes);
+    for (const call of agentCalls(f).slice(1)) assertContinueOnly(call.args, branch);
+  }
+});
+
+test('Thinker and Refine gates reject committed but dirty session deliveries', t => {
+  const f = workflowFixture(t, developScript, true);
+  f.run('lane', { GOAL: '规划也须干净交付' });
+  const seed = f.run('seed');
+  const first = { reply: { session: 'dirty-plan' }, delivery: { branch: 'dirty-plan', files: { '.dickda/tasks/PLAN_5L.md': blueprint }, dirty: { 'scratch.tmp': 'unfinished' } } };
+  const stillDirty = { reply: { session: 'dirty-plan' }, delivery: { branch: 'dirty-plan' } };
+  f.run('think', queuedAgent(f, [first, stillDirty, stillDirty]), /工作树未干净交付/);
+  assert.equal(f.state().head, seed.head);
+
+  const r = refineFixture(t, false, true);
+  const diagnosis = { needsRefactor: true, layers: ['L1'], summary: '完整重构', actions: [{ layer: 'L1', ...codingJob }] };
+  r.run('diagnose', { AGENT_REPLY: JSON.stringify({ answer: JSON.stringify(diagnosis) }) });
+  r.run('decide', { DECISION: '{"choice":"refactor"}' });
+  const pending = { reply: { session: 'dirty-refine' }, delivery: { branch: 'dirty-refine' } };
+  r.run('execute', queuedAgent(r, [{ ...pending, delivery: { branch: 'dirty-refine', files: { 'entry.mjs': 'first commit' }, dirty: { 'pending.mjs': 'uncommitted' } } }, pending, pending]), /工作树未干净交付/);
+  assert.equal(r.git(r.origin, 'rev-parse', r.branch), r.original);
+  assert.ok(r.git(r.origin, 'ls-tree', r.branch, '--', r.archive));
+});
+
 test('agent failures preserve policy blocks, cancellation signals, invalid output and non-JSON diagnostics', () => {
   const policy = 'This content was flagged for possible cybersecurity risk';
   const result = callCodaAgent([], '.', () => ({ status: 1, stdout: 'upstream note\n' + JSON.stringify({ session: 'policy-session', head: 'abc', answer: policy }), stderr: 'request denied' }));
@@ -2571,7 +2773,7 @@ test('persistent development state restores confirmed plans and the integrated l
   const integrated = run('integrate').head;
   const previous = state();
   assert.equal(previous.confirmedPlanHead, base);
-  const persistent = join(env.CODA_PLUGIN_STATE, 'runs', previous.group.slice('dickda:'.length), env.GITHUB_RUN_ID, 'develop.json');
+  const persistent = join(env.CODA_PLUGIN_STATE, 'runs', env.GITHUB_RUN_ID, 'develop.json');
   assert.deepEqual(JSON.parse(readFileSync(persistent)), previous);
   rmSync(artifacts, { recursive: true, force: true });
   run('lane');
@@ -2720,7 +2922,7 @@ test('Refine execute and repair continue background work in shared worktrees wit
 });
 
 function persistentRunDir(fixture) {
-  return join(fixture.env.CODA_PLUGIN_STATE, 'runs', fixture.state().group.slice('dickda:'.length), fixture.env.GITHUB_RUN_ID);
+  return join(fixture.env.CODA_PLUGIN_STATE, 'runs', fixture.env.GITHUB_RUN_ID);
 }
 
 function workerPushFault(fixture, mode) {
@@ -3001,10 +3203,11 @@ test('successful worker reuse verifies the remote ref and base before skipping e
   run('worker', { JOB_ID: 'impl', ...reply });
   assert.equal(agentCalls(f).length, calls + 1, 'an unreachable result cannot be reused');
   assert.equal(git(origin, 'rev-parse', record.jobRef), head);
+  const republished = JSON.parse(readFileSync(path));
   const advanced = codingCommit(f, base, 'external.mjs');
   git(work, 'push', 'origin', `${advanced}:refs/heads/${reqBranch}`);
   run('worker', { JOB_ID: 'impl', ...queuedAgent(f, []) }, /基线已改变.*拒绝覆盖/);
-  assert.deepEqual(JSON.parse(readFileSync(path)), record);
+  assert.deepEqual(JSON.parse(readFileSync(path)), republished);
   assert.equal(git(origin, 'rev-parse', record.jobRef), head);
   assert.equal(state().ledger.impl, undefined);
   lead({ action: 'verify' });
@@ -3102,7 +3305,7 @@ test('investigation logs bind deduplication to run, round, session and commit wh
     const { jobRef } = JSON.parse(readFileSync(join(env.CODA_ARTIFACTS, `workers/1-${id}.json`)));
     git(work, 'push', 'origin', `${workerHead}:refs/heads/${jobRef}`);
   }
-  const durable = join(env.CODA_PLUGIN_STATE, 'runs', before.group.slice('dickda:'.length), env.GITHUB_RUN_ID, 'develop.json');
+  const durable = join(env.CODA_PLUGIN_STATE, 'runs', env.GITHUB_RUN_ID, 'develop.json');
   for (const target of [durable, join(env.CODA_ARTIFACTS, 'develop.json')]) writeFileSync(target, JSON.stringify(before));
   run('integrate');
   assert.deepEqual(markers(git(origin, 'show', `${reqBranch}:${path}`)), expected, 'replaying the exact execution must not duplicate its trace');
@@ -3152,17 +3355,27 @@ test('Heavy Mode routing preserves confirmed recovery and rejects Fast Mode befo
   const think = xml.match(/<scriptTask id="think"[\s\S]*?<\/scriptTask>/)[0];
   for (const [env, input] of [['FAST', 'fast'], ['HEAVY_THINK', 'heavyThink']]) assert.ok(lane.includes(`name="${env}" value="=inputs.${input}"`));
   assert.match(think, /coda:timeout="120"/);
-  assert.ok(think.includes('name="HEAVY_THINK" value="=inputs.heavyThink"'));
+  const prepare = xml.match(/<scriptTask id="heavy-prepare"[\s\S]*?<\/scriptTask>/)[0];
   for (const [slot, env] of heavySlots) {
     assert.match(xml, new RegExp(`name="${slot}"[^>]*type="agent"`));
-    assert.ok(think.includes(`name="${env}" value="=inputs.${slot}"`));
+    assert.ok(prepare.includes(`name="${env}" value="=inputs.${slot}"`));
+  }
+  const pipeline = ['heavy-prepare', 'heavy-draft', 'heavy-review', 'heavy-revise', 'heavy-synthesize', 'plan-present'];
+  for (const [index, step] of pipeline.slice(0, -1).entries()) {
+    assert.deepEqual(routes(step), { [pipeline[index + 1]]: 'always' });
+    if (index > 0) assert.match(xml.match(new RegExp(`<scriptTask id="${step}"[^>]*>`))[0], /coda:timeout="60"/);
+    if (index > 0 && index < 4) {
+      const task = xml.match(new RegExp(`<scriptTask id="${step}"[\\s\\S]*?</scriptTask>`))[0];
+      assert.ok(task.includes(`coda:inputCollection='=["carbon", "astra"]' coda:inputElement="slot"`));
+      assert.doesNotMatch(task, /isSequential="true"/);
+    }
   }
   // Evaluate the actual FEEL boolean guards for every routing combination.
   const route = (seed, inputs) => Object.entries(routes('think-gate')).find(([, guard]) => guard === 'always'
     || Function('seed', 'inputs', `return ${guard.slice(1).replaceAll(' = ', ' === ').replaceAll(' or ', ' || ').replaceAll(' and ', ' && ')}`)(seed, inputs))[0];
   for (const fast of [false, true]) for (const heavyThink of [false, true]) for (const hasPlan of [false, true]) {
     assert.equal(route({ alreadyConfirmed: true, hasPlan }, { fast, heavyThink }), 'lead-plan');
-    assert.equal(route({ alreadyConfirmed: false, hasPlan }, { fast, heavyThink }), fast ? 'lead-plan' : (!heavyThink && hasPlan ? 'plan-present' : 'think'));
+    assert.equal(route({ alreadyConfirmed: false, hasPlan }, { fast, heavyThink }), fast ? 'lead-plan' : (heavyThink ? 'heavy-prepare' : hasPlan ? 'plan-present' : 'think'));
   }
   const f = workflowFixture(t);
   const before = f.git(f.origin, 'show-ref');
@@ -3180,6 +3393,7 @@ function installHeavyAgent(fixture) {
 const fs = require('node:fs');
 const path = require('node:path');
 const cp = require('node:child_process');
+${agentJobLock}
 const args = process.argv.slice(2);
 const prompt = fs.readFileSync(args[args.indexOf('--prompt-file') + 1], 'utf8');
 const [, stageText, role] = prompt.match(/# Heavy Mode · Stage (\\d) · (\\w+)/);
@@ -3192,7 +3406,7 @@ const countFile = path.join(dir, key + '.count');
 const attempt = (fs.existsSync(countFile) ? Number(fs.readFileSync(countFile)) : 0) + 1;
 fs.writeFileSync(countFile, String(attempt));
 const session = 'heavy-' + key;
-const event = (event, extra = {}) => fs.appendFileSync(path.join(dir, 'heavy-events.jsonl'), JSON.stringify({ event, at: Number(process.hrtime.bigint()), stage, role, round, attempt, session, ...extra }) + '\\n');
+const event = (event, extra = {}) => fs.appendFileSync(path.join(dir, 'heavy-events.jsonl'), JSON.stringify({ event, at: Number(process.hrtime.bigint()), stage, role, round, attempt, session, jobDir: process.env.CODA_JOB_DIR, ...extra }) + '\\n');
 const git = (...a) => cp.execFileSync('git', a, { encoding: 'utf8' }).trim();
 event('start', { args, prompt, cwd: process.cwd(), context, status: git('status', '--porcelain') });
 const plan = ${JSON.stringify(blueprint)};
@@ -3267,6 +3481,7 @@ function assertHeavyRound(f, round, feedback = '') {
   const starts = events.filter(e => e.event === 'start');
   const ends = events.filter(e => e.event === 'end');
   assert.deepEqual(starts.map(e => e.stage).sort(), [1, 1, 2, 2, 3, 3, 4]);
+  assert.equal(new Set(starts.map(e => e.jobDir)).size, 7, 'each invocation belongs to an independent BPMN job');
   for (let stage = 1; stage <= 3; stage++) {
     const current = starts.filter(e => e.stage === stage);
     const done = ends.filter(e => e.stage === stage);
@@ -3297,7 +3512,7 @@ function assertHeavyRound(f, round, feedback = '') {
   }
 }
 
-test('Heavy Mode replans inherited plans with real parallel barriers, isolated inputs, idempotent recovery and feedback rounds', t => {
+test('Heavy Mode replans inherited plans with real parallel barriers, isolated inputs, idempotent recovery and feedback rounds', async t => {
   const f = workflowFixture(t, developScript, true);
   const { work, origin, git, commit, run, lead, state } = f;
   init(work);
@@ -3307,7 +3522,7 @@ test('Heavy Mode replans inherited plans with real parallel barriers, isolated i
   const { reqBranch } = run('lane', { BRANCH: 'main', GOAL: '新的入口需求', HEAVY_THINK: 'true' });
   assert.equal(run('seed').hasPlan, 'true');
   const restore = installHeavyAgent(f);
-  const first = run('think', { HEAVY_THINK: 'true' });
+  const first = await runHeavy(f, { HEAVY_THINK: 'true' });
   assert.notEqual(first.head, inherited);
   assertHeavyRound(f, 1);
   assert.ok(heavyEvents(f)[0].context.previousPlan.includes('INHERITED_REFERENCE'));
@@ -3316,19 +3531,18 @@ test('Heavy Mode replans inherited plans with real parallel barriers, isolated i
   const store = join(persistentRunDir(f), 'heavy-think/round-1');
   for (const file of ['context.json', 'carbon-draft.md', 'astra-draft.md', 'carbon-review-astra.md', 'astra-review-carbon.md', 'carbon-revised.md', 'astra-revised.md', 'manifest.json']) {
     assert.ok(existsSync(join(store, file)), file);
-    const local = runtime(heavyEvents(f)[0].cwd, `heavy-think/${f.env.GITHUB_RUN_ID}/round-1/${file}`);
+    const local = join(f.artifacts, 'heavy-think/round-1', file);
     assert.equal(readFileSync(local, 'utf8'), readFileSync(join(store, file), 'utf8'));
   }
-  // Reclaim the private checkout cache and artifacts, leaving the durable run state only.
-  rmSync(runtime(heavyEvents(f)[0].cwd, `heavy-think/${f.env.GITHUB_RUN_ID}`), { recursive: true });
+  // Reclaim artifacts, leaving the durable run state only.
   rmSync(f.artifacts, { recursive: true });
-  assert.deepEqual(run('think', { HEAVY_THINK: 'true' }), first);
+  assert.deepEqual(await runHeavy(f, { HEAVY_THINK: 'true' }), first);
   assert.equal(heavyEvents(f).length, 14);
   const feedback = 'Interactor 与用户要求补充离线重试验证';
   run('plan-feedback', { FEEDBACK: feedback });
   assert.equal(state().planRound, 2);
   assert.equal(state().round, 0);
-  const second = run('think', { HEAVY_THINK: 'true' });
+  const second = await runHeavy(f, { HEAVY_THINK: 'true' });
   assert.notEqual(second.head, first.head);
   assertHeavyRound(f, 2, feedback);
   assert.equal(state().planFeedback, '');
@@ -3357,20 +3571,21 @@ for (const [stage, role, kind, expected] of [
   [4, 'Coordinator', 'outside', /只可修改.*outside.mjs/],
   [4, 'Coordinator', 'base', /严格后代/],
 ]) {
-  test(`Heavy Mode Stage ${stage} ${role} ${kind} stops without publishing or dropping feedback`, t => {
+  test(`Heavy Mode Stage ${stage} ${role} ${kind} stops without publishing or dropping feedback`, async t => {
     const f = workflowFixture(t, developScript, true);
     const { run, state, git, origin } = f;
     const { reqBranch } = run('lane', { GOAL: '完整规划失败门禁', HEAVY_THINK: 'true' });
     const seed = run('seed');
     run('plan-feedback', { FEEDBACK: '保留这条修订意见直到完整交付' });
     installHeavyAgent(f);
-    run('think', { HEAVY_THINK: 'true', HEAVY_FAULT: `${stage}:${role}`, HEAVY_FAULT_KIND: kind }, expected);
+    await runHeavy(f, { HEAVY_THINK: 'true', HEAVY_FAULT: `${stage}:${role}`, HEAVY_FAULT_KIND: kind }, expected);
     assert.equal(git(origin, 'rev-parse', reqBranch), seed.head);
     assert.equal(state().planFeedback, '保留这条修订意见直到完整交付');
     const events = heavyEvents(f);
     assert.ok(events.every(e => e.stage <= stage));
     assert.ok(events.filter(e => e.event === 'start').every(e => e.status === ''));
-    const manifest = JSON.parse(readFileSync(join(persistentRunDir(f), 'heavy-think/round-2/manifest.json')));
+    const filename = stage === 4 ? 'manifest.json' : `${role.toLowerCase()}-${stage === 1 ? 'draft' : stage === 2 ? `review-${role === 'Carbon' ? 'astra' : 'carbon'}` : 'revised'}.md.json`;
+    const manifest = JSON.parse(readFileSync(join(persistentRunDir(f), 'heavy-think/round-2', filename)));
     assert.equal(manifest.failure.stage, stage);
     assert.equal(manifest.failure.role, role);
     assert.ok(manifest.failure.failureKind);
@@ -3382,32 +3597,32 @@ for (const [stage, role, kind, expected] of [
   });
 }
 
-test('Heavy Mode retries completed stages from durable state, but fingerprints invalidate changed input', t => {
+test('Heavy Mode retries completed stages from durable state, but fingerprints invalidate changed input', async t => {
   const f = workflowFixture(t);
   const { run, state } = f;
   run('lane', { GOAL: '阶段恢复', HEAVY_THINK: 'true' });
   run('seed');
   installHeavyAgent(f);
-  run('think', { HEAVY_THINK: 'true', HEAVY_FAULT: '2:Astra', HEAVY_FAULT_KIND: 'empty' }, /Stage 2/);
+  await runHeavy(f, { HEAVY_THINK: 'true', HEAVY_FAULT: '2:Astra', HEAVY_FAULT_KIND: 'empty' }, /Stage 2/);
   const count = heavyEvents(f).length;
   rmSync(f.artifacts, { recursive: true });
-  const first = run('think', { HEAVY_THINK: 'true' });
+  const first = await runHeavy(f, { HEAVY_THINK: 'true' });
   assert.ok(heavyEvents(f).slice(count).every(e => e.stage >= 2), 'Completed drafts are reused after the checkout is reclaimed');
   assert.equal(state().planRound, 1);
   const beforeChange = heavyEvents(f).length;
-  const second = run('think', { HEAVY_THINK: 'true', THINKER_CARBON: '{"agent":"codex","model":"changed-model"}' });
+  const second = await runHeavy(f, { HEAVY_THINK: 'true', THINKER_CARBON: '{"agent":"codex","model":"changed-model"}' });
   assert.notEqual(first.head, second.head);
   const restarted = heavyEvents(f).slice(beforeChange).filter(e => e.event === 'start');
   assert.equal(restarted.length, 7);
   assert.ok(restarted.some(e => e.stage === 1 && e.args.includes('changed-model') && !e.args.includes('--mode')));
 });
 
-test('Heavy Mode extracts committed drafts, repairs a format once and finishes Coordinator delivery in the same session', t => {
+test('Heavy Mode extracts committed drafts, repairs a format once and finishes Coordinator delivery in the same session', async t => {
   const f = workflowFixture(t);
   f.run('lane', { GOAL: '有界补齐', HEAVY_THINK: 'true' });
   f.run('seed');
   installHeavyAgent(f);
-  const result = f.run('think', { HEAVY_THINK: 'true', HEAVY_COMMITTED_DRAFT: 'true', HEAVY_FAULT: '1:Astra', HEAVY_FAULT_KIND: 'format-once', HEAVY_FINISH_LATE: 'true' });
+  const result = await runHeavy(f, { HEAVY_THINK: 'true', HEAVY_COMMITTED_DRAFT: 'true', HEAVY_FAULT: '1:Astra', HEAVY_FAULT_KIND: 'format-once', HEAVY_FINISH_LATE: 'true' });
   assert.match(result.preview, /COORDINATOR_FINAL/);
   const events = heavyEvents(f).filter(e => e.event === 'start');
   assert.equal(events.length, 9);
@@ -3545,19 +3760,15 @@ if (prompt.includes('Stage 1 · Carbon')) {
     let pids = [];
     try {
       const start = Date.now();
-      const result = spawnSync(process.execPath, [developScript, 'think'], {
-        cwd: f.work,
-        env: { ...f.env, HEAVY_THINK: 'true', DICKDA_AGENT_KILL_GRACE_MS: '50' },
-        encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL',
-      });
+      f.run('heavy-prepare');
+      const results = await f.run.parallel('heavy-draft', ['carbon', 'astra'].map(SLOT => ({ SLOT, DICKDA_AGENT_KILL_GRACE_MS: '50' })), { timeout: 5000, killSignal: 'SIGKILL' });
       if (existsSync(ready)) pids = JSON.parse(readFileSync(ready, 'utf8'));
-      assert.equal(result.error, undefined);
-      assert.equal(result.status, 1, result.stderr);
+      assert.ok(results.some(result => result.status === 1));
       assert.ok(Date.now() - start < 5000);
-      assert.match(result.stderr, /original-peer[\s\S]*policy_blocked: original peer failure[\s\S]*original stderr evidence/);
+      assert.match(results.map(result => result.stderr).join('\n'), /original-peer[\s\S]*policy_blocked: original peer failure[\s\S]*original stderr evidence/);
       assert.equal(readFileSync(stopped, 'utf8'), 'SIGTERM');
       assert.equal(pids.length, mode === 'ignore-term' ? 1 : 2);
-      const manifest = JSON.parse(readFileSync(join(persistentRunDir(f), 'heavy-think/round-1/manifest.json')));
+      const manifest = JSON.parse(readFileSync(join(persistentRunDir(f), 'heavy-think/round-1/carbon-draft.md.json')));
       assert.equal(manifest.failure.role, 'Carbon');
       assert.equal(manifest.failure.session, 'original-peer');
       assert.match(manifest.failure.detail, /original stderr evidence/);
@@ -3576,3 +3787,73 @@ if (prompt.includes('Stage 1 · Carbon')) {
     }
   });
 }
+
+
+test('review preparation exposes normalized scalars and host FEEL assembles valid reviewer contexts', async t => {
+  const host = process.env.DICKDA_HOST_EXPRESSIONS ? await import(process.env.DICKDA_HOST_EXPRESSIONS) : null;
+  const cases = [
+    { label: 'defaults' },
+    { label: 'plugin codex', plugin: { agent: ' codex ', model: ' plugin-model ', effort: ' high ', mode: ' ', options: { network: false } } },
+    { label: 'workflow antigravity', plugin: { agent: 'codex', model: 'ignored' }, override: { agent: ' antigravity ', model: ' carbon ', effort: ' max ', mode: 'auto' } },
+    { label: 'workflow codex options', plugin: { agent: 'antigravity' }, override: { agent: ' codex ', model: ' astra ', effort: ' ', options: { sandbox: 'workspace-write', notify: true } } },
+    { label: 'empty options', override: { agent: 'codex', options: {} } },
+    { label: 'invalid options', override: { agent: 'codex', options: [] } },
+  ];
+  for (const name of ['dickda', 'dickda-refine']) {
+    const f = workflowFixture(t, name === 'dickda' ? developScript : refineScript);
+    const step = name === 'dickda' ? 'prepare-verify' : 'prepare-review';
+    const source = workflowGraph(name).xml;
+    const expression = source.match(/<coda:param name="reviewer" value='([^']+)'/)[1].replaceAll('&gt;', '>');
+    const task = source.match(new RegExp(`<scriptTask id="${step}"[\\s\\S]*?</scriptTask>`))[0];
+    for (const key of ['Agent', 'Model', 'Effort', 'Mode']) assert.ok(task.includes(`<coda:output name="reviewer${key}" />`));
+    for (const tier of ['standard', 'senior']) for (const c of cases) {
+      const settingKey = tier === 'senior' ? 'dickda.verifierSenior' : 'dickda.verifierStandard';
+      const inputKey = tier === 'senior' ? 'verifierSenior' : 'verifier';
+      const envKey = tier === 'senior' ? 'VERIFIER_SENIOR' : 'VERIFIER';
+      const settings = c.plugin ? { [settingKey]: c.plugin } : {};
+      const extra = { CODA_PLUGIN_SETTINGS: JSON.stringify(settings), [envKey]: c.override ? JSON.stringify(c.override) : '' };
+      const state = { head: 'candidate', baseCommit: 'base', title: 'review', goal: 'review', ledger: { ticket: { tier } }, choice: 'refactor', diagnosis: { actions: [{ difficulty: tier === 'senior' ? 'hard' : 'normal' }] } };
+      const file = name === 'dickda' ? join(f.env.CODA_PLUGIN_STATE, 'runs', f.env.GITHUB_RUN_ID, 'develop.json') : join(f.artifacts, 'refine.json');
+      mkdirSync(file.slice(0, file.lastIndexOf('/')), { recursive: true });
+      writeFileSync(file, JSON.stringify(state));
+      const output = f.run(step, extra);
+      const expected = resolveEngineer('verifier', { tier }, effectiveSettings(extra)).agent;
+      assert.equal(output.tier, tier);
+      for (const key of ['agent', 'model', 'effort', 'mode']) assert.equal(output[`reviewer${key[0].toUpperCase()}${key.slice(1)}`], expected[key] || '', `${name}: ${c.label}`);
+      if (host) {
+        const vars = Object.fromEntries(Object.entries({ ...DEFAULT_SETTINGS, ...settings }).map(([key, value]) => [key.slice('dickda.'.length), value]));
+        const reviewer = host.read(expression, { [step]: output, inputs: { verifier: null, verifierSenior: null, ...(c.override ? { [inputKey]: c.override } : {}) }, vars: { dickda: vars } });
+        assert.deepEqual(reviewer, expected, `${name}: ${tier}: ${c.label}`);
+      }
+    }
+  }
+  if (!host) t.diagnostic('Host FEEL check: set DICKDA_HOST_EXPRESSIONS to the local Coda components/workflows/expressions.mjs');
+});
+
+
+test('host FEEL selects Heavy Mode planning, approved heads and previews across feedback loops', async t => {
+  if (!process.env.DICKDA_HOST_EXPRESSIONS) { t.diagnostic('Host FEEL requires DICKDA_HOST_EXPRESSIONS'); return; }
+  const { read } = await import(process.env.DICKDA_HOST_EXPRESSIONS);
+  const { xml, routes, card } = workflowGraph('dickda');
+  const approved = xml.match(/<coda:env name="APPROVED_HEAD" value="([^"]+)"/)[1];
+  const choose = (gate, vars) => Object.entries(routes(gate)).find(([, when]) => when === 'always' || read(when, vars))[0];
+  for (const heavyThink of [false, true]) for (const ready of [false, true]) {
+    const vars = { inputs: { heavyThink, fast: false }, seed: { head: 'seed', preview: 'seed preview', alreadyConfirmed: false, hasPlan: false },
+      think: ready ? { head: 'ordinary', preview: 'ordinary preview' } : {},
+      'heavy-synthesize': ready ? { head: 'heavy', preview: 'heavy preview' } : {},
+      lane: { reqBranch: 'requirement', base: 'main' }, 'plan-present': { note: '开工建议' } };
+    const expected = ready ? heavyThink ? 'heavy' : 'ordinary' : 'seed';
+    assert.equal(read(approved, vars), expected);
+    for (const id of ['plan-present', 'plan-confirm']) {
+      const body = read(card(id).match(/<documentation>([\s\S]*?)<\/documentation>/)[1], vars);
+      assert.ok(body.includes(`Approved HEAD ${expected}`));
+      assert.ok(body.includes(`${expected} preview`));
+    }
+    assert.equal(choose('planning-route', vars), heavyThink ? 'heavy-prepare' : 'think');
+    for (const fast of [false, true]) for (const alreadyConfirmed of [false, true]) for (const hasPlan of [false, true]) {
+      vars.inputs.fast = fast;
+      Object.assign(vars.seed, { alreadyConfirmed, hasPlan });
+      assert.equal(choose('think-gate', vars), fast || alreadyConfirmed ? 'lead-plan' : heavyThink ? 'heavy-prepare' : hasPlan ? 'plan-present' : 'think');
+    }
+  }
+});

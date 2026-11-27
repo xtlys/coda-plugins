@@ -6,7 +6,7 @@ import { agentFailure, callCodaAgent, callDeliveryAgent } from './agent.mjs';
 import { checkApprovalPr, mergeApprovedPr, privateGh } from './approval.mjs';
 import { CONSUMED_FILE, archiveRoot, backups, branchChanges, consumeBackup, consumedArchives, consumptionRecord, layerHealth, pruneConsumedArchives, walkMarkdown } from './assets.mjs';
 import { checkRunsText, jsonList, openMusts, reviewRange, reviewVerdict } from './review.mjs';
-import { TRADES, agentArgs, effectiveSettings, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
+import { TRADES, agentArgs, effectiveSettings, loadSettings, resolveEngineer, reviewerOutputs, rolePrompt } from './roles.mjs';
 import { appendGithubOutput, atomic, git, managed, projectGroup, remoteGit, repo, requireValue, save } from './store.mjs';
 import { extractJsonBlock, runCodeVerifiers } from './verify.mjs';
 
@@ -188,7 +188,7 @@ export function executeRefinePlan(root, {
       const call = callDeliveryAgent(args, { cwd: root, baseHead: currentHead, promptFile, runner });
       rmIfExists(promptFile);
       const detail = agentFailure(call);
-      requireValue(call.status === 0, `Refine 重构Work Order「${item.title}」执行失败，保留原归档未消费\n${detail}`);
+      requireValue(call.status === 0 && !call.failureKind, `Refine 重构Work Order「${item.title}」执行失败，保留原归档未消费\n${detail}`);
       requireValue(call.head, `Refine 重构Work Order「${item.title}」未返回有效交付提交 SHA，保留原归档未消费\n${detail}`);
       const delivered = git(root, 'rev-parse', '--verify', `${call.head}^{commit}`);
       requireValue(delivered !== currentHead, `Refine 重构Work Order「${item.title}」未产生新提交（${delivered}），保留原归档未消费\n${detail}`);
@@ -386,6 +386,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           ...reviewRange(state),
           head: state.head,
           tier: reviewer.tier,
+          ...reviewerOutputs(reviewer.agent),
           task: `Archive Consumption ${state.archive}，Interactor选择 ${state.choice}。\n${JSON.stringify(state.diagnosis)}\n${state.decisionNote}`,
           evidence: `${state.verifySummary}\n${checkRunsText(checks, state.head)}`,
         });

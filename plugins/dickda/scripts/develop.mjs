@@ -1,14 +1,14 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { agentFailure, agentResult, callCodaAgent, callCodaAgentAsync, callDeliveryAgent, callDeliveryAgentAsync } from './agent.mjs';
 import { checkApprovalPr, mergeApprovedPr, privateGh } from './approval.mjs';
 import { checkSpecLock, remember, runLints } from './assets.mjs';
 import { enabledGuidelinesDigest } from './prompts.mjs';
 import { checkRunsText, jsonList, openMusts, requestedChanges, reviewRange, reviewVerdict } from './review.mjs';
-import { TRADES, agentArgs, effectiveSettings, formatAgent, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
-import { DEFAULT_PLAN, INVESTIGATE_MARKER, appendGithubOutput, atomic, hash, init, managed, projectGroup, remoteGit, repo, requireValue, runtime, save } from './store.mjs';
+import { TRADES, agentArgs, effectiveSettings, formatAgent, loadSettings, resolveEngineer, reviewerOutputs, rolePrompt } from './roles.mjs';
+import { DEFAULT_PLAN, INVESTIGATE_MARKER, appendGithubOutput, atomic, hash, init, managed, projectGroup, remoteGit, repo, requireValue, save } from './store.mjs';
 import { extractJsonBlock } from './verify.mjs';
 
 export { effectiveSettings };
@@ -376,7 +376,7 @@ function planPreview(markdown) {
 const planPath = '.dickda/tasks/PLAN_5L.md';
 
 function validateThought(root, thinkBase, call) {
-  requireValue(call.status === 0 && call.head, `Thinker会话未成功产出Five-Layer Plan提交：${agentFailure(call)}`);
+  requireValue(call.status === 0 && !call.failureKind && call.head, `Thinker会话未成功产出Five-Layer Plan提交：${agentFailure(call)}`);
   const head = git('rev-parse', '--verify', `${call.head}^{commit}`);
   requireValue(head !== thinkBase && isAncestor(thinkBase, head), `Thinker返回的提交（${head}）不是当前Requirement Branch基线（${thinkBase}）的严格后代`);
   const outsidePlan = execFileSync('git', ['diff', '--name-only', '-z', '--no-renames', thinkBase, head, '--'], { cwd: root, encoding: 'utf8' })
@@ -387,9 +387,9 @@ function validateThought(root, thinkBase, call) {
   return { head, preview, answer: call.answer };
 }
 
-async function heavyThink({ root, state, settings, head, env, persistentDir }) {
+async function heavyThink({ action, root, state, settings, head, env, persistentDir }) {
   const planRound = state.planRound ?? 1;
-  const local = runtime(root, `heavy-think/${env.GITHUB_RUN_ID}/round-${planRound}`);
+  const local = join(env.CODA_ARTIFACTS, 'heavy-think', `round-${planRound}`);
   const durable = persistentDir ? join(persistentDir, 'heavy-think', `round-${planRound}`) : local;
   const read = name => existsSync(join(durable, name)) ? readFileSync(join(durable, name), 'utf8') : '';
   const write = (name, text) => {
@@ -412,23 +412,27 @@ async function heavyThink({ root, state, settings, head, env, persistentDir }) {
     };
   };
   let manifest = JSON.parse(read('manifest.json') || 'null');
-  const previous = JSON.parse(read('context.json') || 'null');
-  let context;
-  // A completed retry reads the original frozen base, not its own newly published plan.
-  if (manifest?.final?.head === head && previous?.planRound === planRound
-    && (!state.planFeedback || state.planFeedback === previous.planFeedback)) {
-    const candidate = freeze(previous.thinkBase, previous.planFeedback);
-    if (hash(JSON.stringify(candidate)) === manifest.fingerprint) context = candidate;
+  let context = JSON.parse(read('context.json') || 'null');
+  if (action === 'heavy-prepare') {
+    let frozenContext;
+    // A completed retry compares the original frozen base, not its published plan.
+    if (manifest?.final?.head === head && context?.planRound === planRound
+      && (!state.planFeedback || state.planFeedback === context.planFeedback)) {
+      const candidate = freeze(context.thinkBase, context.planFeedback);
+      if (hash(JSON.stringify(candidate)) === manifest.fingerprint) frozenContext = candidate;
+    }
+    context = frozenContext ?? freeze(head, state.planFeedback || '');
+    const fingerprint = hash(JSON.stringify(context));
+    if (manifest?.fingerprint !== fingerprint) manifest = { fingerprint, thinkBase: context.thinkBase };
+    writeJson('context.json', context);
+    writeJson('manifest.json', manifest);
+    return;
   }
-  context ??= freeze(head, state.planFeedback || '');
-  const fingerprint = hash(JSON.stringify(context));
-  if (manifest?.fingerprint !== fingerprint) manifest = { fingerprint, thinkBase: context.thinkBase, stages: {} };
+  requireValue(context && manifest?.fingerprint === hash(JSON.stringify(context)), 'Heavy Mode 缺少本轮冻结输入，请先运行 heavy-prepare');
   const saveManifest = () => writeJson('manifest.json', manifest);
-  writeJson('context.json', context);
-  saveManifest();
   const thinkBase = context.thinkBase;
+  git('checkout', '--detach', thinkBase);
   const frozen = `## Frozen Context\n${JSON.stringify(context, null, 2)}`;
-  const controller = new AbortController();
   const revisionValid = body => Boolean(body.match(/^## Review Decisions[ \t]*\r?\n([\s\S]*)/m)?.[1].split(/^#{1,6}[ \t]/m)[0].trim());
   const valid = (body, kind) => Boolean(body.trim()) && (kind === 'review' || Boolean(planPreview(body)))
     && (kind !== 'revised' || revisionValid(body));
@@ -436,20 +440,19 @@ async function heavyThink({ root, state, settings, head, env, persistentDir }) {
   async function produce(stage, role, file, instruction, kind) {
     const prompt = `# Heavy Mode · Stage ${stage} · ${role}\n\n${frozen}\n\n${instruction}\n\n只在当前独立会话中工作。用 Markdown 回复本阶段产物，不推送、不开 PR、不派单，不读取其他会话或 Heavy Mode 私有运行目录。`;
     const inputHash = hash(prompt);
-    const cached = manifest.stages[file];
+    const cached = JSON.parse(read(`${file}.json`) || 'null');
     const body = read(file);
-    if (cached?.inputHash === inputHash && cached.bodyHash === hash(body) && valid(body, kind)) {
+    if (cached?.fingerprint === manifest.fingerprint && cached.inputHash === inputHash && cached.bodyHash === hash(body) && valid(body, kind)) {
       write(file, body);
       return body;
     }
-    delete manifest.final;
     const promptFile = join(local, `${file}.prompt.md`);
     write(`${file}.prompt.md`, prompt);
     let call;
     const attempts = [];
     try {
       call = await callCodaAgentAsync(['--commit', thinkBase, '--title', `Heavy Mode · Stage ${stage} · ${role}：${state.title}`,
-        ...agentArgs(context.agents[role]), '--json', '--prompt-file', promptFile], root, { signal: controller.signal });
+        ...agentArgs(context.agents[role]), '--json', '--prompt-file', promptFile], root);
       for (let retry = 0; ; retry++) {
         attempts.push(agentResult(call));
         requireValue(call.status === 0 && !call.failureKind, agentFailure(call));
@@ -462,51 +465,50 @@ async function heavyThink({ root, state, settings, head, env, persistentDir }) {
         }
         if (valid(output, kind)) {
           write(file, output);
-          manifest.stages[file] = { inputHash, bodyHash: hash(output), attempts };
-          saveManifest();
+          writeJson(`${file}.json`, { fingerprint: manifest.fingerprint, inputHash, bodyHash: hash(output), attempts });
           return output;
         }
         requireValue(kind !== 'review' && retry === 0 && call.session,
           kind === 'review' ? 'Review 须为非空文本' : '须含 L1–L5 各层方案正文；修订稿还须含非空 Review Decisions');
         write(`${file}.prompt.md`, `${prompt}\n\n## Format Completion (1/1)\n上一回复格式不完整。请直接回复完整 L1–L5 五层非空方案正文；修订稿还须在 ## Review Decisions 下逐条说明采纳/不采纳及客观依据。\n`);
         const session = call.session;
-        call = await callCodaAgentAsync(['--continue', session, '--json', '--prompt-file', promptFile], root, { signal: controller.signal });
+        call = await callCodaAgentAsync(['--continue', session, '--json', '--prompt-file', promptFile], root);
         call.session ||= session;
       }
     } catch (error) {
       const failure = { ...agentResult(call), failureKind: call?.failureKind || 'invalid_output', detail: error.message };
-      if (!controller.signal.aborted) {
-        manifest.failure = { stage, role, ...failure, attempts };
-        saveManifest();
-      }
-      controller.abort();
+      writeJson(`${file}.json`, { fingerprint: manifest.fingerprint, failure: { stage, role, ...failure, attempts } });
       throw new Error(`Heavy Mode · Stage ${stage} · ${role}：${error.message}\n${agentFailure({ ...call, ...failure })}`);
     }
   }
 
-  async function pair(tasks) {
-    try { return await Promise.all(tasks); }
-    catch (error) {
-      controller.abort();
-      await Promise.allSettled(tasks);
-      throw error;
-    }
+  const artifact = (file, kind) => {
+    const record = JSON.parse(read(`${file}.json`) || 'null');
+    const body = read(file);
+    requireValue(record?.fingerprint === manifest.fingerprint && record.bodyHash === hash(body) && valid(body, kind), `Heavy Mode 前序产物未完成：${file}`);
+    write(file, body);
+    return body;
+  };
+  const slot = env.SLOT;
+  const role = slot === 'carbon' ? 'Carbon' : 'Astra';
+  const peer = slot === 'carbon' ? 'astra' : 'carbon';
+  const peerRole = slot === 'carbon' ? 'Astra' : 'Carbon';
+  if (action !== 'heavy-synthesize') requireValue(['carbon', 'astra'].includes(slot), `未知 Heavy Mode slot：${slot}`);
+  if (action === 'heavy-draft') {
+    return produce(1, role, `${slot}-draft.md`, '独立制定完整 Markdown Five-Layer Plan，包含 L1–L5 各层非空正文。本阶段不可读取对方初稿；旧 PLAN_5L.md 仅为背景，按当前需求和最新 planFeedback 重新规划。', 'draft');
   }
-  const draft = '独立制定完整 Markdown Five-Layer Plan，包含 L1–L5 各层非空正文。本阶段不可读取对方初稿；旧 PLAN_5L.md 仅为背景，按当前需求和最新 planFeedback 重新规划。';
-  const [carbonDraft, astraDraft] = await pair([
-    produce(1, 'Carbon', 'carbon-draft.md', draft, 'draft'),
-    produce(1, 'Astra', 'astra-draft.md', draft, 'draft'),
-  ]);
-  const review = (author, body) => `审阅 ${author} 初稿，从五层契约完整性、架构边界、并发/状态风险、验证覆盖度逐条给出具体 Review 意见与修改建议。\n\n## ${author} Draft\n${body}`;
-  const [carbonReview, astraReview] = await pair([
-    produce(2, 'Carbon', 'carbon-review-astra.md', review('Astra', astraDraft), 'review'),
-    produce(2, 'Astra', 'astra-review-carbon.md', review('Carbon', carbonDraft), 'review'),
-  ]);
-  const revise = (own, reviewer, body) => `根据对方 Review 修订自己的方案。先在 ## Review Decisions 下逐条说明采纳/不采纳及客观依据，再输出完整 L1–L5 Five-Layer Plan。\n\n## Own Draft\n${own}\n\n## Review from ${reviewer}\n${body}`;
-  const [carbonRevised, astraRevised] = await pair([
-    produce(3, 'Carbon', 'carbon-revised.md', revise(carbonDraft, 'Astra', astraReview), 'revised'),
-    produce(3, 'Astra', 'astra-revised.md', revise(astraDraft, 'Carbon', carbonReview), 'revised'),
-  ]);
+  const carbonDraft = artifact('carbon-draft.md', 'draft');
+  const astraDraft = artifact('astra-draft.md', 'draft');
+  if (action === 'heavy-review') {
+    return produce(2, role, `${slot}-review-${peer}.md`, `审阅 ${peerRole} 初稿，从五层契约完整性、架构边界、并发/状态风险、验证覆盖度逐条给出具体 Review 意见与修改建议。\n\n## ${peerRole} Draft\n${slot === 'carbon' ? astraDraft : carbonDraft}`, 'review');
+  }
+  const carbonReview = artifact('carbon-review-astra.md', 'review');
+  const astraReview = artifact('astra-review-carbon.md', 'review');
+  if (action === 'heavy-revise') {
+    return produce(3, role, `${slot}-revised.md`, `根据对方 Review 修订自己的方案。先在 ## Review Decisions 下逐条说明采纳/不采纳及客观依据，再输出完整 L1–L5 Five-Layer Plan。\n\n## Own Draft\n${slot === 'carbon' ? carbonDraft : astraDraft}\n\n## Review from ${peerRole}\n${slot === 'carbon' ? astraReview : carbonReview}`, 'revised');
+  }
+  const carbonRevised = artifact('carbon-revised.md', 'revised');
+  const astraRevised = artifact('astra-revised.md', 'revised');
   const promptFile = join(local, 'coordinator.prompt.md');
   write('coordinator.prompt.md', [
     '# Heavy Mode · Stage 4 · Coordinator', frozen,
@@ -515,14 +517,15 @@ async function heavyThink({ root, state, settings, head, env, persistentDir }) {
     `## Carbon Revised Plan and Review Decisions\n${carbonRevised}`, `## Astra Revised Plan and Review Decisions\n${astraRevised}`,
     `综合双方优势，逐条裁决分歧并说明依据，将最终完整 Five-Layer Plan 写入 ${planPath} 并提交为 ${thinkBase} 的严格后代。只可修改该文件，不写入任何中间产物。确认本会话后台检查已完成再汇报提交 SHA。不要推送、开 PR 或派单。`,
   ].join('\n\n'));
-  let call = manifest.final;
+  const inputHash = hash(read('coordinator.prompt.md'));
+  let call = manifest.final?.inputHash === inputHash ? manifest.final : null;
   try {
     if (!call || spawnSync('git', ['cat-file', '-e', `${call.head}^{commit}`]).status !== 0) {
-      const args = call?.session ? ['--continue', call.session] : ['--commit', thinkBase, '--title', `Heavy Mode · Stage 4 · Coordinator：${state.title}`, ...agentArgs(settings.thinkerCoordinator)];
-      call = await callDeliveryAgentAsync([...args, '--json', '--prompt-file', promptFile], { cwd: root, baseHead: thinkBase, promptFile, signal: controller.signal });
+      const args = call?.session ? ['--continue', call.session] : ['--commit', thinkBase, '--title', `Heavy Mode · Stage 4 · Coordinator：${state.title}`, ...agentArgs(context.agents.Coordinator)];
+      call = await callDeliveryAgentAsync([...args, '--json', '--prompt-file', promptFile], { cwd: root, baseHead: thinkBase, promptFile });
     }
     const result = validateThought(root, thinkBase, call);
-    manifest.final = { ...call, head: result.head };
+    manifest.final = { ...call, head: result.head, inputHash };
     delete manifest.failure;
     saveManifest();
     return result;
@@ -569,10 +572,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (action === 'lane') requireValue(!(env.FAST === 'true' && env.HEAVY_THINK === 'true'), 'Fast Mode 与 Heavy Mode 互斥');
     let repoInfo;
     const getRepoInfo = () => repoInfo ??= JSON.parse(gh('repo', 'view', '--json', 'nameWithOwner,defaultBranchRef'));
-    const persistentFile = env.CODA_PLUGIN_STATE ? join(env.CODA_PLUGIN_STATE, 'runs',
-      projectGroup(repo(), `https://github.com/${getRepoInfo().nameWithOwner}.git`).replace(/^dickda:/, ''),
-      env.GITHUB_RUN_ID, 'develop.json') : null;
-    const persistentDir = persistentFile ? dirname(persistentFile) : null;
+    const persistentDir = env.CODA_PLUGIN_STATE ? join(env.CODA_PLUGIN_STATE, 'runs', env.GITHUB_RUN_ID) : null;
     const runDir = persistentDir ?? env.CODA_ARTIFACTS;
     const readRunJson = name => JSON.parse(readFileSync(join(runDir, name), 'utf8'));
     const saveRunJson = (name, value) => {
@@ -855,6 +855,26 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         break;
       }
 
+      case 'heavy-prepare':
+      case 'heavy-draft':
+      case 'heavy-review':
+      case 'heavy-revise':
+      case 'heavy-synthesize': {
+        const root = repo();
+        const head = fetchHead(state.remote, state.reqBranch);
+        if (action === 'heavy-prepare') {
+          state.planRound ??= 1;
+          saveState(state);
+        }
+        const thought = await heavyThink({ action, root, state, settings, head, env, persistentDir });
+        if (action === 'heavy-synthesize') {
+          if (thought.head !== head) remoteGit('.', 'push', '--quiet', '--no-follow-tags', state.remote, `${thought.head}:refs/heads/${state.reqBranch}`);
+          saveState({ ...state, head: thought.head, planAnswer: thought.answer, planFeedback: '' });
+          appendGithubOutput({ head: thought.head, preview: thought.preview });
+        }
+        break;
+      }
+
       case 'think': {
         const root = repo();
         const thinkBase = fetchHead(state.remote, state.reqBranch);
@@ -862,26 +882,21 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         state.planRound ??= 1;
         state.heavyThink = env.HEAVY_THINK === 'true';
         saveState(state);
-        let thought;
-        if (state.heavyThink) {
-          thought = await heavyThink({ root, state, settings, head: thinkBase, env, persistentDir });
-        } else {
-          const promptFile = join(env.RUNNER_TEMP, 'thinker.md');
-          const prompt = [
-            rolePrompt('thinker'),
-            `## 当前项目已启用规范摘要\n${enabledGuidelinesDigest(root)}`,
-            `## 本次需求原文（.dickda/tasks/TODO_TASK.md）\n${readFileSync(managed(root, 'tasks/TODO_TASK.md'), 'utf8')}`,
-            `## Plan Round\n${state.planRound}`,
-            state.planFeedback ? `## Interactor/用户修订意见\n${state.planFeedback}` : '',
-            `请将完整的Five-Layer Plan写入 \`${planPath}\`，只提交这一份文件到当前分支（不要推送或开 PR），最后简要汇报五层核心设计。`,
-          ].filter(Boolean).join('\n\n');
-          writeFileSync(promptFile, prompt);
-          const call = callDeliveryAgent([
-            '--commit', thinkBase, '--title', `Thinker规划：${state.title}`,
-            ...agentArgs(settings.thinker), '--json', '--prompt-file', promptFile,
-          ], { cwd: root, baseHead: thinkBase, promptFile });
-          thought = validateThought(root, thinkBase, call);
-        }
+        const promptFile = join(env.RUNNER_TEMP, 'thinker.md');
+        const prompt = [
+          rolePrompt('thinker'),
+          `## 当前项目已启用规范摘要\n${enabledGuidelinesDigest(root)}`,
+          `## 本次需求原文（.dickda/tasks/TODO_TASK.md）\n${readFileSync(managed(root, 'tasks/TODO_TASK.md'), 'utf8')}`,
+          `## Plan Round\n${state.planRound}`,
+          state.planFeedback ? `## Interactor/用户修订意见\n${state.planFeedback}` : '',
+          `请将完整的Five-Layer Plan写入 \`${planPath}\`，只提交这一份文件到当前分支（不要推送或开 PR），最后简要汇报五层核心设计。`,
+        ].filter(Boolean).join('\n\n');
+        writeFileSync(promptFile, prompt);
+        const call = callDeliveryAgent([
+          '--commit', thinkBase, '--title', `Thinker规划：${state.title}`,
+          ...agentArgs(settings.thinker), '--json', '--prompt-file', promptFile,
+        ], { cwd: root, baseHead: thinkBase, promptFile });
+        const thought = validateThought(root, thinkBase, call);
         if (thought.head !== thinkBase) remoteGit('.', 'push', '--quiet', '--no-follow-tags', state.remote, `${thought.head}:refs/heads/${state.reqBranch}`);
         saveState({ ...state, head: thought.head, planAnswer: thought.answer, planFeedback: '' });
         appendGithubOutput({ head: thought.head, preview: thought.preview });
@@ -1138,7 +1153,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
             ...(evaluated.error ? { error: evaluated.error } : {}),
           };
         } else {
-          if (isAncestor) {
+          if (call.failureKind) {
+            record = { ...job, status: 'rejected', head: workerHead, error: 'Work Order会话工作树未干净交付' };
+          } else if (isAncestor) {
             record = { ...job, status: 'rejected', head: workerHead, error: 'Work Order未产生新的 Git 提交（最多续跑 2 次）' };
           } else if (!isStrictDescendant) {
             record = { ...job, status: 'rejected', head: workerHead, error: `Work Order返回的提交（${workerHead}）不是Requirement Branch基线（${baseHead}）的严格后代` };
@@ -1270,6 +1287,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           ...reviewRange(state),
           skipReview: state.verifiedHead === state.head && state.rebuttedReviewHead === state.head && requestedChanges(state, state.head),
           tier: resolved.tier,
+          ...reviewerOutputs(resolved.agent),
           task: `# ${state.title}\n\n${state.goal}`,
           evidence: checkRunsText(state.checks, state.head),
         });

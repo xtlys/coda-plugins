@@ -145,6 +145,12 @@ export function resolveEngineer(trade, { tier, difficulty = 'normal', rejections
   };
 }
 
+// Script outputs are scalar; BPMN assembles the coda-agent context from these fields.
+export function reviewerOutputs(agent) {
+  return Object.fromEntries(['agent', 'model', 'effort', 'mode'].map(key =>
+    [`reviewer${key[0].toUpperCase()}${key.slice(1)}`, agent[key] ?? '']));
+}
+
 export function formatAgent(spec) {
   if (!spec) return '未配置';
   return [spec.agent, spec.model, spec.effort, spec.mode].filter(Boolean).join(' / ');

@@ -199,6 +199,10 @@ Thinker五层落点诊断：{{diagnose.layers}}
         <coda:output name="head" />
         <coda:output name="previous" />
         <coda:output name="tier" />
+        <coda:output name="reviewerAgent" />
+        <coda:output name="reviewerModel" />
+        <coda:output name="reviewerEffort" />
+        <coda:output name="reviewerMode" />
         <coda:output name="task" />
         <coda:output name="evidence" />
       </extensionElements>
@@ -212,7 +216,13 @@ Thinker五层落点诊断：{{diagnose.layers}}
         <coda:param name="previous" value="=prepare-review.previous" />
         <coda:param name="reviewer" value='={r: if prepare-review.tier = "senior"
           then (if inputs.verifierSenior != null then inputs.verifierSenior else vars.dickda.verifierSenior)
-          else (if inputs.verifier != null then inputs.verifier else vars.dickda.verifierStandard), reviewer: if r.agent = "antigravity" then context put(r, "mode", "full") else r}.reviewer' />
+          else (if inputs.verifier != null then inputs.verifier else vars.dickda.verifierStandard), reviewer: context merge([
+            { agent: prepare-review.reviewerAgent },
+            if prepare-review.reviewerModel = "" then {} else { model: prepare-review.reviewerModel },
+            if prepare-review.reviewerEffort = "" then {} else { effort: prepare-review.reviewerEffort },
+            if prepare-review.reviewerMode = "" then {} else { mode: prepare-review.reviewerMode },
+            if r.options instance of context and count(get entries(r.options)) &gt; 0 then { options: r.options } else {}
+          ])}.reviewer' />
         <coda:param name="task" value="=prepare-review.task" />
         <coda:param name="evidence" value="=prepare-review.evidence" />
       </extensionElements>

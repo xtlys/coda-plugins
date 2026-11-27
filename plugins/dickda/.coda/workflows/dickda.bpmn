@@ -116,15 +116,14 @@
     <sequenceFlow id="reuse-plan" sourceRef="think-gate" targetRef="plan-present">
       <conditionExpression xsi:type="tFormalExpression">=seed.alreadyConfirmed = false and inputs.fast = false and inputs.heavyThink = false and seed.hasPlan = true</conditionExpression>
     </sequenceFlow>
+    <sequenceFlow id="run-heavy" sourceRef="think-gate" targetRef="heavy-prepare">
+      <conditionExpression xsi:type="tFormalExpression">=seed.alreadyConfirmed = false and inputs.fast = false and inputs.heavyThink = true</conditionExpression>
+    </sequenceFlow>
     <sequenceFlow id="run-think" sourceRef="think-gate" targetRef="think" />
 
     <scriptTask id="think" name="Thinker制定Five-Layer Plan（PLAN_5L.md）" scriptFormat="bash" coda:timeout="120" coda:status="Thinker正在制定Five-Layer Plan">
       <extensionElements>
         <coda:env name="THINKER" value="=inputs.thinker" />
-        <coda:env name="HEAVY_THINK" value="=inputs.heavyThink" />
-        <coda:env name="THINKER_COORDINATOR" value="=inputs.thinkerCoordinator" />
-        <coda:env name="THINKER_CARBON" value="=inputs.thinkerCarbon" />
-        <coda:env name="THINKER_ASTRA" value="=inputs.thinkerAstra" />
         <coda:output name="head" />
         <coda:output name="preview" />
       </extensionElements>
@@ -132,11 +131,57 @@
     </scriptTask>
     <sequenceFlow id="think-to-present" sourceRef="think" targetRef="plan-present" />
 
+    <scriptTask id="heavy-prepare" name="Heavy Mode · 冻结规划输入" scriptFormat="bash" coda:timeout="5">
+      <extensionElements>
+        <coda:env name="THINKER_COORDINATOR" value="=inputs.thinkerCoordinator" />
+        <coda:env name="THINKER_CARBON" value="=inputs.thinkerCarbon" />
+        <coda:env name="THINKER_ASTRA" value="=inputs.thinkerAstra" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" heavy-prepare</script>
+    </scriptTask>
+    <sequenceFlow id="heavy-prepare-next" sourceRef="heavy-prepare" targetRef="heavy-draft" />
+
+    <scriptTask id="heavy-draft" name="Heavy Mode · 双模型独立初稿" scriptFormat="bash" coda:timeout="60">
+      <extensionElements>
+        <coda:env name="SLOT" value="=slot" />
+      </extensionElements>
+      <multiInstanceLoopCharacteristics coda:inputCollection='=["carbon", "astra"]' coda:inputElement="slot" />
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" heavy-draft</script>
+    </scriptTask>
+    <sequenceFlow id="heavy-draft-next" sourceRef="heavy-draft" targetRef="heavy-review" />
+
+    <scriptTask id="heavy-review" name="Heavy Mode · 交叉评审" scriptFormat="bash" coda:timeout="60">
+      <extensionElements>
+        <coda:env name="SLOT" value="=slot" />
+      </extensionElements>
+      <multiInstanceLoopCharacteristics coda:inputCollection='=["carbon", "astra"]' coda:inputElement="slot" />
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" heavy-review</script>
+    </scriptTask>
+    <sequenceFlow id="heavy-review-next" sourceRef="heavy-review" targetRef="heavy-revise" />
+
+    <scriptTask id="heavy-revise" name="Heavy Mode · 双模型修订" scriptFormat="bash" coda:timeout="60">
+      <extensionElements>
+        <coda:env name="SLOT" value="=slot" />
+      </extensionElements>
+      <multiInstanceLoopCharacteristics coda:inputCollection='=["carbon", "astra"]' coda:inputElement="slot" />
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" heavy-revise</script>
+    </scriptTask>
+    <sequenceFlow id="heavy-revise-next" sourceRef="heavy-revise" targetRef="heavy-synthesize" />
+
+    <scriptTask id="heavy-synthesize" name="Heavy Mode · 协调者定稿" scriptFormat="bash" coda:timeout="60">
+      <extensionElements>
+        <coda:output name="head" />
+        <coda:output name="preview" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" heavy-synthesize</script>
+    </scriptTask>
+    <sequenceFlow id="heavy-synthesize-next" sourceRef="heavy-synthesize" targetRef="plan-present" />
+
     <userTask id="plan-present" name="Interactor讲解Five-Layer Plan并给出开工建议" coda:noteLabel="开工结论与核心理由、风险，或具体修订意见">
       <documentation>请在当前主会话向用户讲解Requirement Branch {{lane.reqBranch}} 上的Five-Layer Plan。
-Approved HEAD {{if think.head = null then seed.head else think.head}}，全文见 .dickda/tasks/PLAN_5L.md。
+Approved HEAD {{if inputs.heavyThink = true and heavy-synthesize.head != null then heavy-synthesize.head else if think.head = null then seed.head else think.head}}，全文见 .dickda/tasks/PLAN_5L.md。
 
-{{if think.head = null then seed.preview else think.preview}}
+{{if inputs.heavyThink = true and heavy-synthesize.head != null then heavy-synthesize.preview else if think.head = null then seed.preview else think.preview}}
 
 请结合 L1 架构、L2 Lint、L3 验证、L4 并发Work Order和 L5 Human Review说明取舍，明确是否建议开工以及理由、风险或优先调整项。讲解后在备注写下给用户的开工建议；方案有缺漏时写明修订意见退回Thinker。</documentation>
       <extensionElements>
@@ -156,9 +201,9 @@ Approved HEAD {{if think.head = null then seed.head else think.head}}，全文�
 {{plan-present.note}}
 
 **Five-Layer Plan核心摘要**
-{{if think.head = null then seed.preview else think.preview}}
+{{if inputs.heavyThink = true and heavy-synthesize.head != null then heavy-synthesize.preview else if think.head = null then seed.preview else think.preview}}
 
-Requirement Branch {{lane.reqBranch}}，Approved HEAD {{if think.head = null then seed.head else think.head}}。确认开工后Lead开始派单。</documentation>
+Requirement Branch {{lane.reqBranch}}，Approved HEAD {{if inputs.heavyThink = true and heavy-synthesize.head != null then heavy-synthesize.head else if think.head = null then seed.head else think.head}}。确认开工后Lead开始派单。</documentation>
       <extensionElements>
         <coda:choice id="start" name="确认开工" primary="true" />
         <coda:choice id="revise" name="打回修改方案" note="required" />
@@ -181,13 +226,18 @@ Requirement Branch {{lane.reqBranch}}，Approved HEAD {{if think.head = null the
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" plan-feedback</script>
     </scriptTask>
-    <sequenceFlow id="feedback-to-think" sourceRef="plan-feedback" targetRef="think" />
+    <sequenceFlow id="feedback-to-planning" sourceRef="plan-feedback" targetRef="planning-route" />
+    <exclusiveGateway id="planning-route" default="feedback-to-think" />
+    <sequenceFlow id="feedback-to-heavy" sourceRef="planning-route" targetRef="heavy-prepare">
+      <conditionExpression xsi:type="tFormalExpression">=inputs.heavyThink = true</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="feedback-to-think" sourceRef="planning-route" targetRef="think" />
 
     <scriptTask id="lead-plan" name="执行Lead调度与裁决" scriptFormat="bash" coda:timeout="30" coda:status="执行Lead正在调度与裁决">
       <extensionElements>
         <coda:env name="FAST" value="=inputs.fast" />
         <coda:env name="SEED_HEAD" value="=seed.head" />
-        <coda:env name="APPROVED_HEAD" value="=if think.head = null then seed.head else think.head" />
+        <coda:env name="APPROVED_HEAD" value="=if inputs.heavyThink = true and heavy-synthesize.head != null then heavy-synthesize.head else if think.head = null then seed.head else think.head" />
         <coda:env name="LEAD" value="=inputs.lead" />
         <coda:env name="ARCHITECT" value="=inputs.architect" />
         <coda:env name="ARCHITECT_SENIOR" value="=inputs.architectSenior" />
@@ -361,6 +411,10 @@ Requirement Branch {{lane.reqBranch}}，Approved HEAD {{if think.head = null the
         <coda:output name="previous" />
         <coda:output name="skipReview" />
         <coda:output name="tier" />
+        <coda:output name="reviewerAgent" />
+        <coda:output name="reviewerModel" />
+        <coda:output name="reviewerEffort" />
+        <coda:output name="reviewerMode" />
         <coda:output name="task" />
         <coda:output name="evidence" />
       </extensionElements>
@@ -409,7 +463,13 @@ Requirement Branch {{lane.reqBranch}}，Approved HEAD {{if think.head = null the
         <coda:param name="task" value="=prepare-verify.task" />
         <coda:param name="reviewer" value='={r: if prepare-verify.tier = "senior"
           then (if inputs.verifierSenior != null then inputs.verifierSenior else vars.dickda.verifierSenior)
-          else (if inputs.verifier != null then inputs.verifier else vars.dickda.verifierStandard), reviewer: if r.agent = "antigravity" then context put(r, "mode", "full") else r}.reviewer' />
+          else (if inputs.verifier != null then inputs.verifier else vars.dickda.verifierStandard), reviewer: context merge([
+            { agent: prepare-verify.reviewerAgent },
+            if prepare-verify.reviewerModel = "" then {} else { model: prepare-verify.reviewerModel },
+            if prepare-verify.reviewerEffort = "" then {} else { effort: prepare-verify.reviewerEffort },
+            if prepare-verify.reviewerMode = "" then {} else { mode: prepare-verify.reviewerMode },
+            if r.options instance of context and count(get entries(r.options)) &gt; 0 then { options: r.options } else {}
+          ])}.reviewer' />
         <coda:param name="evidence" value="项目检查&#10;{{prepare-verify.evidence}}&#10;&#10;Dual-Track Verification报告&#10;{{dual-verify.report}}&#10;&#10;实证证据&#10;{{dual-verify.evidence}}&#10;&#10;Dual-Track Verification 发现&#10;{{dual-verify.findings}}" />
         <coda:param name="focus" value="请对照 .dickda/tasks/TODO_TASK.md、PLAN_5L.md、.dickda/lints 与 .dickda/verifiers 审查真实可达缺陷与契约一致性。" />
       </extensionElements>
