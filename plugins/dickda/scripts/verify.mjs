@@ -83,8 +83,56 @@ export function runCodeVerifiers(root) {
 
 export function extractJsonBlock(text) {
   text = String(text ?? '');
+  const fenceRanges = [];
+  let opening = null;
+  for (const line of text.matchAll(/[^\n]*(?:\n|$)/g)) {
+    const match = line[0].trim().match(/^(`{3,}|~{3,})([^\s`~]*)\s*$/);
+    if (!opening) {
+      if (!match) continue;
+      const previousLine = text.slice(0, line.index).trimEnd().split('\n').at(-1)?.trim();
+      opening = {
+        fence: match[1], start: line.index, bodyStart: line.index + line[0].length,
+        json: /^(?:jsonc?)?$/i.test(match[2]), quoted: false, escaped: false,
+        marked: /^(?:(?:\/\/|#)\s*)?(?:VERDICT|DECISION|DIAGNOSIS)_JSON\s*:?$/.test(previousLine),
+      };
+      continue;
+    }
+    if (match && !match[2] && match[1][0] === opening.fence[0] && match[1].length >= opening.fence.length
+      && (!opening.json || !opening.quoted)) {
+      fenceRanges.push({ ...opening, bodyEnd: line.index, end: line.index + line[0].length });
+      opening = null;
+    } else if (opening.json) {
+      // Only JSON strings can hide a closing fence; shell quoting must not affect pairing.
+      if (!opening.quoted && line[0].trimStart().startsWith('//')) continue;
+      for (const char of line[0]) {
+        if (opening.quoted) {
+          if (opening.escaped) opening.escaped = false;
+          else if (char === '\\') opening.escaped = true;
+          else if (char === '"') opening.quoted = false;
+        } else if (char === '"') opening.quoted = true;
+      }
+    }
+  }
+  if (opening) fenceRanges.push({ ...opening, end: text.length });
+  let fenced = null;
+  let marked = null;
+  for (const range of fenceRanges) {
+    if (!range.json || range.bodyEnd === undefined) continue;
+    const body = text.slice(range.bodyStart, range.bodyEnd);
+    const prefix = body.match(/^(?:\s*\/\/[^\r\n]*(?:\r?\n|$))*/)[0];
+    try {
+      const value = JSON.parse(body.slice(prefix.length));
+      fenced = value;
+      if (value && !Array.isArray(value) && (range.marked
+        || /^\s*\/\/\s*(?:VERDICT|DECISION|DIAGNOSIS)_JSON\s*$/m.test(prefix))) {
+        marked = value;
+      }
+    } catch {}
+  }
   const candidates = [];
   for (let start = 0; start < text.length; start++) {
+    const range = fenceRanges.find(range => range.start <= start && start < range.end);
+    if (range) { start = range.end - 1; continue; }
     if (text[start] !== '{' && text[start] !== '[') continue;
     const stack = [];
     let quoted = false;
@@ -104,30 +152,14 @@ export function extractJsonBlock(text) {
         if (!stack.length) {
           try {
             candidates.push({ start, end: end + 1, value: JSON.parse(text.slice(start, end + 1)) });
-            start = end;
           } catch {}
+          start = end;
           break;
         }
       }
     }
   }
-  let opening = null;
-  let fenced = null;
-  let marked = null;
-  for (const match of text.matchAll(/^[ \t]*(`{3,}|~{3,})(json)?[ \t]*\r?$/gim)) {
-    // A fence inside a JSON string belongs to the value, never to the surrounding Markdown.
-    if (candidates.some(candidate => candidate.start <= match.index && match.index < candidate.end)) continue;
-    if (!opening) opening = { fence: match[1], end: match.index + match[0].length };
-    else if (!match[2] && match[1][0] === opening.fence[0] && match[1].length >= opening.fence.length) {
-      const blocks = candidates.filter(candidate => candidate.start >= opening.end && candidate.end <= match.index);
-      if (blocks.length) fenced = blocks.at(-1).value;
-      const object = blocks.filter(candidate => !Array.isArray(candidate.value)).at(-1);
-      if (object && /^\s*\/\/\s*(?:VERDICT|DECISION|DIAGNOSIS)_JSON\s*$/m.test(text.slice(opening.end, blocks[0].start))) {
-        marked = object.value;
-      }
-      opening = null;
-    }
-  }
+
   return marked ?? fenced ?? candidates.filter(candidate => !Array.isArray(candidate.value)).at(-1)?.value ?? null;
 }
 
@@ -209,7 +241,8 @@ export function runAgentVerifiers(root, { tier, difficulty = 'normal', rejection
       tier: resolved.tier,
       escalated: resolved.escalated,
       agent: resolved.summary,
-      session: payload.session,
+      session: res.session ?? null,
+      ...(!passed ? { exitCode: res.status ?? 0, signal: res.signal ?? null, failureKind: 'gate_rejected' } : {}),
       summary: `L3 Agent/UI Track（${resolved.summary}）：${passed ? '通过' : '未通过'} — ${verdict.summary ?? ''}`,
       evidence: verdict.evidence ?? [],
       findings,
@@ -261,7 +294,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         : { passed: true, skipped: true, commit: codeRes.commit, summary: 'L3 Agent/UI Track未启用。', evidence: [], findings: [] };
       requireValue(agentRes.commit === codeRes.commit, `Dual-Track Verification提交不一致：Code Track ${codeRes.commit} vs Agent/UI Track ${agentRes.commit}`);
       const passed = Boolean(codeRes.passed && agentRes.passed);
-      const report = [`验证提交：\`${codeRes.commit}\``, codeRes.summary, agentRes.summary].filter(Boolean).join('\n\n');
+      const agentDiagnostics = !agentRes.passed ? [
+        `Agent/UI Track：failureKind=${agentRes.failureKind}, exitCode=${agentRes.exitCode}`,
+        agentRes.signal ? `signal=${agentRes.signal}` : '',
+        agentRes.session ? `session=${agentRes.session}` : '',
+      ].filter(Boolean).join(', ') : '';
+      const report = [`验证提交：\`${codeRes.commit}\``, codeRes.summary, [agentRes.summary, agentDiagnostics].filter(Boolean).join('\n')].filter(Boolean).join('\n\n');
       appendGithubOutput({
         commit: codeRes.commit,
         passed,

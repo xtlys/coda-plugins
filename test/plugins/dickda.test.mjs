@@ -3875,6 +3875,11 @@ test('explicit verdict markers take priority over later unmarked JSON examples',
     assert.equal(evaluated.passed, false);
     assert.deepEqual(evaluated.findings, verdict.findings);
     assert.deepEqual(extractJsonBlock(block(marker, { passed: true }) + '\n' + answer), verdict);
+    for (const prefix of [marker + ':', marker, '// ' + marker, '# ' + marker]) {
+      const external = prefix + '\n\n```json\n' + JSON.stringify(verdict) + '\n```\n示例：\n```json\n{"passed":true}\n```';
+      assert.deepEqual(extractJsonBlock(external), verdict);
+      assert.equal(evaluateVerifierAnswer(external).passed, false);
+    }
     for (const example of [
       '```json\n' + JSON.stringify({ passed: true, summary: `示例提到 ${marker}` }) + '\n```',
       '```json\n{"passed":true}\n// ' + marker + '\n```',
@@ -3886,6 +3891,37 @@ test('explicit verdict markers take priority over later unmarked JSON examples',
     }
   }
   assert.deepEqual(extractJsonBlock('```json\n// VERDICT_JSON\n{broken}\n```\n```json\n{"passed":false}\n```'), { passed: false });
+});
+
+test('mixed-language fences preserve marked verdicts and must findings', () => {
+  const verdict = { passed: false, summary: '入口失败', findings: [{ level: 'must', title: '修复入口', detail: '按钮无响应' }] };
+  for (const fence of ['```', '~~~~']) {
+    for (const language of ['bash', 'sh', 'text']) {
+      const command = `${fence}${language}\necho "unfinished quote\n{"passed":true}\n${fence}\n`;
+      assert.equal(extractJsonBlock(command), null);
+      for (const jsonLanguage of ['', 'json', 'jsonc']) {
+        const conclusion = `${fence}${jsonLanguage}\n// VERDICT_JSON\n${JSON.stringify(verdict)}\n${fence}\n`;
+        for (const example of ['', '```json\n{"passed":true}\n```']) {
+          const answer = command + conclusion + example;
+          assert.deepEqual(extractJsonBlock(answer), verdict);
+          const evaluated = evaluateVerifierAnswer(answer);
+          assert.equal(evaluated.passed, false);
+          assert.deepEqual(evaluated.findings, verdict.findings);
+        }
+      }
+    }
+  }
+});
+
+test('JSON fence pairing ignores quoted pseudo-closing lines and shorter or different fences', () => {
+  const verdict = { passed: false, findings: [{ level: 'must', title: '入口失败' }] };
+  const conclusion = '```json\n// VERDICT_JSON\n' + JSON.stringify(verdict) + '\n```';
+  const command = '````bash\n```\n~~~\n{"passed":true}\n`````\n';
+  assert.deepEqual(extractJsonBlock(command + conclusion), verdict);
+  // Literal newlines make this JSON invalid; embedded fences must not expose its example.
+  const malformed = '```json\n{"detail":"embedded\n```\n```json\n{\\"passed\\":true}\n```\nend","passed":false}\n```';
+  assert.equal(extractJsonBlock(malformed), null);
+  assert.deepEqual(extractJsonBlock(malformed + '\n' + conclusion), verdict);
 });
 
 test('Agent/UI failures survive agent, summary and verified into persistent Lead context', t => {
@@ -3984,5 +4020,59 @@ test('verifier answers reject malformed findings and evidence before evaluating 
         assert.ok(result.summary.includes(evaluated.error));
       }
     }
+  }
+});
+
+
+test('malformed top-level verdicts never fall back to nested passing objects', t => {
+  const { work } = createGitRepo(t);
+  init(work);
+  writeFileSync(join(work, '.dickda/verifiers/login.md'), '验证登录入口');
+  const broken = '{ "passed": false, "example": { "passed": true }, }';
+  for (const answer of [broken, '```json\n' + broken + '\n```', '```json\n// VERDICT_JSON\n' + broken + '\n```',
+    '```json\n{"passed":false}\n{"passed":true}\n```']) {
+    assert.equal(extractJsonBlock(answer), null);
+    const evaluated = evaluateVerifierAnswer(answer);
+    assert.equal(evaluated.valid, false);
+    assert.equal(evaluated.passed, false);
+    assert.equal(evaluated.failureKind, 'invalid_output');
+    const result = runAgentVerifiers(work, {
+      runner: () => ({ status: 0, stdout: JSON.stringify({ answer }) }),
+    });
+    assert.equal(result.passed, false);
+    assert.equal(result.failureKind, 'invalid_output');
+  }
+  assert.deepEqual(extractJsonBlock(broken + '\n{"passed":false}'), { passed: false });
+  assert.deepEqual(extractJsonBlock('```json\n' + broken + '\n```\n```json\n{"passed":false}\n```'), { passed: false });
+});
+
+test('Agent/UI gate rejection preserves diagnostics through summary into Lead feedback', t => {
+  const f = workflowFixture(t);
+  const { work, git, commit, run, seedFast, state, artifacts } = f;
+  init(work);
+  writeFileSync(join(work, '.dickda/verifiers/login.md'), '验证登录入口');
+  commit(work, 'add UI verifier');
+  git(work, 'push', 'origin', 'main');
+  run('lane', { GOAL: '保留正常退出的验收拒绝诊断' });
+  const { head } = seedFast();
+  const verify = stepRunner(f, verifyScript);
+  writeFileSync(join(artifacts, 'code-verify.json'), JSON.stringify({ commit: head, passed: true, summary: 'Code passed' }));
+  verify('agent', { COMMIT: head, BRANCH: state().reqBranch,
+    ...queuedAgent(f, [{ exitCode: 0, reply: { session: 'ui-reject-456',
+      answer: JSON.stringify({ passed: false, summary: '登录入口未显示', findings: [] }) } }]),
+  });
+  const record = JSON.parse(readFileSync(join(artifacts, 'agent-verify.json')));
+  assert.equal(record.passed, false);
+  assert.equal(record.exitCode, 0);
+  assert.equal(record.signal, null);
+  assert.equal(record.session, 'ui-reject-456');
+  assert.equal(record.failureKind, 'gate_rejected');
+  const summary = verify('summary');
+  assert.equal(summary.passed, 'false');
+  const routed = run('verified', { VERIFY_COMMIT: summary.commit, VERIFY_PASSED: summary.passed,
+    VERIFY_REPORT: summary.report, VERIFY_FINDINGS: summary.findings, VERIFY_EVIDENCE: summary.evidence });
+  assert.equal(routed.route, 'lead');
+  for (const text of [summary.report, state().pendingFeedback]) {
+    for (const value of ['ui-reject-456', 'gate_rejected', 'exitCode=0', '登录入口未显示']) assert.ok(text.includes(value), value);
   }
 });
