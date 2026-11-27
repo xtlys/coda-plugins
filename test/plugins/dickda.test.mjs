@@ -3890,7 +3890,51 @@ test('explicit verdict markers take priority over later unmarked JSON examples',
       assert.equal(evaluateVerifierAnswer(markedFailure).passed, false);
     }
   }
-  assert.deepEqual(extractJsonBlock('```json\n// VERDICT_JSON\n{broken}\n```\n```json\n{"passed":false}\n```'), { passed: false });
+  assert.equal(extractJsonBlock('```json\n// VERDICT_JSON\n{broken}\n```\n```json\n{"passed":false}\n```'), null);
+});
+
+test('malformed explicit verdicts fail closed before unmarked passing examples', () => {
+  const example = '\n```json\n{"passed":true}\n```';
+  for (const marked of [
+    '```json\n// VERDICT_JSON\n{"passed":false,}\n```',
+    'VERDICT_JSON:\n```json\n{"passed":false,}\n```',
+    'VERDICT_JSON = {"passed":false,}',
+    'VERDICT_JSON: {"passed":false,}',
+  ]) {
+    for (const earlier of ['', '```json\n// VERDICT_JSON\n{"passed":true}\n```\n']) {
+      const answer = earlier + marked + example;
+      assert.equal(extractJsonBlock(answer), null);
+      const evaluated = evaluateVerifierAnswer(answer);
+      assert.equal(evaluated.valid, false);
+      assert.equal(evaluated.passed, false);
+      assert.equal(evaluated.failureKind, 'invalid_output');
+    }
+  }
+});
+
+test('explicit equals markers select failing verdicts before unmarked passing examples', () => {
+  const verdict = { passed: false };
+  const json = JSON.stringify(verdict);
+  const example = '\n```json\n{"passed":true}\n```';
+  for (const marker of ['VERDICT_JSON', 'DECISION_JSON', 'DIAGNOSIS_JSON']) {
+    for (const label of [marker + ' =', marker + ':', '// ' + marker, '# ' + marker]) {
+      for (const marked of [label + '\n```json\n' + json + '\n```',
+        '```json\n' + label + '\n' + json + '\n```']) {
+        const answer = marked + example;
+        assert.deepEqual(extractJsonBlock(answer), verdict);
+        const evaluated = evaluateVerifierAnswer(answer);
+        assert.equal(evaluated.valid, true);
+        assert.equal(evaluated.passed, false);
+      }
+    }
+    for (const separator of ['=', ':']) {
+      const marked = marker + ' ' + separator + ' ' + json;
+      for (const answer of [marked + example, '```json\n' + marked + '\n```' + example]) {
+        assert.deepEqual(extractJsonBlock(answer), verdict);
+        assert.equal(evaluateVerifierAnswer(answer).passed, false);
+      }
+    }
+  }
 });
 
 test('mixed-language fences preserve marked verdicts and must findings', () => {

@@ -83,6 +83,10 @@ export function runCodeVerifiers(root) {
 
 export function extractJsonBlock(text) {
   text = String(text ?? '');
+  const markerSource = String.raw`(?:(?://|#)\s*)?(?:VERDICT|DECISION|DIAGNOSIS)_JSON\s*[:=]?\s*`;
+  const markerLine = new RegExp(`^${markerSource}$`);
+  const leadingLines = new RegExp(String.raw`^(?:\s*(?://[^\r\n]*(?:\r?\n|$)|${markerSource}(?:\r?\n|$)|${markerSource}(?=[{\[])))*`);
+  const bareMarker = /^(?:(?:\/\/|#)\s*)?(?:VERDICT|DECISION|DIAGNOSIS)_JSON\s*[:=]\s*$/;
   const fenceRanges = [];
   let opening = null;
   for (const line of text.matchAll(/[^\n]*(?:\n|$)/g)) {
@@ -93,7 +97,7 @@ export function extractJsonBlock(text) {
       opening = {
         fence: match[1], start: line.index, bodyStart: line.index + line[0].length,
         json: /^(?:jsonc?)?$/i.test(match[2]), quoted: false, escaped: false,
-        marked: /^(?:(?:\/\/|#)\s*)?(?:VERDICT|DECISION|DIAGNOSIS)_JSON\s*:?$/.test(previousLine),
+        marked: markerLine.test(previousLine),
       };
       continue;
     }
@@ -115,18 +119,17 @@ export function extractJsonBlock(text) {
   }
   if (opening) fenceRanges.push({ ...opening, end: text.length });
   let fenced = null;
-  let marked = null;
+  const marked = [];
   for (const range of fenceRanges) {
-    if (!range.json || range.bodyEnd === undefined) continue;
-    const body = text.slice(range.bodyStart, range.bodyEnd);
-    const prefix = body.match(/^(?:\s*\/\/[^\r\n]*(?:\r?\n|$))*/)[0];
+    const body = text.slice(range.bodyStart, range.bodyEnd ?? range.end);
+    const prefix = body.match(leadingLines)[0];
+    const explicit = range.marked || prefix.trim().split('\n').some(line => markerLine.test(line.trim()));
+    const candidate = { start: range.start, value: null };
+    if (explicit) marked.push(candidate);
+    if ((!range.json && !explicit) || range.bodyEnd === undefined) continue;
     try {
-      const value = JSON.parse(body.slice(prefix.length));
-      fenced = value;
-      if (value && !Array.isArray(value) && (range.marked
-        || /^\s*\/\/\s*(?:VERDICT|DECISION|DIAGNOSIS)_JSON\s*$/m.test(prefix))) {
-        marked = value;
-      }
+      candidate.value = JSON.parse(body.slice(prefix.length));
+      if (range.json) fenced = candidate.value;
     } catch {}
   }
   const candidates = [];
@@ -134,6 +137,10 @@ export function extractJsonBlock(text) {
     const range = fenceRanges.find(range => range.start <= start && start < range.end);
     if (range) { start = range.end - 1; continue; }
     if (text[start] !== '{' && text[start] !== '[') continue;
+    const prefix = text.slice(0, start).trimEnd().split('\n').at(-1)?.trim();
+    const explicit = bareMarker.test(prefix);
+    const candidate = { start, value: null };
+    if (explicit) marked.push(candidate);
     const stack = [];
     let quoted = false;
     let escaped = false;
@@ -151,7 +158,8 @@ export function extractJsonBlock(text) {
         if (stack.pop() !== (char === '}' ? '{' : '[')) break;
         if (!stack.length) {
           try {
-            candidates.push({ start, end: end + 1, value: JSON.parse(text.slice(start, end + 1)) });
+            candidate.value = JSON.parse(text.slice(start, end + 1));
+            candidates.push(candidate);
           } catch {}
           start = end;
           break;
@@ -160,7 +168,8 @@ export function extractJsonBlock(text) {
     }
   }
 
-  return marked ?? fenced ?? candidates.filter(candidate => !Array.isArray(candidate.value)).at(-1)?.value ?? null;
+  if (marked.length) return marked.sort((a, b) => a.start - b.start).at(-1).value;
+  return fenced ?? candidates.filter(candidate => !Array.isArray(candidate.value)).at(-1)?.value ?? null;
 }
 
 export function parseVerifierAnswer(answer) {
