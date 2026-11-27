@@ -96,6 +96,7 @@
       <extensionElements>
         <coda:output name="head" />
         <coda:output name="hasPlan" />
+        <coda:output name="alreadyConfirmed" />
         <coda:output name="preview" />
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" seed</script>
@@ -104,10 +105,10 @@
 
     <exclusiveGateway id="think-gate" name="是否运行Thinker五层规划" default="run-think" />
     <sequenceFlow id="skip-think" sourceRef="think-gate" targetRef="lead-plan">
-      <conditionExpression xsi:type="tFormalExpression">=inputs.fast = true</conditionExpression>
+      <conditionExpression xsi:type="tFormalExpression">=seed.alreadyConfirmed = true or inputs.fast = true</conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="reuse-plan" sourceRef="think-gate" targetRef="plan-present">
-      <conditionExpression xsi:type="tFormalExpression">=inputs.fast = false and seed.hasPlan = true</conditionExpression>
+      <conditionExpression xsi:type="tFormalExpression">=seed.alreadyConfirmed = false and inputs.fast = false and seed.hasPlan = true</conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="run-think" sourceRef="think-gate" targetRef="think" />
 
@@ -308,6 +309,8 @@ Requirement Branch {{lane.reqBranch}}，Approved HEAD {{if think.head = null the
       <extensionElements>
         <coda:output name="head" />
         <coda:output name="needChecks" />
+        <coda:output name="archived" />
+        <coda:output name="archivePath" />
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" archive-delivery</script>
     </scriptTask>

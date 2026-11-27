@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { agentFailure, callCodaAgent } from './agent.mjs';
 import { assetsByKind, hasAgentVerifiers, runLints } from './assets.mjs';
 import { agentArgs, effectiveSettings, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
 import { appendGithubOutput, config, git, listFiles, managed, remoteGit, repo, requireValue } from './store.mjs';
@@ -80,15 +81,49 @@ export function runCodeVerifiers(root) {
   };
 }
 
-export function extractJsonBlock(text, tag = 'VERDICT_JSON') {
-  const tagged = new RegExp(`\`\`\`(?:json)?\\s*//\\s*${tag}\\s*\\n([\\s\\S]*?)\`\`\``).exec(text)
-    ?? new RegExp(`${tag}\\s*[:=]?\\s*\`\`\`(?:json)?\\s*\\n([\\s\\S]*?)\`\`\``).exec(text);
-  if (tagged) return JSON.parse(tagged[1].trim());
-  const blocks = [...String(text ?? '').matchAll(/```json\s*\n([\s\S]*?)```/g)];
-  for (let i = blocks.length - 1; i >= 0; i--) {
-    try { return JSON.parse(blocks[i][1].trim()); } catch {}
+export function extractJsonBlock(text) {
+  text = String(text ?? '');
+  const candidates = [];
+  for (let start = 0; start < text.length; start++) {
+    if (text[start] !== '{' && text[start] !== '[') continue;
+    const stack = [];
+    let quoted = false;
+    let escaped = false;
+    for (let end = start; end < text.length; end++) {
+      const char = text[end];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') quoted = false;
+        continue;
+      }
+      if (char === '"') quoted = true;
+      else if (char === '{' || char === '[') stack.push(char);
+      else if (char === '}' || char === ']') {
+        if (stack.pop() !== (char === '}' ? '{' : '[')) break;
+        if (!stack.length) {
+          try {
+            candidates.push({ start, end: end + 1, value: JSON.parse(text.slice(start, end + 1)) });
+            start = end;
+          } catch {}
+          break;
+        }
+      }
+    }
   }
-  return null;
+  let opening = null;
+  let fenced = null;
+  for (const match of text.matchAll(/^[ \t]*(`{3,}|~{3,})(json)?[ \t]*\r?$/gim)) {
+    // A fence inside a JSON string belongs to the value, never to the surrounding Markdown.
+    if (candidates.some(candidate => candidate.start <= match.index && match.index < candidate.end)) continue;
+    if (!opening) opening = { fence: match[1], end: match.index + match[0].length };
+    else if (!match[2] && match[1][0] === opening.fence[0] && match[1].length >= opening.fence.length) {
+      const blocks = candidates.filter(candidate => candidate.start >= opening.end && candidate.end <= match.index);
+      if (blocks.length) fenced = blocks.at(-1).value;
+      opening = null;
+    }
+  }
+  return fenced ?? candidates.filter(candidate => !Array.isArray(candidate.value)).at(-1)?.value ?? null;
 }
 
 function skippedAgent(summary = 'L3 Agent/UI Verifier：当前 .dickda/verifiers/ 无 Agent/UI 规约文件，跳过。') {
@@ -121,13 +156,11 @@ export function runAgentVerifiers(root, { tier, difficulty = 'normal', rejection
       '--json',
       '--prompt-file', promptFile,
     ];
-    const exec = runner ?? (cmdArgs => spawnSync('coda-agent', cmdArgs, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }));
-    const res = exec(args);
-    if (res.error) throw res.error;
-    requireValue(res.status === 0, `coda-agent 验证会话异常退出（退出码 ${res.status}）`);
-    const payload = JSON.parse(res.stdout);
+    const res = callCodaAgent(args, root, runner);
+    requireValue(res.status === 0 && res.parsed, `coda-agent 验证会话异常退出：${agentFailure(res)}`);
+    const payload = res.parsed;
     const verdict = extractJsonBlock(payload.answer ?? '');
-    requireValue(verdict && typeof verdict.passed === 'boolean', 'Verifier未返回包含 passed 布尔值的结构化 JSON 结论');
+    requireValue(verdict && typeof verdict.passed === 'boolean', `Verifier未返回包含 passed 布尔值的结构化 JSON 结论\n${agentFailure({ ...res, failureKind: 'invalid_output' })}`);
     const findings = Array.isArray(verdict.findings) ? verdict.findings : [];
     const hasMust = findings.some(f => f.level === 'must');
     const passed = verdict.passed === true && !hasMust;

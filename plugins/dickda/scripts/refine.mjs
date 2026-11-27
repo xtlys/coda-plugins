@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { agentFailure, callCodaAgent, callDeliveryAgent } from './agent.mjs';
 import { checkApprovalPr, mergeApprovedPr, privateGh } from './approval.mjs';
 import { CONSUMED_FILE, archiveRoot, backups, branchChanges, consumeBackup, consumedArchives, consumptionRecord, layerHealth, pruneConsumedArchives, walkMarkdown } from './assets.mjs';
 import { checkRunsText, jsonList, openMusts, reviewRange, reviewVerdict } from './review.mjs';
@@ -141,7 +142,6 @@ export function executeRefinePlan(root, {
   head = startHead,
   baseConsumed = [],
   mergedUpstream,
-  refineBranch,
   archive,
   choice,
   decisionNote = '',
@@ -151,7 +151,7 @@ export function executeRefinePlan(root, {
   runner,
   tempDir = process.env.RUNNER_TEMP || join(root, '.dickda'),
 }) {
-  git(root, 'checkout', '-B', refineBranch, head);
+  git(root, 'checkout', '--detach', head);
   let currentHead = head;
 
   // A failed initial execution has published no candidate. Replay its selected actions and consume the archive once.
@@ -185,18 +185,15 @@ export function executeRefinePlan(root, {
       ];
       mkdirSync(managed(root, 'lints'), { recursive: true });
       mkdirSync(managed(root, 'verifiers'), { recursive: true });
-      const exec = runner ?? (cmdArgs => spawnSync('coda-agent', cmdArgs, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }));
-      const run = exec(args);
-      try { rmIfExists(promptFile); } catch {}
-      if (run.error) throw run.error;
-      requireValue(run.status === 0, `Refine 重构Work Order「${item.title}」执行失败（退出码 ${run.status}），保留原归档未消费`);
-      let reply = null;
-      try { reply = JSON.parse(run.stdout); } catch {}
-      requireValue(reply?.head, `Refine 重构Work Order「${item.title}」未返回有效交付提交 SHA，保留原归档未消费`);
-      const delivered = git(root, 'rev-parse', '--verify', `${reply.head}^{commit}`);
-      requireValue(delivered !== currentHead, `Refine 重构Work Order「${item.title}」未产生新提交（${delivered}），保留原归档未消费`);
-      requireValue(isAncestor(root, currentHead, delivered), `Refine 重构Work Order「${item.title}」返回的提交（${delivered}）不是前序基线（${currentHead}）的严格后代，拒绝丢弃前序改动并保留原归档未消费`);
-      git(root, 'checkout', '-B', refineBranch, delivered);
+      const call = callDeliveryAgent(args, { cwd: root, baseHead: currentHead, promptFile, runner });
+      rmIfExists(promptFile);
+      const detail = agentFailure(call);
+      requireValue(call.status === 0, `Refine 重构Work Order「${item.title}」执行失败，保留原归档未消费\n${detail}`);
+      requireValue(call.head, `Refine 重构Work Order「${item.title}」未返回有效交付提交 SHA，保留原归档未消费\n${detail}`);
+      const delivered = git(root, 'rev-parse', '--verify', `${call.head}^{commit}`);
+      requireValue(delivered !== currentHead, `Refine 重构Work Order「${item.title}」未产生新提交（${delivered}），保留原归档未消费\n${detail}`);
+      requireValue(isAncestor(root, currentHead, delivered), `Refine 重构Work Order「${item.title}」返回的提交（${delivered}）不是前序基线（${currentHead}）的严格后代，拒绝丢弃前序改动并保留原归档未消费\n${detail}`);
+      git(root, 'checkout', '--detach', delivered);
       currentHead = delivered;
     }
   }
@@ -304,16 +301,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         ].join('\n\n');
         writeFileSync(promptFile, prompt);
 
-        const res = spawnSync('coda-agent', [
+        const res = callCodaAgent([
           '--commit', head,
           '--title', `Thinker Refine 诊断：${state.archive}`,
           ...agentArgs(settings.thinker),
           '--json',
           '--prompt-file', promptFile,
-        ], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
-        if (res.error) throw res.error;
-        requireValue(res.status === 0, `Thinker Refine 诊断退出码 ${res.status}`);
-        const reply = JSON.parse(res.stdout);
+        ], root);
+        requireValue(res.status === 0 && res.parsed, `Thinker Refine 诊断失败：${agentFailure(res)}`);
+        const reply = res.parsed;
         const diagnosis = normalizeDiagnosis(extractJsonBlock(reply.answer));
         saveState({ ...state, head, diagnosis });
         appendGithubOutput({
