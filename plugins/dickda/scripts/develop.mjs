@@ -9,7 +9,7 @@ import { enabledGuidelinesDigest } from './prompts.mjs';
 import { checkRunsText, jsonList, openMusts, requestedChanges, reviewRange, reviewVerdict } from './review.mjs';
 import { TRADES, agentArgs, effectiveSettings, formatAgent, loadSettings, resolveEngineer, reviewerOutputs, rolePrompt } from './roles.mjs';
 import { DEFAULT_PLAN, INVESTIGATE_MARKER, appendGithubOutput, atomic, hash, init, managed, projectGroup, remoteGit, repo, requireValue, save } from './store.mjs';
-import { extractJsonBlock } from './verify.mjs';
+import { extractJsonBlock, parseVerifierAnswer } from './verify.mjs';
 
 export { effectiveSettings };
 
@@ -106,15 +106,16 @@ export function enrichDispatchBatch(rawJobs, ledger = {}, settings = loadSetting
 }
 
 export function evaluateVerifierAnswer(answerText = '') {
-  const verdict = extractJsonBlock(answerText);
-  if (!verdict || typeof verdict.passed !== 'boolean') {
+  const { verdict, error, failureKind } = parseVerifierAnswer(answerText);
+  if (error) {
     return {
       valid: false,
       passed: false,
       summary: '',
       findings: [],
       resolved: [],
-      error: 'Verifier未输出含布尔值 passed 的结构化 JSON 结论',
+      error,
+      failureKind,
     };
   }
   const findings = Array.isArray(verdict.findings) ? verdict.findings : [];

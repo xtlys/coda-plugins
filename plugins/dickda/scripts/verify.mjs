@@ -113,6 +113,7 @@ export function extractJsonBlock(text) {
   }
   let opening = null;
   let fenced = null;
+  let marked = null;
   for (const match of text.matchAll(/^[ \t]*(`{3,}|~{3,})(json)?[ \t]*\r?$/gim)) {
     // A fence inside a JSON string belongs to the value, never to the surrounding Markdown.
     if (candidates.some(candidate => candidate.start <= match.index && match.index < candidate.end)) continue;
@@ -120,10 +121,32 @@ export function extractJsonBlock(text) {
     else if (!match[2] && match[1][0] === opening.fence[0] && match[1].length >= opening.fence.length) {
       const blocks = candidates.filter(candidate => candidate.start >= opening.end && candidate.end <= match.index);
       if (blocks.length) fenced = blocks.at(-1).value;
+      const object = blocks.filter(candidate => !Array.isArray(candidate.value)).at(-1);
+      if (object && /^\s*\/\/\s*(?:VERDICT|DECISION|DIAGNOSIS)_JSON\s*$/m.test(text.slice(opening.end, blocks[0].start))) {
+        marked = object.value;
+      }
       opening = null;
     }
   }
-  return fenced ?? candidates.filter(candidate => !Array.isArray(candidate.value)).at(-1)?.value ?? null;
+  return marked ?? fenced ?? candidates.filter(candidate => !Array.isArray(candidate.value)).at(-1)?.value ?? null;
+}
+
+export function parseVerifierAnswer(answer) {
+  try {
+    const verdict = extractJsonBlock(answer);
+    requireValue(verdict && typeof verdict.passed === 'boolean', 'Verifier未输出含布尔值 passed 的结构化 JSON 结论');
+    const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+    if ('findings' in verdict) {
+      requireValue(Array.isArray(verdict.findings) && verdict.findings.every(isObject), 'Verifier findings 须为数组且每项须为非 null 普通对象');
+    }
+    if ('evidence' in verdict) {
+      requireValue(Array.isArray(verdict.evidence) && verdict.evidence.every(item => typeof item === 'string' || isObject(item)), 'Verifier evidence 须为数组且每项须为文本或非 null 普通对象');
+    }
+    if ('summary' in verdict) requireValue(typeof verdict.summary === 'string', 'Verifier summary 须为文本');
+    return { verdict };
+  } catch (error) {
+    return { error: error.message, failureKind: 'invalid_output' };
+  }
 }
 
 function skippedAgent(summary = 'L3 Agent/UI Verifier：当前 .dickda/verifiers/ 无 Agent/UI 规约文件，跳过。') {
@@ -157,19 +180,28 @@ export function runAgentVerifiers(root, { tier, difficulty = 'normal', rejection
       '--prompt-file', promptFile,
     ];
     const res = callCodaAgent(args, root, runner);
-    requireValue(res.status === 0 && res.parsed, `coda-agent 验证会话异常退出：${agentFailure(res)}`);
+    const failure = (reason, failureKind = res.failureKind || 'invalid_output') => {
+      const diagnostics = { exitCode: res.status, signal: res.signal, session: res.session, failureKind };
+      const summary = `L3 Agent/UI Track：${reason}\n${agentFailure({ ...res, failureKind })}`;
+      return {
+        passed: false, skipped: false, tier: resolved.tier, escalated: resolved.escalated,
+        agent: resolved.summary, ...diagnostics, summary, evidence: [],
+        findings: [{ level: 'must', title: reason, ...diagnostics, detail: summary }],
+      };
+    };
+    if (res.status !== 0 || !res.parsed) return failure('coda-agent 验证会话异常退出');
     const payload = res.parsed;
-    const verdict = extractJsonBlock(payload.answer ?? '');
-    requireValue(verdict && typeof verdict.passed === 'boolean', `Verifier未返回包含 passed 布尔值的结构化 JSON 结论\n${agentFailure({ ...res, failureKind: 'invalid_output' })}`);
+    const { verdict, error } = parseVerifierAnswer(payload.answer ?? '');
+    if (error) return failure(error, 'invalid_output');
     const findings = Array.isArray(verdict.findings) ? verdict.findings : [];
     const hasMust = findings.some(f => f.level === 'must');
     const passed = verdict.passed === true && !hasMust;
     if (passed) {
       const hasText = value => typeof value === 'string' && value.trim().length > 0;
-      requireValue(hasText(verdict.summary), 'Agent/UI 验收通过时 summary 须为非空文本');
+      if (!hasText(verdict.summary)) return failure('Agent/UI 验收通过时 summary 须为非空文本');
       const hasEvidence = item => hasText(item) || (item && typeof item === 'object'
         && !Array.isArray(item) && Object.values(item).some(hasText));
-      requireValue(Array.isArray(verdict.evidence) && verdict.evidence.some(hasEvidence), 'Agent/UI 验收通过时 evidence 须至少包含一项非空实证证据');
+      if (!Array.isArray(verdict.evidence) || !verdict.evidence.some(hasEvidence)) return failure('Agent/UI 验收通过时 evidence 须至少包含一项非空实证证据');
     }
     return {
       passed,

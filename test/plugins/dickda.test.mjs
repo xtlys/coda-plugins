@@ -647,10 +647,17 @@ test('Agent/UI specifications require a summary and substantive evidence for a p
     runner: () => ({ status: 0, stdout: JSON.stringify({ answer: '```json\n' + JSON.stringify(verdict) + '\n```' }) }),
   });
   const pass = { passed: true, summary: '登录后显示首页' };
-  assert.throws(() => verify({ passed: true }), /summary/);
-  assert.throws(() => verify({ ...pass, summary: ' \n', evidence: ['login.png'] }), /summary/);
+  const invalid = (verdict, reason) => {
+    const result = verify(verdict);
+    assert.equal(result.passed, false);
+    assert.equal(result.failureKind, 'invalid_output');
+    assert.equal(result.findings[0].level, 'must');
+    assert.match(result.summary, reason);
+  };
+  invalid({ passed: true }, /summary/);
+  invalid({ ...pass, summary: ' \n', evidence: ['login.png'] }, /summary/);
   for (const evidence of [undefined, 'login.png', [], [' \t'], [null, {}, { path: ' ', exitCode: 0 }]]) {
-    assert.throws(() => verify({ ...pass, evidence }), /evidence.*非空实证/);
+    invalid({ ...pass, evidence }, /evidence/);
   }
   for (const evidence of [['login.png'], [' ', { step: 2, path: 'login.png' }]]) {
     const result = verify({ ...pass, evidence });
@@ -3854,6 +3861,128 @@ test('host FEEL selects Heavy Mode planning, approved heads and previews across 
       vars.inputs.fast = fast;
       Object.assign(vars.seed, { alreadyConfirmed, hasPlan });
       assert.equal(choose('think-gate', vars), fast || alreadyConfirmed ? 'lead-plan' : heavyThink ? 'heavy-prepare' : hasPlan ? 'plan-present' : 'think');
+    }
+  }
+});
+
+test('explicit verdict markers take priority over later unmarked JSON examples', () => {
+  const verdict = { passed: false, summary: '入口失败', findings: [{ level: 'must', title: '修复入口', detail: '按钮无响应 ```' }] };
+  const block = (marker, value) => '```json\n// ' + marker + '\n' + JSON.stringify(value) + '\n```';
+  for (const marker of ['VERDICT_JSON', 'DECISION_JSON', 'DIAGNOSIS_JSON']) {
+    const answer = block(marker, verdict) + '\n示例：\n```json\n{"passed":true}\n```';
+    assert.deepEqual(extractJsonBlock(answer), verdict);
+    const evaluated = evaluateVerifierAnswer(answer);
+    assert.equal(evaluated.passed, false);
+    assert.deepEqual(evaluated.findings, verdict.findings);
+    assert.deepEqual(extractJsonBlock(block(marker, { passed: true }) + '\n' + answer), verdict);
+    for (const example of [
+      '```json\n' + JSON.stringify({ passed: true, summary: `示例提到 ${marker}` }) + '\n```',
+      '```json\n{"passed":true}\n// ' + marker + '\n```',
+      '```json\n说明 // ' + marker + '\n{"passed":true}\n```',
+    ]) {
+      const markedFailure = block(marker, verdict) + '\n' + example;
+      assert.deepEqual(extractJsonBlock(markedFailure), verdict);
+      assert.equal(evaluateVerifierAnswer(markedFailure).passed, false);
+    }
+  }
+  assert.deepEqual(extractJsonBlock('```json\n// VERDICT_JSON\n{broken}\n```\n```json\n{"passed":false}\n```'), { passed: false });
+});
+
+test('Agent/UI failures survive agent, summary and verified into persistent Lead context', t => {
+  const f = workflowFixture(t);
+  const { work, git, commit, run, seedFast, state, artifacts, env, lead } = f;
+  init(work);
+  writeFileSync(join(work, '.dickda/verifiers/login.md'), '验证登录入口');
+  commit(work, 'add UI verifier');
+  git(work, 'push', 'origin', 'main');
+  run('lane', { GOAL: '保留双轨失败诊断' });
+  const { head } = seedFast();
+  const verify = stepRunner(f, verifyScript);
+  writeFileSync(join(artifacts, 'code-verify.json'), JSON.stringify({ commit: head, passed: true, summary: 'Code passed' }));
+  for (const [exitCode, session, failureKind, reason] of [
+    [130, 'ui-cancel-123', 'cancelled', '用户取消了本次 UI 验收'],
+    [1, 'ui-policy-123', 'policy_blocked', 'policy_blocked: cybersecurity safety policy rejected UI request'],
+    [1, 'ui-error-123', 'agent_error', 'UI connection lost'],
+    [0, 'ui-invalid-123', 'invalid_output', '没有生成完整验证结论'],
+    [0, 'ui-null-finding', 'invalid_output', '{"passed":true,"summary":"验证完成","findings":[null],"evidence":["login.png"]}'],
+  ]) {
+    const result = verify('agent', { COMMIT: head, BRANCH: state().reqBranch,
+      ...queuedAgent(f, [{ exitCode, reply: { session, answer: reason }, stderr: 'original stderr' }]),
+    });
+    assert.equal(result.commit, head);
+    assert.equal(result.passed, 'false');
+    const record = JSON.parse(readFileSync(join(artifacts, 'agent-verify.json')));
+    assert.equal(record.commit, head);
+    assert.equal(record.passed, false);
+    const diagnostics = { exitCode, signal: null, session, failureKind };
+    for (const [key, value] of Object.entries(diagnostics)) {
+      assert.equal(record[key], value);
+      assert.equal(record.findings[0][key], value);
+    }
+    assert.equal(record.findings[0].level, 'must');
+    const summary = verify('summary');
+    assert.equal(summary.passed, 'false');
+    assert.deepEqual(JSON.parse(summary.findings), record.findings);
+    const routed = run('verified', { VERIFY_COMMIT: summary.commit, VERIFY_PASSED: summary.passed,
+      VERIFY_REPORT: summary.report, VERIFY_FINDINGS: summary.findings, VERIFY_EVIDENCE: summary.evidence });
+    assert.equal(routed.route, 'lead');
+    const persisted = JSON.parse(readFileSync(join(env.CODA_PLUGIN_STATE, 'runs', env.GITHUB_RUN_ID, 'develop.json')));
+    assert.equal(persisted.pendingFeedback, state().pendingFeedback);
+    assert.equal(persisted.verifyFindings, summary.findings);
+    for (const text of [summary.report, state().pendingFeedback]) {
+      for (const value of [String(exitCode), session, failureKind, reason, 'signal=none', 'original stderr']) assert.ok(text.includes(value), value);
+    }
+    lead({ action: 'escalate', question: '处理验收失败' });
+    const prompt = agentCalls(f).at(-1).prompt;
+    for (const value of [String(exitCode), session, failureKind, reason, '"signal":null']) assert.ok(prompt.includes(value), value);
+  }
+});
+
+test('Agent/UI signal cancellations return a structured must finding', t => {
+  const { work } = createGitRepo(t);
+  init(work);
+  writeFileSync(join(work, '.dickda/verifiers/login.md'), '验证登录入口');
+  const result = runAgentVerifiers(work, {
+    runner: () => ({ status: null, signal: 'SIGINT', stdout: '{"session":"ui-signal"}', stderr: 'interrupted UI verification' }),
+  });
+  assert.equal(result.passed, false);
+  assert.equal(result.exitCode, null);
+  assert.equal(result.signal, 'SIGINT');
+  assert.equal(result.session, 'ui-signal');
+  assert.equal(result.failureKind, 'cancelled');
+  assert.equal(result.findings[0].signal, 'SIGINT');
+  assert.match(result.summary, /interrupted UI verification/);
+});
+
+
+test('verifier answers reject malformed findings and evidence before evaluating them', t => {
+  const { work } = createGitRepo(t);
+  init(work);
+  writeFileSync(join(work, '.dickda/verifiers/login.md'), '验证登录入口');
+  for (const passed of [true, false]) {
+    for (const [field, values] of [
+      ['findings', [null, {}, 'must', [null], [[]], ['must'], [1]]],
+      ['evidence', [null, {}, 'login.png', [null], [[]], [1], ['login.png', null]]],
+      ['summary', [{ toString: null }]],
+    ]) {
+      for (const value of values) {
+        const answer = JSON.stringify({ passed, summary: '完成验证', evidence: ['login.png'], [field]: value });
+        const evaluated = evaluateVerifierAnswer(answer);
+        assert.equal(evaluated.valid, false, answer);
+        assert.equal(evaluated.passed, false);
+        assert.equal(evaluated.failureKind, 'invalid_output');
+        assert.ok(evaluated.error.includes(field));
+        const result = runAgentVerifiers(work, {
+          runner: () => ({ status: 0, stdout: JSON.stringify({ session: 'malformed-verdict', answer }) }),
+        });
+        assert.equal(result.passed, false);
+        assert.equal(result.failureKind, 'invalid_output');
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.signal, null);
+        assert.equal(result.session, 'malformed-verdict');
+        assert.equal(result.findings[0].level, 'must');
+        assert.ok(result.summary.includes(evaluated.error));
+      }
     }
   }
 });
