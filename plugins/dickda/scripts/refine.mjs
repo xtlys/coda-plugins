@@ -2,10 +2,11 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { agentFailure, callCodaAgent, callDeliveryAgent } from './agent.mjs';
 import { checkApprovalPr, mergeApprovedPr, privateGh } from './approval.mjs';
 import { CONSUMED_FILE, archiveRoot, backups, branchChanges, consumeBackup, consumedArchives, consumptionRecord, layerHealth, pruneConsumedArchives, walkMarkdown } from './assets.mjs';
 import { checkRunsText, jsonList, openMusts, reviewRange, reviewVerdict } from './review.mjs';
-import { TRADES, agentArgs, effectiveSettings, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
+import { TRADES, agentArgs, effectiveSettings, loadSettings, resolveEngineer, reviewerOutputs, rolePrompt } from './roles.mjs';
 import { appendGithubOutput, atomic, git, managed, projectGroup, remoteGit, repo, requireValue, save } from './store.mjs';
 import { extractJsonBlock, runCodeVerifiers } from './verify.mjs';
 
@@ -66,12 +67,12 @@ export function normalizeDiagnosis(raw) {
   const needsRefactor = raw.needsRefactor === true || layers.some(l => l !== 'L4');
   requireValue(Array.isArray(actions) && (!needsRefactor || actions.length) && actions.every(item =>
     layers.includes(item?.layer) && TRADES.includes(item.trade) && hasText(item.title) && hasText(item.task)
-      && (item.difficulty === undefined || ['normal', 'hard'].includes(item.difficulty))), 'Refine 诊断的 actions 须提供与落层对应的有效工单');
+      && (item.difficulty === undefined || ['normal', 'hard'].includes(item.difficulty))), 'Refine 诊断的 actions 须提供与落层对应的有效Work Order');
   requireValue(Array.isArray(obsoleteProse) && obsoleteProse.every(hasText), 'obsoleteProse 须列出非空旧条文');
   requireValue(Array.isArray(learningUpdates) && learningUpdates.every(note => hasText(note)
     || (hasText(note?.text) && (note.file === undefined || validLearningFilename(note.file)))), 'learningUpdates 须包含有效的经验文档和非空条文');
   requireValue(Array.isArray(knowledgeUpdates) && knowledgeUpdates.every(validKnowledgeUpdate), '知识更新须包含 knowledge/ 下的 Markdown 路径和非空正文');
-  requireValue(actions.length || obsoleteProse.length || learningUpdates.length || knowledgeUpdates.length, 'Refine 诊断没有可落地的工单或 L4 条文');
+  requireValue(actions.length || obsoleteProse.length || learningUpdates.length || knowledgeUpdates.length, 'Refine 诊断没有可落地的Work Order或 L4 条文');
   return { needsRefactor, layers, summary: summary.trim(), actions, obsoleteProse, learningUpdates, knowledgeUpdates };
 }
 
@@ -112,7 +113,7 @@ function checkRefineScope(root, startHead, tree, { allConsumed, choice, mergedUp
   for (const [path, { before, after, upstream }] of branchChanges(root, startHead, tree, { mergedUpstream })) {
     if (path === CONSUMED_FILE) continue;
     if (allConsumed.has(archiveRoot(path))) {
-      requireValue(before === after || after.startsWith('000000 '), `已消费归档仅允许删除：${path}`);
+      requireValue(before === after || after.startsWith('000000 '), `已消费的归档仅允许删除：${path}`);
       continue;
     }
     const prose = (path.startsWith('.dickda/knowledge/') && path.endsWith('.md')) || /^\.dickda\/learning\/Learning_[^/]*\.md$/.test(path);
@@ -120,8 +121,8 @@ function checkRefineScope(root, startHead, tree, { allConsumed, choice, mergedUp
     const [mode, id] = after.split(' ');
     const regularFile = mode === '100644' || mode === '100755';
     if (choice === 'prose') {
-      requireValue(prose && (regularFile || mode === '000000'), `仅更新 L4 的提纯提交越界：${path}`);
-      requireValue(before !== after, `提纯提交丢弃了默认分支的上游变更：${path}`);
+      requireValue(prose && (regularFile || mode === '000000'), `仅更新 L4 的Refine提交越界：${path}`);
+      requireValue(before !== after, `Refine提交丢弃了Default Branch的上游变更：${path}`);
     }
     if (before === after || after === upstream) continue;
     if (prose) {
@@ -131,7 +132,7 @@ function checkRefineScope(root, startHead, tree, { allConsumed, choice, mergedUp
       substantive = true;
     }
   }
-  requireValue(substantive, '提纯没有产生实质文件变更，保留原归档');
+  requireValue(substantive, 'Refine没有产生实质文件变更，保留原归档');
 }
 
 // Chain refactor engineer commits sequentially, then commit L4 prose updates + archive consumption,
@@ -141,7 +142,6 @@ export function executeRefinePlan(root, {
   head = startHead,
   baseConsumed = [],
   mergedUpstream,
-  refineBranch,
   archive,
   choice,
   decisionNote = '',
@@ -151,7 +151,7 @@ export function executeRefinePlan(root, {
   runner,
   tempDir = process.env.RUNNER_TEMP || join(root, '.dickda'),
 }) {
-  git(root, 'checkout', '-B', refineBranch, head);
+  git(root, 'checkout', '--detach', head);
   let currentHead = head;
 
   // A failed initial execution has published no candidate. Replay its selected actions and consume the archive once.
@@ -159,7 +159,7 @@ export function executeRefinePlan(root, {
   let jobs = consume && choice === 'refactor' ? diagnosis.actions ?? [] : [];
   if (repair && !jobs.length) {
     const owner = choice === 'refactor' ? diagnosis.actions?.at(-1) : null;
-    jobs = [{ trade: owner?.trade || 'builder', difficulty: owner?.difficulty, layer: diagnosis.layers.join('、'), title: '修复提纯提交', task: diagnosis.summary }];
+    jobs = [{ trade: owner?.trade || 'builder', difficulty: owner?.difficulty, layer: diagnosis.layers.join('、'), title: '修复Refine提交', task: diagnosis.summary }];
   }
   if (jobs.length) {
     mkdirSync(tempDir, { recursive: true });
@@ -170,9 +170,9 @@ export function executeRefinePlan(root, {
       writeFileSync(promptFile, [
         rolePrompt(trade),
         `## Refine 落层重构任务（目标层级：${item.layer}）\n标题：${item.title}\n\n${item.task}`,
-        decisionNote ? `交互者补充要求：\n${decisionNote}` : '',
-        repair ? `## 修复要求\n${repair.reason}\n保留已采纳的提纯改动，目标归档 ${archive} 由流程删除。\n${repair.syncInstruction || ''}` : '',
-        repair && choice === 'prose' ? `本轮可编辑 .dickda/knowledge/ 下含子目录的 Markdown（.md）文档、.dickda/learning/Learning_*.md 和消费记录 ${CONSUMED_FILE}。同步默认分支时须原样保留其他路径的上游变更。` : '',
+        decisionNote ? `Interactor补充要求：\n${decisionNote}` : '',
+        repair ? `## 修复要求\n${repair.reason}\n保留已采纳的Refine改动，目标归档 ${archive} 由流程删除。\n${repair.syncInstruction || ''}` : '',
+        repair && choice === 'prose' ? `本轮可编辑 .dickda/knowledge/ 下含子目录的 Markdown（.md）文档、.dickda/learning/Learning_*.md 和消费记录 ${CONSUMED_FILE}。同步Default Branch时须原样保留其他路径的上游变更。` : '',
         '完成后必须在当前分支产生 Git 提交（不要自行推送远端或开 PR）。',
       ].filter(Boolean).join('\n\n'));
 
@@ -185,23 +185,20 @@ export function executeRefinePlan(root, {
       ];
       mkdirSync(managed(root, 'lints'), { recursive: true });
       mkdirSync(managed(root, 'verifiers'), { recursive: true });
-      const exec = runner ?? (cmdArgs => spawnSync('coda-agent', cmdArgs, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }));
-      const run = exec(args);
-      try { rmIfExists(promptFile); } catch {}
-      if (run.error) throw run.error;
-      requireValue(run.status === 0, `Refine 重构工单「${item.title}」执行失败（退出码 ${run.status}），保留原归档未消费`);
-      let reply = null;
-      try { reply = JSON.parse(run.stdout); } catch {}
-      requireValue(reply?.head, `Refine 重构工单「${item.title}」未返回有效交付提交 SHA，保留原归档未消费`);
-      const delivered = git(root, 'rev-parse', '--verify', `${reply.head}^{commit}`);
-      requireValue(delivered !== currentHead, `Refine 重构工单「${item.title}」未产生新提交（${delivered}），保留原归档未消费`);
-      requireValue(isAncestor(root, currentHead, delivered), `Refine 重构工单「${item.title}」返回的提交（${delivered}）不是前序基线（${currentHead}）的严格后代，拒绝丢弃前序改动并保留原归档未消费`);
-      git(root, 'checkout', '-B', refineBranch, delivered);
+      const call = callDeliveryAgent(args, { cwd: root, baseHead: currentHead, promptFile, runner });
+      rmIfExists(promptFile);
+      const detail = agentFailure(call);
+      requireValue(call.status === 0 && !call.failureKind, `Refine 重构Work Order「${item.title}」执行失败，保留原归档未消费\n${detail}`);
+      requireValue(call.head, `Refine 重构Work Order「${item.title}」未返回有效交付提交 SHA，保留原归档未消费\n${detail}`);
+      const delivered = git(root, 'rev-parse', '--verify', `${call.head}^{commit}`);
+      requireValue(delivered !== currentHead, `Refine 重构Work Order「${item.title}」未产生新提交（${delivered}），保留原归档未消费\n${detail}`);
+      requireValue(isAncestor(root, currentHead, delivered), `Refine 重构Work Order「${item.title}」返回的提交（${delivered}）不是前序基线（${currentHead}）的严格后代，拒绝丢弃前序改动并保留原归档未消费\n${detail}`);
+      git(root, 'checkout', '--detach', delivered);
       currentHead = delivered;
     }
   }
 
-  if (mergedUpstream) requireValue(isAncestor(root, mergedUpstream, currentHead), `修复提交尚未合入默认分支提交 ${mergedUpstream}`);
+  if (mergedUpstream) requireValue(isAncestor(root, mergedUpstream, currentHead), `修复提交尚未合入Default Branch提交 ${mergedUpstream}`);
   const revisions = new Set([startHead, head, mergedUpstream].filter(Boolean));
   const history = [...revisions].flatMap(commit => consumedArchives(root, commit));
   const allConsumed = new Set([...baseConsumed, ...history, archive]);
@@ -224,8 +221,8 @@ export function executeRefinePlan(root, {
     checkRefineScope(root, startHead, currentHead, scope);
   }
   const remaining = git(root, 'ls-tree', '-z', '--name-only', currentHead, '--', '.dickda/learning/').split('\0').filter(path => allConsumed.has(path));
-  requireValue(!remaining.length, `提纯提交仍包含已消费的归档：${remaining.join('、')}`);
-  requireValue(consumedArchives(root, currentHead).join('\n') === record, `提纯提交须保留历史消费记录并登记当前归档：${CONSUMED_FILE}`);
+  requireValue(!remaining.length, `Refine提交仍包含已消费的归档：${remaining.join('、')}`);
+  requireValue(consumedArchives(root, currentHead).join('\n') === record, `Refine提交须保留历史消费记录并登记当前归档：${CONSUMED_FILE}`);
 
   const verifyOutcome = runCodeVerifiers(root);
   requireValue(verifyOutcome.passed, `Refine 后的 L2/L3 验证未通过，拒绝持久化并保留原分支归档：\n${verifyOutcome.summary}`);
@@ -241,11 +238,11 @@ function refineSummary(state) {
   const kept = Object.entries(state.kept ?? {});
   requireValue(verdict.route === 'pr' || (verdict.route === 'changes' && state.kept?.[state.head]), verdict.reason);
   return [
-    `## dickda模式 · 五层提纯 · ${state.archive}`,
+    `## dickda Mode · 五层Refine · ${state.archive}`,
     `落点层级：${state.choice === 'prose' ? 'L4' : state.diagnosis.layers.join('、')}\n\n${state.diagnosis.summary}`,
     `### 验证结果（${state.head}）\n${state.verifySummary}\n${checkRunsText(state.checks, state.head)}`,
-    `### 独立审查 · ${state.review.decision}（${state.reviewer}）\n${state.review.line || ''}\n${state.review.report || ''}`,
-    kept.length ? `### 交互者不采纳审查意见的依据，交用户最终裁决\n${kept.map(([head, reason]) => `- ${head}（REQUEST_CHANGES）：${reason}`).join('\n')}` : '',
+    `### Independent Code Review · ${state.review.decision}（${state.reviewer}）\n${state.review.line || ''}\n${state.review.report || ''}`,
+    kept.length ? `### Interactor不采纳审查意见的依据，交用户最终裁决\n${kept.map(([head, reason]) => `- ${head}（REQUEST_CHANGES）：${reason}`).join('\n')}` : '',
   ].filter(Boolean).join('\n\n');
 }
 
@@ -263,7 +260,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const repoInfo = JSON.parse(privateGh('repo', 'view', '--json', 'nameWithOwner,defaultBranchRef'));
         const defaultBranch = repoInfo.defaultBranchRef.name;
         const base = (env.BASE || '').trim() || defaultBranch;
-        requireValue(base === defaultBranch, `仅允许以仓库默认分支 ${defaultBranch} 作为目标分支，当前指定的是 ${base}`);
+        requireValue(base === defaultBranch, `仅允许以仓库Default Branch ${defaultBranch} 作为目标分支，当前指定的是 ${base}`);
         const remote = `https://github.com/${repoInfo.nameWithOwner}.git`;
         const group = projectGroup(repo(), remote);
         if (!state) saveState({ remote, base, group });
@@ -298,22 +295,21 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           rolePrompt('thinker'),
           `## Refine 归档复盘输入（归档目录：${state.archive}）\n${archiveText}`,
           `## 当前项目五层健康度\n\`\`\`json\n${JSON.stringify(state.health, null, 2)}\n\`\`\``,
-          'learningUpdates 中的字符串写入 Learning_General.md。也可用 {"file":"Learning_Team.md","text":"经验条文"} 指定 Learning_*.md 文档。名称部分由 1–80 个英文字母、数字、下划线或连字符组成，以字母或数字开头。knowledgeUpdates 每项用 {"path":"knowledge/<name>.md","content":"完整正文"} 更新知识文档。',
-          '诊断须给出非空 summary 和 layers。建议重构或选择 L1–L3 时须列出对应的工单。仅更新 L4 时请给出可实际应用的旧条文、经验或知识更新。',
+          'learningUpdates 中的字符串写入 Learning_General.md。也可用 {"file":"Learning_Team.md","text":"经验条文"} 指定 Learning_*.md 文档。名称部分由 1–80 个英文字母、数字、下划线或连字符组成，以字母或数字开头。knowledgeUpdates 每项用 {"path":"knowledge/<name>.md","content":"完整正文"} 更新Knowledge Base。',
+          '诊断须给出非空 summary 和 layers。建议重构或选择 L1–L3 时须列出对应的Work Order。仅更新 L4 时请给出可实际应用的旧条文、经验或知识更新。',
           `## 输出要求\n评估该归档暴露的痛点是否需要结构性演进或重构，并确定应落实到哪几个层次（L1 架构/接口重构、L2 .dickda/lints 可执行规则、L3 .dickda/verifiers 结果验证器、L4 知识/经验文档更新与旧口头规则瘦身）。在末尾输出 \`\`\`json 块：\n\`\`\`json\n{\n  "needsRefactor": true,\n  "layers": ["L2", "L4"],\n  "summary": "诊断结论摘要",\n  "actions": [{"layer": "L2", "trade": "architect", "difficulty": "normal", "title": "...", "task": "..."}],\n  "obsoleteProse": [],\n  "learningUpdates": [],\n  "knowledgeUpdates": []\n}\n\`\`\``,
         ].join('\n\n');
         writeFileSync(promptFile, prompt);
 
-        const res = spawnSync('coda-agent', [
+        const res = callCodaAgent([
           '--commit', head,
-          '--title', `思考者 Refine 诊断：${state.archive}`,
+          '--title', `Thinker Refine 诊断：${state.archive}`,
           ...agentArgs(settings.thinker),
           '--json',
           '--prompt-file', promptFile,
-        ], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
-        if (res.error) throw res.error;
-        requireValue(res.status === 0, `思考者 Refine 诊断退出码 ${res.status}`);
-        const reply = JSON.parse(res.stdout);
+        ], root);
+        requireValue(res.status === 0 && res.parsed, `Thinker Refine 诊断失败：${agentFailure(res)}`);
+        const reply = res.parsed;
         const diagnosis = normalizeDiagnosis(extractJsonBlock(reply.answer));
         saveState({ ...state, head, diagnosis });
         appendGithubOutput({
@@ -338,7 +334,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         const root = repo();
         const attempts = state.repairAttempts || 0;
         const repairing = action === 'repair';
-        const reason = state.failure || `提纯执行中断，请查看 coda://workflow-runs/${env.GITHUB_RUN_ID} 中的执行日志。`;
+        const reason = state.failure || `Refine执行中断，请查看 coda://workflow-runs/${env.GITHUB_RUN_ID} 中的执行日志。`;
         try {
           let repair;
           let mergedUpstream = state.mergedUpstream;
@@ -349,11 +345,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
             repair = { reason, attempts };
             if (state.syncBase) {
               mergedUpstream = fetchHead(root, state.remote, state.base);
-              repair.syncInstruction = `执行 git fetch ${state.remote} refs/heads/${state.base}，将默认分支提交 ${mergedUpstream} 合入提纯分支并解决冲突。合并 ${CONSUMED_FILE} 时须保留双方与当前批次的记录，逐行排序去重。`;
+              repair.syncInstruction = `执行 git fetch ${state.remote} refs/heads/${state.base}，将Default Branch提交 ${mergedUpstream} 合入Refine分支并解决冲突。合并 ${CONSUMED_FILE} 时须保留双方与当前批次的记录，逐行排序去重。`;
             }
           }
           const head = fetchHead(root, state.remote, state.refineBranch);
-          requireValue(isAncestor(root, state.head, head), '提纯分支历史已改变，请核对并恢复前序提交');
+          requireValue(isAncestor(root, state.head, head), 'Refine分支历史已改变，请核对并恢复前序提交');
           const executed = executeRefinePlan(root, { ...state, head, mergedUpstream, settings, repair });
           remoteGit(root, 'push', '--quiet', '--no-follow-tags', state.remote, `${executed.head}:refs/heads/${state.refineBranch}`);
           saveState({ ...state, ...executed, baseCommit: mergedUpstream ?? state.baseCommit, mergedUpstream, failure: '', syncBase: false });
@@ -377,7 +373,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       }
 
       case 'continue-repair': {
-        saveState({ ...state, failure: `${state.failure}\n交互者指示：${env.NOTE}`, repairAttempts: 0 });
+        saveState({ ...state, failure: `${state.failure}\nInteractor指示：${env.NOTE}`, repairAttempts: 0 });
         break;
       }
 
@@ -390,7 +386,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           ...reviewRange(state),
           head: state.head,
           tier: reviewer.tier,
-          task: `消费归档 ${state.archive}，交互者选择 ${state.choice}。\n${JSON.stringify(state.diagnosis)}\n${state.decisionNote}`,
+          ...reviewerOutputs(reviewer.agent),
+          task: `Archive Consumption ${state.archive}，Interactor选择 ${state.choice}。\n${JSON.stringify(state.diagnosis)}\n${state.decisionNote}`,
           evidence: `${state.verifySummary}\n${checkRunsText(checks, state.head)}`,
         });
         break;
@@ -450,7 +447,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       case 'merge': {
         const result = mergeApprovedPr(state, settings.mergeMethod);
         if (result.route === 'conflict') {
-          saveState({ ...state, syncBase: true, failure: `PR ${state.pr} 与默认分支 ${state.base} 有合并冲突，请同步并解冲突后重验。` });
+          saveState({ ...state, syncBase: true, failure: `PR ${state.pr} 与Default Branch ${state.base} 有合并冲突，请同步并解冲突后重验。` });
         }
         appendGithubOutput(result);
         break;

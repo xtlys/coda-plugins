@@ -1,8 +1,9 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { assetsByKind, backups, layerHealth } from './assets.mjs';
 import { prompts } from './prompts.mjs';
 import { listRoles, loadSettings } from './roles.mjs';
-import { atomic, config, managed } from './store.mjs';
+import { atomic, config, managed, projectGroup } from './store.mjs';
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -12,16 +13,24 @@ function escapeHtml(value) {
     .replaceAll('"', '&quot;');
 }
 
-export function buildDashboardData(root, settings = loadSettings()) {
+export function buildDashboardData(root, settings = loadSettings(), env = process.env) {
   const cfg = config(root);
   const health = layerHealth(root);
   const roles = listRoles(settings);
   const plan = existsSync(managed(root, 'tasks/PLAN_5L.md')) ? readFileSync(managed(root, 'tasks/PLAN_5L.md'), 'utf8') : '';
   const todo = existsSync(managed(root, 'tasks/TODO_TASK.md')) ? readFileSync(managed(root, 'tasks/TODO_TASK.md'), 'utf8') : '';
+  const runs = env.CODA_PLUGIN_STATE && join(env.CODA_PLUGIN_STATE, 'runs');
+  const runIds = runs && existsSync(runs) ? (env.GITHUB_RUN_ID ? [env.GITHUB_RUN_ID] : readdirSync(runs)) : [];
+  const states = runIds.map(id => ({ id, file: join(runs, id, 'develop.json') })).filter(run => existsSync(run.file))
+    .sort((a, b) => statSync(b.file).mtimeMs - statSync(a.file).mtimeMs);
+  const group = projectGroup(root);
+  const latest = states.find(run => JSON.parse(readFileSync(run.file, 'utf8')).group === group);
+  const state = latest ? JSON.parse(readFileSync(latest.file, 'utf8')) : null;
   return {
     project: { name: cfg.name, root, projectId: cfg.projectId },
     health,
     roles,
+    planning: state ? { runId: latest.id, mode: state.heavyThink ? 'Heavy Mode' : 'Standard Mode', planRound: state.planRound ?? 1, dispatchRound: state.round ?? 0 } : null,
     todo: todo.slice(0, 4000),
     plan: plan.slice(0, 6000),
     lints: assetsByKind(root, 'lints').map(({ title, path, summary }) => ({ title, path, summary })),
@@ -40,7 +49,7 @@ export function renderDashboardHtml(data) {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>${escapeHtml(data.project.name)} · dickda模式 · 五层工程控制台</title>
+<title>${escapeHtml(data.project.name)} · dickda Mode · Five-Layer Dashboard</title>
 <style>
   :root {
     --bg: #0f172a;
@@ -129,22 +138,23 @@ export function renderDashboardHtml(data) {
 <body>
 <div class="wrap">
   <div class="header">
-    <h1>${escapeHtml(data.project.name)} · 五层工程控制台</h1>
-    <div class="sub">统一资产目录：.dickda/ ｜ 点击倒金字塔任意层级切换详情</div>
+    <h1>${escapeHtml(data.project.name)} · Five-Layer Dashboard</h1>
+    <div class="sub">统一资产目录：.dickda/ ｜ 点击Inverted Pyramid任意层级切换详情</div>
+    ${data.planning ? `<div class="sub">${escapeHtml(data.planning.mode)} · Plan Round ${data.planning.planRound} · Dispatch Round ${data.planning.dispatchRound} · Run ${escapeHtml(data.planning.runId)}</div>` : ''}
     <div class="pyramid" id="pyramid">
       <button class="layer-btn w1 active" data-layer="L1"><strong>L1 · Codebase</strong><span>架构契约 / 接口骨架 / 重构方案</span></button>
       <button class="layer-btn w2" data-layer="L2"><strong>L2 · Static Analysis</strong><span>Executable Spec Lints (${data.health.l2LintCount})</span></button>
-      <button class="layer-btn w3" data-layer="L3"><strong>L3 · Verification</strong><span>代码 (${data.health.l3CodeVerifierCount}) + Sol 实证 (${data.health.l3AgentVerifierCount})</span></button>
-      <button class="layer-btn w4" data-layer="L4"><strong>L4 · Prose &amp; Knowledge</strong><span>知识 (${data.health.l4KnowledgeCount}) / 待提纯归档 (${data.health.pendingArchives})</span></button>
-      <button class="layer-btn w5" data-layer="L5"><strong>L5 · Human Gate &amp; Roles</strong><span>三角色 · 四工种（两级升级）与决策反馈</span></button>
+      <button class="layer-btn w3" data-layer="L3"><strong>L3 · Verification</strong><span>Code Track (${data.health.l3CodeVerifierCount}) + Agent/UI Track (${data.health.l3AgentVerifierCount})</span></button>
+      <button class="layer-btn w4" data-layer="L4"><strong>L4 · Work Graph &amp; Prose</strong><span>知识 (${data.health.l4KnowledgeCount}) / Pending Archive (${data.health.pendingArchives})</span></button>
+      <button class="layer-btn w5" data-layer="L5"><strong>L5 · Human Review</strong><span>三角色 · 四工种（Tier Escalation）与决策反馈</span></button>
     </div>
   </div>
 
   <div class="card" id="detail"></div>
 
   <div class="card">
-    <h2>向交互者提交决策指令</h2>
-    <textarea id="note" placeholder="输入对当前五层蓝图、优先级或重构落层的拍板意见…"></textarea>
+    <h2>向Interactor提交决策指令</h2>
+    <textarea id="note" placeholder="输入对当前Five-Layer Plan、优先级或重构落层的拍板意见…"></textarea>
     <div class="actions">
       <button class="primary" id="submitBtn">放入会话输入框</button>
       <span id="statusMsg" class="sub"></span>
@@ -170,29 +180,29 @@ export function renderDashboardHtml(data) {
     });
     const box = document.getElementById('detail');
     if (activeLayer === 'L1') {
-      box.innerHTML = '<h2>L1 · Codebase 与五层顶层方案（PLAN_5L.md）</h2>' +
-        '<div class="sub">当前需求（TODO_TASK.md）与思考者产出的架构规划</div>' +
+      box.innerHTML = '<h2>L1 · Codebase 与Five-Layer Plan（PLAN_5L.md）</h2>' +
+        '<div class="sub">当前需求（TODO_TASK.md）与Thinker产出的架构规划</div>' +
         '<pre>' + escape(DATA.plan || DATA.todo || '尚未生成 PLAN_5L.md') + '</pre>';
     } else if (activeLayer === 'L2') {
       const items = DATA.lints.map(i => '<li><strong>' + escape(i.title) + '</strong>（' + escape(i.path) + '）：' + escape(i.summary) + '</li>').join('');
       box.innerHTML = '<h2>L2 · Static Analysis（.dickda/lints/）</h2>' +
-        (items ? '<ul class="list">' + items + '</ul>' : '<div class="sub">暂无自定义 Executable Lint 脚本，可由架构工程师（o55/carbon）生成。</div>');
+        (items ? '<ul class="list">' + items + '</ul>' : '<div class="sub">暂无自定义 Executable Spec Lint 脚本，可由Architect生成。</div>');
     } else if (activeLayer === 'L3') {
       const items = DATA.verifiers.map(i => '<li><span class="badge">' + escape(i.track) + '</span> <strong>' + escape(i.title) + '</strong>：' + escape(i.summary) + '</li>').join('');
-      box.innerHTML = '<h2>L3 · 结果导向验证器（.dickda/verifiers/）</h2>' +
+      box.innerHTML = '<h2>L3 · Verification（.dickda/verifiers/）</h2>' +
         (items ? '<ul class="list">' + items + '</ul>' : '<div class="sub">暂无验证器资产。</div>');
     } else if (activeLayer === 'L4') {
       const kb = DATA.knowledge.map(i => '<li><strong>' + escape(i.title) + '</strong>（' + escape(i.path) + '）</li>').join('');
       const pr = DATA.prompts.map(p => '<li>' + escape(p.title) + ' [' + (p.enabled ? '已启用' : '停用') + ']</li>').join('');
-      box.innerHTML = '<h2>L4 · 知识资产、规范与待提纯归档</h2>' +
-        '<div class="grid"><div class="stat"><div class="k">知识文档</div><div class="v">' + DATA.health.l4KnowledgeCount + '</div></div>' +
-        '<div class="stat"><div class="k">学习条目</div><div class="v">' + DATA.health.l4LearningEntries + '</div></div>' +
-        '<div class="stat"><div class="k">待 Refine 归档</div><div class="v">' + DATA.health.pendingArchives + '</div></div></div>' +
+      box.innerHTML = '<h2>L4 · Work Graph & Prose</h2>' +
+        '<div class="grid"><div class="stat"><div class="k">Knowledge Base</div><div class="v">' + DATA.health.l4KnowledgeCount + '</div></div>' +
+        '<div class="stat"><div class="k">Learning Entries</div><div class="v">' + DATA.health.l4LearningEntries + '</div></div>' +
+        '<div class="stat"><div class="k">Pending Archive</div><div class="v">' + DATA.health.pendingArchives + '</div></div></div>' +
         '<p class="sub">已登记规范：</p><ul class="list">' + pr + '</ul>' +
-        (kb ? '<p class="sub">知识库：</p><ul class="list">' + kb + '</ul>' : '');
+        (kb ? '<p class="sub">Knowledge Base：</p><ul class="list">' + kb + '</ul>' : '');
     } else {
       const roles = DATA.roles.map(r => '<li><strong>' + escape(r.title) + '</strong>：' + escape(r.display) + '</li>').join('');
-      box.innerHTML = '<h2>L5 · 三角色 · 四工种模型编制</h2><ul class="list">' + roles + '</ul>';
+      box.innerHTML = '<h2>L5 · Human Review</h2><ul class="list">' + roles + '</ul>';
     }
     persist();
   }

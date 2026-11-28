@@ -16,7 +16,7 @@ export function checkApprovalPr(state, allowMerged = false) {
   const live = JSON.parse(privateGh('pr', 'view', state.pr, '--json', 'state,headRefOid,baseRefName,mergeable,mergeCommit'));
   const defaultBranch = privateGh('repo', 'view', state.remote, '--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name');
   requireValue(live.headRefOid === state.head, 'PR 提交已改变，请重新验证并批准');
-  requireValue(live.baseRefName === state.base && state.base === defaultBranch, '仅允许合入仓库默认分支');
+  requireValue(live.baseRefName === state.base && state.base === defaultBranch, '仅允许合入仓库Default Branch');
   requireValue(live.state === 'OPEN' || (allowMerged && live.state === 'MERGED'), 'PR 已关闭');
   return live;
 }

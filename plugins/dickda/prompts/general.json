@@ -1,52 +1,52 @@
 {
   "schemaVersion": 2,
   "id": "general",
-  "title": "通用规范",
+  "title": "General Guidelines",
   "scope": "general",
   "appliesTo": "语言无关的工程实践；具体条目保留原文前提。",
   "topics": [
     {
       "id": "correctness",
-      "title": "正确性与错误处理"
+      "title": "Correctness & Error Handling"
     },
     {
       "id": "abstraction",
-      "title": "DRY 与抽象"
+      "title": "DRY & Abstraction"
     },
     {
       "id": "dependencies",
-      "title": "依赖边界与上游修复"
+      "title": "Dependency Boundaries & Upstream Fixes"
     },
     {
       "id": "interfaces",
-      "title": "接口、组合与所有权"
+      "title": "Interfaces, Composition & Ownership"
     },
     {
       "id": "values",
-      "title": "值语义与有效性"
+      "title": "Value Semantics & Validity"
     },
     {
       "id": "concurrency",
-      "title": "并发与异步"
+      "title": "Concurrency & Async"
     },
     {
       "id": "portability",
-      "title": "跨平台设计"
+      "title": "Cross-Platform Design"
     },
     {
       "id": "verification",
-      "title": "调试、验证与故障处理"
+      "title": "Debugging, Verification & Failure Handling"
     },
     {
       "id": "mvvm",
-      "title": "MVVM 与可测试性"
+      "title": "MVVM & Testability"
     }
   ],
   "sections": [
     {
       "id": "crash-early",
       "topic": "correctness",
-      "title": "尽早暴露错误",
+      "title": "Fail Fast",
       "context": "语言无关的工程偏好。",
       "body": "- I am a fan of crash early. When something should happen, it should just happen, do not play a game like \"what if it is not the case\" and silently covers the issue. One example is that, if an object should not be null, then we should just use it, if a nullable object should not be null, we should just cast it. No test is performed in this case, using it will crash if it is null, and we know there is a problem. Fix the actual problem instead of doing \"error tolerance\".",
       "sources": [
@@ -61,7 +61,7 @@
     {
       "id": "correctness-first",
       "topic": "correctness",
-      "title": "静态检查、失败契约与异常恢复",
+      "title": "Static Analysis, Failure Contracts & Exception Recovery",
       "context": "语言无关的工程偏好。",
       "body": "- Unless explicitly instructed:\n  - Prefer static analyzing (including ultilizing the type system, or static assertions, etc) over dynamic/runtime assertion.\n  - Prefer correctness over stability.\n    - Prefer crashing early over recovery.\n    - Crashing expose issues immediately, if something can be fixed and made correctly, there is no need to care about what to do when it fails unexpectedly.\n    - Expected failures should be part of the signature, when the type system cannot represents expected failures, comments are needed.\n  - Handle exceptions only when recovery is practical. DO NOT consume exceptions silently.",
       "sources": [
@@ -76,8 +76,8 @@
     {
       "id": "dry",
       "topic": "abstraction",
-      "title": "避免重复信息，先复用已有实现",
-      "context": "保留 DRY 原则及 AST 抽取条件；移除依赖具体库的构造示例。",
+      "title": "DRY & Reuse",
+      "context": "保留 DRY 原则及 AST 抽取条件；移除依赖具体库的Construction示例。",
       "body": "- I am a fan of **DO NOT REPEAT YOURSELF (DRY)**.\n  - DRY focus on not repeating information in source code. For example, compiler always do name mangling, but name mangling is complex. If you implementaion the mangling in two different places, you repeat the information twice. Therefore a function for such thing is always needed.\n  - DRY does not focus on not repeating some code.\n    - But if building an AST requires significantly more lines of code, extracting functions for the work is preferred.\n  - DRY requires finding if a feature has already been implemented somewhere else before implementing it. avoiding massive duplication.\n    - If the existing implementation is not sharable, refactoring is preferred.",
       "sources": [
         {
@@ -92,7 +92,7 @@
     {
       "id": "code-generation",
       "topic": "abstraction",
-      "title": "代码生成的维护成本",
+      "title": "Code Generation Maintenance Cost",
       "context": "语言无关的工程偏好。",
       "body": "- Unless explicitly instructed, do not invent your own code generator as part of the committed solution. It adds more technical debt in maintenance.",
       "sources": [
@@ -107,7 +107,7 @@
     {
       "id": "abstraction",
       "topic": "abstraction",
-      "title": "抽象应带来实际收益",
+      "title": "Abstraction Benefits",
       "context": "语言无关的工程偏好。",
       "body": "- When it is not explicltly instructed, be conservative on creating new layers of abstractions:\n  - It should bring actual benefits, including better separation of ownership and dependencies, allowing needed extensibility.\n  - Extraction of common code would also be a good reason, when it doesn't fragmentize the code. I am not a fan of big amounts of small functions.\n  - Extractin of functions/classes are welcome, when there are large pieces of duplicated code, or when the same logic is duplicated >= 3 times.\n  - Extraction of common interfaces (aka abstract classes in C++) are welcome, when the details of implementation does not really affect how algorithms and tools are built around the concept.",
       "sources": [
@@ -122,8 +122,8 @@
     {
       "id": "upstream",
       "topic": "dependencies",
-      "title": "修复根因并保持依赖边界",
-      "context": "原文以有单元测试覆盖为前提讨论破坏性变更；不能脱离该上下文。",
+      "title": "Root Cause Fixes & Dependency Boundaries",
+      "context": "原文以有Unit Test覆盖为前提讨论Breaking Change；不能脱离该上下文。",
       "body": "This section is a high level philosophy of trade-offs during making decision of where to fix the code.\nIt looks amgibuous, that actually means you are expected to consider the context of each issues you are facing to.\n\n- Always fix the bug at its root cause.\n  - If you find any API that doesn't work, fix instead of making a replacement. Even when the API is in an upstream repo, prefer fixing in the upstream repo and releasing it to the current repo.\n- DO NOT concern about making breaking change.\n  - The project is well covered by unit test, any unexpecting breaking change is highly possibly to be cought.\n  - If such breaking change is intented, unit test could help you perform complete refactoring.\n  - If an API design does not fit the requirement or contract, just change it.\n- Interface design could have been wrong, DO NOT implement twisted logic just to finish the current task while fitting the wrong design.\n- But DO NOT leaks information from downstream to upstream repos.\n  - Each upstream repo has its own scope, contract, policy, strategy, etc.\n  - Each upstream repo releases libraries that is supposed to serve broader purposes.\n  - Keep interfaces between repos clean.\n  - If downstream repos need to need to do something depending on upstream repos' non-public information:\n    - If the issue is the upstream repo itself, fix the upstream repo.\n    - Otherwise, expose informations elegantly so that downstream repos could process and react to them properly.",
       "sources": [
         {
@@ -137,7 +137,7 @@
     {
       "id": "interfaces",
       "topic": "interfaces",
-      "title": "继承、组合、契约和所有权",
+      "title": "Inheritance, Composition, Contracts & Ownership",
       "context": "保留作者对 LSP 的原始表述，不将其改写为教材定义。",
       "body": "- I don't have strong preference of which is bettern between inheritance and composition, choose the best one in the context.\n- When doing inheritance, the interface design should follow LSP (Liskov Substitution Principle), that is basically:\n  - Wherever accepts a type, it means all sub types could be used.\n  - Any sub type should not loosen the contract, stricker contract is allowed/encouraged.\n- I prefer interface oriented programming.\n  - Interface is a general concept, I an not forcing creating abstract classes.\n  - Interface means contract. Such contract could be forced by the type system, or described in the class/method level comments on signatures.\n- Ownership should be clear.\n  - For a group of coupled objects without ownership, it is also acceptable to create one object owning all sub objects, to control their lifecycle in an easy way.",
       "sources": [
@@ -157,7 +157,7 @@
     {
       "id": "ioc",
       "topic": "interfaces",
-      "title": "控制反转与类型分派",
+      "title": "Inversion of Control & Type Dispatch",
       "context": "语言无关的工程偏好。",
       "body": "- Prefer Inversion of Control (IoC) and other design patterns, over trivial virtual functions, over switch-case on types, over if-else on types.",
       "sources": [
@@ -172,8 +172,8 @@
     {
       "id": "combinators",
       "topic": "interfaces",
-      "title": "递归组合与流畅接口",
-      "context": "保留组合原则；移除三个原库类型示例。",
+      "title": "Recursive Composition & Fluent Interfaces",
+      "context": "保留Composition；移除三个原库类型示例。",
       "body": "- Combinator oriented programming is very common in this project. that is basically:\n  - Design an interface that is supposed to build up large/complex strategy or logic recursively.\n  - Such interface should satisfy LSP.\n- A good interface maintains good shape in components forming up a recursive algorithms by cutting in a good place, therefore making it simple, and easy to implement.\n- A good interface letting users building recursive algorithms with fluent code.",
       "sources": [
         {
@@ -188,8 +188,8 @@
     {
       "id": "availability",
       "topic": "values",
-      "title": "值的有效性与额外状态",
-      "context": "仅保留与语言、库无关的值语义；指针空值规则单列在 C++。",
+      "title": "Value Validity & Extra State",
+      "context": "仅保留与语言、库无关的Value Semantics；Null Pointer规则单列在 C++。",
       "body": "- To attach availability semantic to a value:\n  - If any number is expected to be valid only when non-negative, you could use `-1` to represent invalid value.\n  - Only when there is no other choice, use an extra `bool` variable.\n    - This could happen when \"null\" semantic is valid.",
       "sources": [
         {
@@ -208,7 +208,7 @@
     {
       "id": "thread-safety",
       "topic": "concurrency",
-      "title": "避免过度线程安全设计",
+      "title": "Thread Safety Design",
       "context": "语言无关的工程偏好。",
       "body": "- Most of the code do not require thread safety, DO NOT over engineering.",
       "sources": [
@@ -223,7 +223,7 @@
     {
       "id": "lock-free",
       "topic": "concurrency",
-      "title": "保持无锁逻辑简单",
+      "title": "Lock-Free Simplicity",
       "context": "语言无关的工程偏好。",
       "body": "- Prefer lock free construction only when the code would be simple, DO NOT involve complex lock free trick unless explicitly required.",
       "sources": [
@@ -238,7 +238,7 @@
     {
       "id": "async",
       "topic": "concurrency",
-      "title": "异步调度与轮询",
+      "title": "Async Scheduling & Polling",
       "context": "语言无关的工程偏好。",
       "body": "- Avoid polling at all cost, I strongly prefer scheduling in async way.",
       "sources": [
@@ -253,7 +253,7 @@
     {
       "id": "platform-api",
       "topic": "portability",
-      "title": "平台能力与公共实现的取舍",
+      "title": "Platform Capabilities & Shared Implementation",
       "context": "语言无关的工程偏好。",
       "body": "- If platform specific API could be used, avoid hard-coding a table.\n- If not all OS provides enough platform specific API for a requirement:\n  - Use platform specific API when the quality and performance would be better for that platform.\n    - Except that the calulation is so tiny and simple, then it is fine to do a cross-platform solution instead.\n  - Implement the solution for the rest of the platform.",
       "sources": [
@@ -268,7 +268,7 @@
     {
       "id": "portable-locks",
       "topic": "portability",
-      "title": "同步方法的跨平台取舍",
+      "title": "Cross-Platform Synchronization",
       "context": "原文 other locks 指自旋锁以外的锁；保留平台性能例外，移除原库线程池特例。",
       "body": "- When using other locks, try your best to only use methods that available to all platforms.\n  - Write cross platform code when it is performance optimal for all platforms.\n  - If Windows specific methods could make Windows implementation much better, then you are allowed to implement them in different ways.\n- Avoid using any platform specific methods.",
       "sources": [
@@ -288,7 +288,7 @@
     {
       "id": "debug-evidence",
       "topic": "verification",
-      "title": "崩溃与猜测失败后调试",
+      "title": "Debugging Crashes & Failed Hypotheses",
       "context": "语言无关的工程偏好。",
       "body": "- You are recommended to debug the compiled binary: \n  - Once it crashes.\n  - When after one attemp of failed guessing to fix.\n  - But respect to `Project.md` first.",
       "sources": [
@@ -303,7 +303,7 @@
     {
       "id": "debug-observation",
       "topic": "verification",
-      "title": "用调试补足信息并约束输出",
+      "title": "Debugging Evidence & Output Constraints",
       "context": "语言无关的工程偏好。",
       "body": "Debugging can be useful when you lack necessary information.\nDo not leave unbounded debugger output flowing through the terminal. If output repeats continuously, interrupt execution immediately and configure the relevant exception or output filter before continuing.",
       "sources": [
@@ -323,7 +323,7 @@
     {
       "id": "unstable-bugs",
       "topic": "verification",
-      "title": "内存泄漏与不稳定问题",
+      "title": "Memory Leaks & Flaky Failures",
       "context": "25 次是作者的工程偏好，保留原文适用表述。",
       "body": "- Memory leaks and unstable bugs will always be the highest priority issue.\n- Detecting unstable bugs:\n  - One of a typical example would be about dangling pointers.\n  - When experiencing bugs that can't repro in every test run, do not easily treat it as a non-issue.\n  - The standard way in this project would be to repeat the test 25 times, and only treat it as a non-issue only if observing consecutive 25 successful runs.\n- Whenever we see such issues:\n  - If it is a new issue due to completing the current task, you have to address that as part of the current task.\n  - If it is an existing issue, you still have to fix the issue along with the current task. And when the current task requires commit and push, make a separate commit to fix the issue, and push it together.",
       "sources": [
@@ -348,7 +348,7 @@
     {
       "id": "unstable-repeat",
       "topic": "verification",
-      "title": "不稳定问题的重复原文段落",
+      "title": "Flaky Failures: Repeated Source Passage",
       "context": "原文重复段落及末尾截断句照录；不据此补造新的规则。",
       "body": "- One of a typical example would be about dangling pointers.\n- When experiencing bugs that can't repro in every test run, do not easily treat it as non-issue.\n- The standard way in this project would be to repeat the test 25 times, and only define non-issue as observing consecutive 25 successful runs.\n- If we can't the consecutive 25 successful runs:\n  - Such issue would be",
       "sources": [
@@ -363,7 +363,7 @@
     {
       "id": "compiler-output",
       "topic": "verification",
-      "title": "以编译器实际输出为准",
+      "title": "Compiler Output Evidence",
       "context": "语言无关的工程偏好。",
       "body": "- The only source of truth is the raw output of the compiler.",
       "sources": [
@@ -378,7 +378,7 @@
     {
       "id": "test-output",
       "topic": "verification",
-      "title": "以测试实际输出为准",
+      "title": "Test Output Evidence",
       "context": "语言无关的工程偏好。",
       "body": "- The only source of truth is the raw output of the unit test process.",
       "sources": [
@@ -393,7 +393,7 @@
     {
       "id": "test-wait",
       "topic": "verification",
-      "title": "观察异步测试的实际进展",
+      "title": "Async Test Progress",
       "context": "语言无关的工程偏好。",
       "body": "**IMPORTANT**: Always run it asynchronously, read terminal output and its return code.\nCompiled binary might have a bug causing it to trap in a dead loop. DO NOT just wait for it to complete.\nIf this seems suspicious, you are recommended to kill the process and run it again with the debugger.",
       "sources": [
@@ -408,7 +408,7 @@
     {
       "id": "cli-wait",
       "topic": "verification",
-      "title": "观察异步命令的实际进展",
+      "title": "Async Command Progress",
       "context": "语言无关的工程偏好。",
       "body": "**IMPORTANT**: Always run it asynchronously, read terminal output and its return code.\nCompiled binary might have a bug causing it to trap in a dead loop. DO NOT just wait for it to complete.\nIf this seems suspicious, you are recommended to kill the process and run it again with the debugger.",
       "sources": [
@@ -423,7 +423,7 @@
     {
       "id": "mvvm",
       "topic": "mvvm",
-      "title": "视图职责、逻辑与可测试性",
+      "title": "View Responsibilities, Logic & Testability",
       "context": "保留独立于 UI 框架的 MVVM 原则；XML、绑定语法和库对象生命周期不在本条内。",
       "body": "- When using view model and data binding with a UI:\n  - Move actual logic into view model implementation.\n  - This makes the UI simple enough as well as keeping the view model testable.\n    - In MVVM (model-view-viewmodel), view could be UI and unit test.\n    - Multiple views connecting to the same view model is a valid design, e.g. CLI application as a view.\n- It is recommended to define interfaces for view models.",
       "sources": [

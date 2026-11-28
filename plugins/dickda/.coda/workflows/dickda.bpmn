@@ -1,23 +1,27 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:coda="https://coda.pub/schema/bpmn/1.0"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="dickda-definitions" targetNamespace="https://coda.pub/plugins/dickda">
-  <process id="dickda" name="dickda模式" isExecutable="true" coda:title='{{if inputs.title = "" then "dickda模式" else "dickda模式：" + inputs.title}}'>
+  <process id="dickda" name="dickda Mode" isExecutable="true" coda:title='{{if inputs.title = "" then "dickda Mode" else "dickda Mode：" + inputs.title}}'>
     <extensionElements>
-      <coda:join hook="develop" name="dickda模式" detail="思考者定五层方案，主控并发调度架构/实现/验证（两级升级）闭环交付" />
-      <coda:input name="title" label="需求标题" type="string" default="" description="PR 标题；留空时由交互者在首张任务填写或取需求首行" />
-      <coda:input name="branch" label="起始分支" type="branch" defaultFrom="session.branch" description="从此分支已提交内容拉出需求分支；留空从目标分支开始" />
-      <coda:input name="base" label="目标分支" type="string" default="" description="仅允许仓库默认分支，留空自动读取" />
-      <coda:input name="fast" label="快速通道" type="boolean" default="false" description="小修或文档改动可开启，跳过思考者独立规划步骤直接交执行主控" />
+      <coda:join hook="develop" name="dickda Mode" detail="Thinker定Five-Layer Plan，Lead并发调度架构/实现/验证（Tier Escalation）闭环交付" />
+      <coda:input name="title" label="需求标题" type="string" default="" description="PR 标题；留空时由Interactor在首张任务填写或取需求首行" />
+      <coda:input name="branch" label="起始分支" type="branch" defaultFrom="session.branch" description="从此分支已提交内容拉出Requirement Branch；留空从目标分支开始" />
+      <coda:input name="base" label="目标分支" type="string" default="" description="仅允许仓库Default Branch，留空自动读取" />
+      <coda:input name="fast" label="Fast Mode" type="boolean" default="false" description="小修或文档改动可开启，跳过Thinker独立规划步骤直接交执行Lead" />
+      <coda:input name="heavyThink" label="Heavy Mode" type="boolean" default="false" description="Thinker 多模型协同规划；与 Fast Mode 互斥" />
       <coda:input name="devices" label="设备人工验收" type="boolean" default="false" description="交付前是否增加客户端/真机人工验收环节" />
       <coda:input name="device" label="验收设备" type="string" default="" description="填写后在开工前用 testbed 预检设备，仅在实证或人工验收时占用" />
-      <coda:input name="thinker" label="思考者覆盖" type="agent" description="留空采用插件设置（默认 carbon-high）" />
-      <coda:input name="lead" label="执行主控覆盖" type="agent" description="留空采用插件设置（默认 neon-xhigh）" />
-      <coda:input name="architect" label="架构（常规）覆盖" type="agent" description="留空采用插件设置（默认 antigravity claude-opus-5-5 high）" />
-      <coda:input name="architectSenior" label="架构（高级）覆盖" type="agent" description="留空采用插件设置（默认 carbon-high）" />
-      <coda:input name="builder" label="实现（常规）覆盖" type="agent" description="留空采用插件设置（默认 astra-high）" />
-      <coda:input name="builderSenior" label="实现（高级）覆盖" type="agent" description="留空采用插件设置（默认 astra-max）" />
-      <coda:input name="verifier" label="验证（常规）覆盖" type="agent" description="留空采用插件设置（默认 sol-high）" />
-      <coda:input name="verifierSenior" label="验证（高级）覆盖" type="agent" description="留空采用插件设置（默认 sol-max）" />
+      <coda:input name="thinker" label="Thinker覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="thinkerCoordinator" label="Heavy Mode · Coordinator 覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="thinkerCarbon" label="Heavy Mode · Carbon 覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="thinkerAstra" label="Heavy Mode · Astra 覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="lead" label="执行Lead覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="architect" label="Architect（Standard）覆盖" type="agent" description="留空采用插件设置（默认 antigravity claude-opus-5-5 high）" />
+      <coda:input name="architectSenior" label="Architect（Senior）覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="builder" label="Builder（Standard）覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="builderSenior" label="Builder（Senior）覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="verifier" label="Verifier（Standard）覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="verifierSenior" label="Verifier（Senior）覆盖" type="agent" description="留空采用插件设置" />
     </extensionElements>
 
     <startEvent id="start" />
@@ -35,8 +39,10 @@
     </callActivity>
     <sequenceFlow id="device-resolved" sourceRef="device-resolve" targetRef="lane" />
 
-    <scriptTask id="lane" name="准备需求分支" scriptFormat="bash" coda:timeout="5" coda:retry="2">
+    <scriptTask id="lane" name="准备Requirement Branch" scriptFormat="bash" coda:timeout="5" coda:retry="2">
       <extensionElements>
+        <coda:env name="FAST" value="=inputs.fast" />
+        <coda:env name="HEAVY_THINK" value="=inputs.heavyThink" />
         <coda:env name="BRANCH" value="=inputs.branch" />
         <coda:env name="BASE" value="=inputs.base" />
         <coda:env name="TITLE" value="=inputs.title" />
@@ -60,15 +66,15 @@
     </serviceTask>
     <sequenceFlow id="hold-brief-gate" sourceRef="hold" targetRef="brief-gate" />
 
-    <exclusiveGateway id="brief-gate" name="是否需要交互者补写需求" default="to-seed" />
+    <exclusiveGateway id="brief-gate" name="是否需要Interactor补写需求" default="to-seed" />
     <sequenceFlow id="need-brief" sourceRef="brief-gate" targetRef="brief">
       <conditionExpression xsi:type="tFormalExpression">=lane.needBrief = true</conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="to-seed" sourceRef="brief-gate" targetRef="seed" />
 
-    <userTask id="brief" name="交互者写入需求原文" coda:noteLabel="第一行写需求标题，换行写完整需求与边界">
-      <documentation>本会话已启动 dickda模式（需求分支 {{lane.reqBranch}} → {{lane.base}}）。
-你是顶层交互者（Neon）：请将与用户对齐后的需求写入备注（第一行标题，第二行起为完整需求与验收边界）。
+    <userTask id="brief" name="Interactor写入需求原文" coda:noteLabel="第一行写需求标题，换行写完整需求与边界">
+      <documentation>本会话已启动 dickda Mode（Requirement Branch {{lane.reqBranch}} → {{lane.base}}）。
+你是顶层Interactor：请将与用户对齐后的需求写入备注（第一行标题，第二行起为完整需求与验收边界）。
 {{if brief-parse.feedback = null then "" else brief-parse.feedback}}</documentation>
       <extensionElements>
         <coda:choice id="start" name="确认需求并继续" primary="true" note="required" />
@@ -76,7 +82,7 @@
     </userTask>
     <sequenceFlow id="brief-to-parse" sourceRef="brief" targetRef="brief-parse" />
 
-    <scriptTask id="brief-parse" name="解析交互者需求" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
+    <scriptTask id="brief-parse" name="解析Interactor需求" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
       <extensionElements>
         <coda:env name="BRIEF" value="=brief" />
         <coda:output name="route" />
@@ -96,22 +102,26 @@
       <extensionElements>
         <coda:output name="head" />
         <coda:output name="hasPlan" />
+        <coda:output name="alreadyConfirmed" />
         <coda:output name="preview" />
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" seed</script>
     </scriptTask>
     <sequenceFlow id="seed-to-think-gate" sourceRef="seed" targetRef="think-gate" />
 
-    <exclusiveGateway id="think-gate" name="是否运行思考者五层规划" default="run-think" />
+    <exclusiveGateway id="think-gate" name="是否运行Thinker五层规划" default="run-think" />
     <sequenceFlow id="skip-think" sourceRef="think-gate" targetRef="lead-plan">
-      <conditionExpression xsi:type="tFormalExpression">=inputs.fast = true</conditionExpression>
+      <conditionExpression xsi:type="tFormalExpression">=seed.alreadyConfirmed = true or inputs.fast = true</conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="reuse-plan" sourceRef="think-gate" targetRef="plan-present">
-      <conditionExpression xsi:type="tFormalExpression">=inputs.fast = false and seed.hasPlan = true</conditionExpression>
+      <conditionExpression xsi:type="tFormalExpression">=seed.alreadyConfirmed = false and inputs.fast = false and inputs.heavyThink = false and seed.hasPlan = true</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="run-heavy" sourceRef="think-gate" targetRef="heavy-prepare">
+      <conditionExpression xsi:type="tFormalExpression">=seed.alreadyConfirmed = false and inputs.fast = false and inputs.heavyThink = true</conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="run-think" sourceRef="think-gate" targetRef="think" />
 
-    <scriptTask id="think" name="思考者制定五层技术方案（PLAN_5L.md）" scriptFormat="bash" coda:timeout="30" coda:status="思考者（Carbon）正在制定五层技术方案">
+    <scriptTask id="think" name="Thinker制定Five-Layer Plan（PLAN_5L.md）" scriptFormat="bash" coda:timeout="120" coda:status="Thinker正在制定Five-Layer Plan">
       <extensionElements>
         <coda:env name="THINKER" value="=inputs.thinker" />
         <coda:output name="head" />
@@ -121,16 +131,62 @@
     </scriptTask>
     <sequenceFlow id="think-to-present" sourceRef="think" targetRef="plan-present" />
 
-    <userTask id="plan-present" name="交互者讲解五层方案并给出开工建议" coda:noteLabel="开工结论与核心理由、风险，或具体修订意见">
-      <documentation>请在当前主会话向用户讲解需求分支 {{lane.reqBranch}} 上的五层方案。
-方案提交 {{if think.head = null then seed.head else think.head}}，全文见 .dickda/tasks/PLAN_5L.md。
+    <scriptTask id="heavy-prepare" name="Heavy Mode · 冻结规划输入" scriptFormat="bash" coda:timeout="5">
+      <extensionElements>
+        <coda:env name="THINKER_COORDINATOR" value="=inputs.thinkerCoordinator" />
+        <coda:env name="THINKER_CARBON" value="=inputs.thinkerCarbon" />
+        <coda:env name="THINKER_ASTRA" value="=inputs.thinkerAstra" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" heavy-prepare</script>
+    </scriptTask>
+    <sequenceFlow id="heavy-prepare-next" sourceRef="heavy-prepare" targetRef="heavy-draft" />
 
-{{if think.head = null then seed.preview else think.preview}}
+    <scriptTask id="heavy-draft" name="Heavy Mode · 双模型独立初稿" scriptFormat="bash" coda:timeout="60">
+      <extensionElements>
+        <coda:env name="SLOT" value="=slot" />
+      </extensionElements>
+      <multiInstanceLoopCharacteristics coda:inputCollection='=["carbon", "astra"]' coda:inputElement="slot" />
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" heavy-draft</script>
+    </scriptTask>
+    <sequenceFlow id="heavy-draft-next" sourceRef="heavy-draft" targetRef="heavy-review" />
 
-请结合 L1 架构、L2 Lint、L3 验证、L4 并发工单和 L5 人工锚点说明取舍，明确是否建议开工以及理由、风险或优先调整项。讲解后在备注写下给用户的开工建议；方案有缺漏时写明修订意见退回思考者。</documentation>
+    <scriptTask id="heavy-review" name="Heavy Mode · 交叉评审" scriptFormat="bash" coda:timeout="60">
+      <extensionElements>
+        <coda:env name="SLOT" value="=slot" />
+      </extensionElements>
+      <multiInstanceLoopCharacteristics coda:inputCollection='=["carbon", "astra"]' coda:inputElement="slot" />
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" heavy-review</script>
+    </scriptTask>
+    <sequenceFlow id="heavy-review-next" sourceRef="heavy-review" targetRef="heavy-revise" />
+
+    <scriptTask id="heavy-revise" name="Heavy Mode · 双模型修订" scriptFormat="bash" coda:timeout="60">
+      <extensionElements>
+        <coda:env name="SLOT" value="=slot" />
+      </extensionElements>
+      <multiInstanceLoopCharacteristics coda:inputCollection='=["carbon", "astra"]' coda:inputElement="slot" />
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" heavy-revise</script>
+    </scriptTask>
+    <sequenceFlow id="heavy-revise-next" sourceRef="heavy-revise" targetRef="heavy-synthesize" />
+
+    <scriptTask id="heavy-synthesize" name="Heavy Mode · 协调者定稿" scriptFormat="bash" coda:timeout="60">
+      <extensionElements>
+        <coda:output name="head" />
+        <coda:output name="preview" />
+      </extensionElements>
+      <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" heavy-synthesize</script>
+    </scriptTask>
+    <sequenceFlow id="heavy-synthesize-next" sourceRef="heavy-synthesize" targetRef="plan-present" />
+
+    <userTask id="plan-present" name="Interactor讲解Five-Layer Plan并给出开工建议" coda:noteLabel="开工结论与核心理由、风险，或具体修订意见">
+      <documentation>请在当前主会话向用户讲解Requirement Branch {{lane.reqBranch}} 上的Five-Layer Plan。
+Approved HEAD {{if inputs.heavyThink = true and heavy-synthesize.head != null then heavy-synthesize.head else if think.head = null then seed.head else think.head}}，全文见 .dickda/tasks/PLAN_5L.md。
+
+{{if inputs.heavyThink = true and heavy-synthesize.head != null then heavy-synthesize.preview else if think.head = null then seed.preview else think.preview}}
+
+请结合 L1 架构、L2 Lint、L3 验证、L4 并发Work Order和 L5 Human Review说明取舍，明确是否建议开工以及理由、风险或优先调整项。讲解后在备注写下给用户的开工建议；方案有缺漏时写明修订意见退回Thinker。</documentation>
       <extensionElements>
         <coda:choice id="recommend" name="已向用户讲解并附开工建议，请用户确认" primary="true" note="required" />
-        <coda:choice id="revise" name="方案有缺漏，先退回思考者修订" note="required" />
+        <coda:choice id="revise" name="方案有缺漏，先退回Thinker修订" note="required" />
       </extensionElements>
     </userTask>
     <sequenceFlow id="present-to-gate" sourceRef="plan-present" targetRef="present-gate" />
@@ -140,14 +196,14 @@
     </sequenceFlow>
     <sequenceFlow id="present-to-confirm" sourceRef="present-gate" targetRef="plan-confirm" />
 
-    <userTask id="plan-confirm" name="确认五层方案并开工" coda:assignee="user" coda:status="等待用户确认五层方案开工">
-      <documentation>**交互者的开工建议**
+    <userTask id="plan-confirm" name="确认Five-Layer Plan并开工" coda:assignee="user" coda:status="等待用户确认Five-Layer Plan开工">
+      <documentation>**Interactor的开工建议**
 {{plan-present.note}}
 
-**五层方案核心摘要**
-{{if think.head = null then seed.preview else think.preview}}
+**Five-Layer Plan核心摘要**
+{{if inputs.heavyThink = true and heavy-synthesize.head != null then heavy-synthesize.preview else if think.head = null then seed.preview else think.preview}}
 
-需求分支 {{lane.reqBranch}}，方案提交 {{if think.head = null then seed.head else think.head}}。确认开工后主控开始派单。</documentation>
+Requirement Branch {{lane.reqBranch}}，Approved HEAD {{if inputs.heavyThink = true and heavy-synthesize.head != null then heavy-synthesize.head else if think.head = null then seed.head else think.head}}。确认开工后Lead开始派单。</documentation>
       <extensionElements>
         <coda:choice id="start" name="确认开工" primary="true" />
         <coda:choice id="revise" name="打回修改方案" note="required" />
@@ -170,13 +226,18 @@
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" plan-feedback</script>
     </scriptTask>
-    <sequenceFlow id="feedback-to-think" sourceRef="plan-feedback" targetRef="think" />
+    <sequenceFlow id="feedback-to-planning" sourceRef="plan-feedback" targetRef="planning-route" />
+    <exclusiveGateway id="planning-route" default="feedback-to-think" />
+    <sequenceFlow id="feedback-to-heavy" sourceRef="planning-route" targetRef="heavy-prepare">
+      <conditionExpression xsi:type="tFormalExpression">=inputs.heavyThink = true</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="feedback-to-think" sourceRef="planning-route" targetRef="think" />
 
-    <scriptTask id="lead-plan" name="执行主控调度与裁决" scriptFormat="bash" coda:timeout="30" coda:status="执行主控（Neon）正在调度与裁决">
+    <scriptTask id="lead-plan" name="执行Lead调度与裁决" scriptFormat="bash" coda:timeout="30" coda:status="执行Lead正在调度与裁决">
       <extensionElements>
         <coda:env name="FAST" value="=inputs.fast" />
         <coda:env name="SEED_HEAD" value="=seed.head" />
-        <coda:env name="APPROVED_HEAD" value="=if think.head = null then seed.head else think.head" />
+        <coda:env name="APPROVED_HEAD" value="=if inputs.heavyThink = true and heavy-synthesize.head != null then heavy-synthesize.head else if think.head = null then seed.head else think.head" />
         <coda:env name="LEAD" value="=inputs.lead" />
         <coda:env name="ARCHITECT" value="=inputs.architect" />
         <coda:env name="ARCHITECT_SENIOR" value="=inputs.architectSenior" />
@@ -196,7 +257,7 @@
     </scriptTask>
     <sequenceFlow id="lead-to-route" sourceRef="lead-plan" targetRef="lead-route" />
 
-    <exclusiveGateway id="lead-route" name="主控决策去向" default="route-dispatch" />
+    <exclusiveGateway id="lead-route" name="Lead决策去向" default="route-dispatch" />
     <sequenceFlow id="route-verify" sourceRef="lead-route" targetRef="archive-delivery">
       <conditionExpression xsi:type="tFormalExpression">=lead-plan.route = "verify"</conditionExpression>
     </sequenceFlow>
@@ -213,7 +274,7 @@
     </sequenceFlow>
     <sequenceFlow id="dispatch-jobs" sourceRef="milestone-gate" targetRef="run-jobs" />
 
-    <serviceTask id="tell-milestone" name="向主会话同步里程碑" coda:action="tell-session">
+    <serviceTask id="tell-milestone" name="向主会话同步Milestone" coda:action="tell-session">
       <extensionElements>
         <coda:param name="session" value="=lead-plan.session" />
         <coda:param name="key" value='=run.id + ":milestone:" + lead-plan.round' />
@@ -222,7 +283,7 @@
     </serviceTask>
     <sequenceFlow id="told-to-jobs" sourceRef="tell-milestone" targetRef="run-jobs" />
 
-    <scriptTask id="run-jobs" name="并发执行三工种工程师工单" scriptFormat="bash" coda:timeout="60" coda:status='{{if lead-plan.milestone = "" then "并发执行工单" else lead-plan.milestone}}'>
+    <scriptTask id="run-jobs" name="并发执行三工种工程师Work Order" scriptFormat="bash" coda:timeout="60" coda:status='{{if lead-plan.milestone = "" then "并发执行Work Order" else lead-plan.milestone}}'>
       <extensionElements>
         <coda:env name="JOB_ID" value="=jobId" />
         <coda:output name="id" />
@@ -233,7 +294,7 @@
     </scriptTask>
     <sequenceFlow id="jobs-to-integrate" sourceRef="run-jobs" targetRef="integrate" />
 
-    <scriptTask id="integrate" name="无冲突合入并发工单与汇总反馈" scriptFormat="bash" coda:timeout="10" coda:status="合入并发工单结果">
+    <scriptTask id="integrate" name="无冲突合入并发Work Order与汇总反馈" scriptFormat="bash" coda:timeout="10" coda:status="合入并发Work Order结果">
       <extensionElements>
         <coda:output name="head" />
         <coda:output name="changed" />
@@ -242,7 +303,7 @@
     </scriptTask>
     <sequenceFlow id="integrate-to-gate" sourceRef="integrate" targetRef="changed-gate" />
 
-    <exclusiveGateway id="changed-gate" name="需求分支是否有新提交" default="back-to-lead" />
+    <exclusiveGateway id="changed-gate" name="Requirement Branch是否有新提交" default="back-to-lead" />
     <sequenceFlow id="run-checks" sourceRef="changed-gate" targetRef="checks">
       <conditionExpression xsi:type="tFormalExpression">=integrate.changed = true</conditionExpression>
     </sequenceFlow>
@@ -276,8 +337,8 @@
     </scriptTask>
     <sequenceFlow id="checks-ok-to-lead" sourceRef="record-checks-ok" targetRef="lead-plan" />
 
-    <userTask id="escalate-task" name="执行主控向上升级风险请示" coda:noteLabel="决策指示" coda:status="等待顶层交互者裁决风险">
-      <documentation>执行主控（Neon）在推进需求分支 {{lane.reqBranch}} 时遇到超出五层方案边界的风险，请顶层交互者（Neon）裁决（必要时与思考者 Carbon 评估或请示用户）：
+    <userTask id="escalate-task" name="执行Lead向上升级风险请示" coda:noteLabel="决策指示" coda:status="等待顶层Interactor裁决风险">
+      <documentation>执行Lead在推进Requirement Branch {{lane.reqBranch}} 时遇到超出Five-Layer Plan边界的风险，请顶层Interactor裁决（必要时与Thinker 评估或请示用户）：
 
 {{lead-plan.escalation}}
 
@@ -304,10 +365,12 @@
     </sequenceFlow>
     <sequenceFlow id="escalate-continue" sourceRef="escalate-route" targetRef="lead-plan" />
 
-    <scriptTask id="archive-delivery" name="持久化调查归档至交付分支" scriptFormat="bash" coda:timeout="5">
+    <scriptTask id="archive-delivery" name="持久化Investigation Archive至交付分支" scriptFormat="bash" coda:timeout="5">
       <extensionElements>
         <coda:output name="head" />
         <coda:output name="needChecks" />
+        <coda:output name="archived" />
+        <coda:output name="archivePath" />
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" archive-delivery</script>
     </scriptTask>
@@ -339,7 +402,7 @@
     </scriptTask>
     <sequenceFlow id="record-verify-to-prepare" sourceRef="record-verify-checks" targetRef="prepare-verify" />
 
-    <scriptTask id="prepare-verify" name="准备双轨验证与独立审查参数" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
+    <scriptTask id="prepare-verify" name="准备Dual-Track Verification与Independent Code Review参数" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
       <extensionElements>
         <coda:env name="VERIFIER" value="=inputs.verifier" />
         <coda:env name="VERIFIER_SENIOR" value="=inputs.verifierSenior" />
@@ -348,6 +411,10 @@
         <coda:output name="previous" />
         <coda:output name="skipReview" />
         <coda:output name="tier" />
+        <coda:output name="reviewerAgent" />
+        <coda:output name="reviewerModel" />
+        <coda:output name="reviewerEffort" />
+        <coda:output name="reviewerMode" />
         <coda:output name="task" />
         <coda:output name="evidence" />
       </extensionElements>
@@ -360,7 +427,7 @@
     </sequenceFlow>
     <sequenceFlow id="run-dual-verify" sourceRef="rebuttal-gate" targetRef="dual-verify" />
 
-    <callActivity id="dual-verify" name="L3 结果导向双轨验证" calledElement="dickda-verify">
+    <callActivity id="dual-verify" name="L3 Outcome-Oriented Verification · Dual-Track Verification" calledElement="dickda-verify">
       <extensionElements>
         <coda:param name="commit" value="=prepare-verify.head" />
         <coda:param name="branch" value="=lane.reqBranch" />
@@ -374,9 +441,9 @@
     </callActivity>
     <boundaryEvent id="dual-verify-error" attachedToRef="dual-verify"><errorEventDefinition /></boundaryEvent>
     <sequenceFlow id="dual-error-to-record" sourceRef="dual-verify-error" targetRef="dual-call-lost" />
-    <scriptTask id="dual-call-lost" name="记录双轨验证调用异常" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
+    <scriptTask id="dual-call-lost" name="记录Dual-Track Verification调用异常" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
       <extensionElements>
-        <coda:env name="VERIFY_REPORT" value="提交 {{prepare-verify.head}} 调用 dickda-verify 异常，未取得双轨验证结果。请查看 coda://workflow-runs/{{run.id}} 中的子流程，修复或重试。" />
+        <coda:env name="VERIFY_REPORT" value="提交 {{prepare-verify.head}} 调用 dickda-verify 异常，未取得Dual-Track Verification结果。请查看 coda://workflow-runs/{{run.id}} 中的子流程，修复或重试。" />
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" verified</script>
     </scriptTask>
@@ -388,16 +455,22 @@
     </sequenceFlow>
     <sequenceFlow id="dual-to-review" sourceRef="dual-result" targetRef="final-review" />
 
-    <callActivity id="final-review" name="独立代码审查（review-commit）" calledElement="review-commit">
+    <callActivity id="final-review" name="Independent Code Review（review-commit）" calledElement="review-commit">
       <extensionElements>
         <coda:param name="base" value="=prepare-verify.base" />
         <coda:param name="previous" value="=prepare-verify.previous" />
         <coda:param name="head" value="=prepare-verify.head" />
         <coda:param name="task" value="=prepare-verify.task" />
-        <coda:param name="reviewer" value='=if prepare-verify.tier = "senior"
+        <coda:param name="reviewer" value='={r: if prepare-verify.tier = "senior"
           then (if inputs.verifierSenior != null then inputs.verifierSenior else vars.dickda.verifierSenior)
-          else (if inputs.verifier != null then inputs.verifier else vars.dickda.verifierStandard)' />
-        <coda:param name="evidence" value="项目检查&#10;{{prepare-verify.evidence}}&#10;&#10;双轨验证报告&#10;{{dual-verify.report}}&#10;&#10;实证证据&#10;{{dual-verify.evidence}}&#10;&#10;双轨发现&#10;{{dual-verify.findings}}" />
+          else (if inputs.verifier != null then inputs.verifier else vars.dickda.verifierStandard), reviewer: context merge([
+            { agent: prepare-verify.reviewerAgent },
+            if prepare-verify.reviewerModel = "" then {} else { model: prepare-verify.reviewerModel },
+            if prepare-verify.reviewerEffort = "" then {} else { effort: prepare-verify.reviewerEffort },
+            if prepare-verify.reviewerMode = "" then {} else { mode: prepare-verify.reviewerMode },
+            if r.options instance of context and count(get entries(r.options)) &gt; 0 then { options: r.options } else {}
+          ])}.reviewer' />
+        <coda:param name="evidence" value="项目检查&#10;{{prepare-verify.evidence}}&#10;&#10;Dual-Track Verification报告&#10;{{dual-verify.report}}&#10;&#10;实证证据&#10;{{dual-verify.evidence}}&#10;&#10;Dual-Track Verification 发现&#10;{{dual-verify.findings}}" />
         <coda:param name="focus" value="请对照 .dickda/tasks/TODO_TASK.md、PLAN_5L.md、.dickda/lints 与 .dickda/verifiers 审查真实可达缺陷与契约一致性。" />
       </extensionElements>
     </callActivity>
@@ -407,7 +480,7 @@
     <sequenceFlow id="final-review-err-flow" sourceRef="final-review-failed" targetRef="review-call-lost" />
     <sequenceFlow id="final-review-ok-flow" sourceRef="final-review" targetRef="verified-check" />
 
-    <scriptTask id="review-call-lost" name="记录独立审查调用失败" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
+    <scriptTask id="review-call-lost" name="记录Independent Code Review调用失败" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
       <extensionElements>
         <coda:output name="reason" />
       </extensionElements>
@@ -440,13 +513,13 @@
     </sequenceFlow>
     <sequenceFlow id="to-pr" sourceRef="verified-gate" targetRef="pr" />
 
-    <userTask id="review-retry" name="独立代码审查未完成" coda:noteLabel="处理说明" coda:status="独立代码审查未完成：等待重试或停止">
-      <documentation>当前交付提交 {{prepare-verify.head}} 尚未获得完整有效的独立代码审查结论，不能当作通过放行。
+    <userTask id="review-retry" name="Independent Code Review未完成" coda:noteLabel="处理说明" coda:status="Independent Code Review未完成：等待重试或停止">
+      <documentation>当前交付提交 {{prepare-verify.head}} 尚未获得完整有效的Independent Code Review结论，不能当作通过放行。
 {{if verified-check.reason = null or verified-check.reason = "" then review-call-lost.reason else verified-check.reason}}
 
-请排查评审会话或能力异常后选择「重试独立审查」，或选择「停止本次交付」。</documentation>
+请排查评审会话或能力异常后选择「重试Independent Code Review」，或选择「停止本次交付」。</documentation>
       <extensionElements>
-        <coda:choice id="retry" name="重试独立审查" primary="true" note="required" />
+        <coda:choice id="retry" name="重试Independent Code Review" primary="true" note="required" />
         <coda:choice id="stop" name="停止本次交付" note="required" />
       </extensionElements>
     </userTask>
@@ -572,7 +645,7 @@
     </sequenceFlow>
     <sequenceFlow id="accepted-to-premerge" sourceRef="accepted-gate" targetRef="premerge" />
 
-    <serviceTask id="premerge" name="合并前检查（hook=premerge）" coda:action="run-workflows" coda:status="运行合并前检查">
+    <serviceTask id="premerge" name="Premerge Checks（hook=premerge）" coda:action="run-workflows" coda:status="运行Premerge Checks">
       <extensionElements>
         <coda:param name="hook" value="premerge" />
         <coda:param name="commit" value="=pr.head" />
@@ -583,9 +656,9 @@
     </boundaryEvent>
     <sequenceFlow id="premerge-err-flow" sourceRef="premerge-err" targetRef="premerge-failed" />
 
-    <scriptTask id="premerge-failed" name="记录合并前检查失败" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
+    <scriptTask id="premerge-failed" name="记录Premerge Checks失败" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
       <extensionElements>
-        <coda:env name="STEP" value="合并前检查" />
+        <coda:env name="STEP" value="Premerge Checks" />
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/develop.mjs" checks-failed</script>
     </scriptTask>
@@ -646,7 +719,7 @@
       <extensionElements>
         <coda:choice id="merge" name="合并" primary="true">
           <coda:optionList value="=joiners.list" />
-          <coda:option id="notify" name="全部完成后通知交互者" default="true" />
+          <coda:option id="notify" name="全部完成后通知Interactor" default="true" />
         </coda:choice>
         <coda:choice id="stop" name="暂不合并" note="required" />
       </extensionElements>
@@ -659,7 +732,7 @@
     </sequenceFlow>
     <sequenceFlow id="approved-flow" sourceRef="approve-gate" targetRef="approval-parse" />
 
-    <scriptTask id="record-stop" name="记录停止原因并保留需求分支" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
+    <scriptTask id="record-stop" name="记录停止原因并保留Requirement Branch" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
       <extensionElements>
         <coda:env name="REASON" value="=if approve.chose.stop then approve.note else if review-retry.chose.stop then review-retry.note else if escalate-task.chose.stop then escalate-task.note else if plan-confirm.chose.stop then plan-confirm.note else lead-plan.escalation" />
         <coda:output name="reason" />

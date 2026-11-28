@@ -1,7 +1,7 @@
 {
   "name": "dickda",
-  "displayName": "dickda模式",
-  "description": "面向五层倒金字塔的多 Agent 协同开发流：交互者-思考者-执行者（主控/架构/实现/验证两级升级），资产统一收归 .dickda。",
+  "displayName": "dickda",
+  "description": "基于 Inverted Pyramid 的多 Agent 开发流程：Interactor、Thinker、Executors（Lead / Architect / Builder / Verifier），支持 Tier Escalation，资产统一收归 .dickda。",
   "version": "1.0.0",
   "type": "module",
   "license": "Apache-2.0",
@@ -12,7 +12,7 @@
     "skills": [
       "skills/dickda"
     ],
-    "instructions": "采用 dickda模式时先读 dickda role show interactor。发起 dickda 后，思考者提交 PLAN_5L.md，交互者向用户讲解并给出开工建议。用户点确认开工后主控并发派单、同步里程碑。工单分文件记录并聚合归档，双轨验证按规约占设备。不采纳终审意见须向用户列明依据。dickda-refine 独立审查后，由用户批准合并消费归档。",
+    "instructions": "采用 dickda Mode 时，先读 `dickda role show interactor`。Thinker 交 PLAN_5L.md，Interactor 讲解，用户确认后 Lead 派单。Dual-Track Verification 按规约占设备。不采纳 Final Review 须列依据。Refine 经 Independent Code Review，用户批准合并后消费归档。",
     "commands": [
       {
         "name": "dickda",
@@ -20,71 +20,63 @@
       }
     ],
     "configuration": {
-      "title": "dickda模式",
+      "title": "dickda",
       "properties": {
         "dickda.interactor": {
-          "title": "交互者（Interactor）",
+          "title": "Interactor",
           "description": "驻守主会话：用户沟通澄清、交互式 HTML 控制台与图文汇报、风险与重构拍板。",
           "type": "object",
           "format": "coda-agent",
           "default": {
             "agent": "antigravity",
             "model": "gemini-4-neon",
-            "effort": "xhigh"
+            "effort": "xhigh",
+            "mode": "full"
           },
           "order": 1
         },
         "dickda.thinker": {
-          "title": "思考者（Thinker）",
+          "title": "Thinker",
           "description": "顶层规划：输出面向五层抽象的技术方案 PLAN_5L.md，并在 refine 中诊断重构落层。",
           "type": "object",
           "format": "coda-agent",
           "default": {
             "agent": "antigravity",
             "model": "gemini-4-carbon",
-            "effort": "high"
+            "effort": "high",
+            "mode": "full"
           },
           "order": 2
         },
-        "dickda.lead": {
-          "title": "执行者 · 主控（Lead）",
-          "description": "执行期总指挥：支持并发派发三工种工程师、自主裁决 Review 取舍、控制难度分级升级与向上同步。",
+        "dickda.thinkerCoordinator": {
+          "title": "Thinker · Heavy Mode · Coordinator",
+          "description": "Heavy Mode 协调并综合定稿。",
           "type": "object",
           "format": "coda-agent",
           "default": {
             "agent": "antigravity",
             "model": "gemini-4-neon",
-            "effort": "xhigh"
+            "effort": "xhigh",
+            "mode": "full"
           },
           "order": 3
         },
-        "dickda.architectStandard": {
-          "title": "执行者 · 架构（常规级）",
-          "description": "负责常规任务的 L1 架构骨架、L2 Executable Spec Lint 实现与 L3 结果导向测试设计。",
-          "type": "object",
-          "format": "coda-agent",
-          "default": {
-            "agent": "antigravity",
-            "model": "claude-opus-5-5",
-            "effort": "high"
-          },
-          "order": 4
-        },
-        "dickda.architectSenior": {
-          "title": "执行者 · 架构（高级）",
-          "description": "复杂架构演进或常规架构工单多次被打回时升级接手。",
+        "dickda.thinkerCarbon": {
+          "title": "Thinker · Heavy Mode · Carbon",
+          "description": "Heavy Mode 独立规划、交叉 Review 与修订。",
           "type": "object",
           "format": "coda-agent",
           "default": {
             "agent": "antigravity",
             "model": "gemini-4-carbon",
-            "effort": "high"
+            "effort": "high",
+            "mode": "full"
           },
-          "order": 5
+          "order": 4
         },
-        "dickda.builderStandard": {
-          "title": "执行者 · 实现（常规级）",
-          "description": "负责常规工程编码实现（复现、实验回退、择优重放，遵守锁定的 Lint 与测试契约）。",
+        "dickda.thinkerAstra": {
+          "title": "Thinker · Heavy Mode · Astra",
+          "description": "Heavy Mode 独立规划、交叉 Review 与修订。",
           "type": "object",
           "format": "coda-agent",
           "default": {
@@ -92,11 +84,62 @@
             "model": "gpt-6.2-astra",
             "effort": "high"
           },
+          "order": 5
+        },
+        "dickda.lead": {
+          "title": "Executors · Lead",
+          "description": "执行期总指挥：支持并发派发三工种工程师、自主裁决 Review 取舍、控制难度分级升级与向上同步。",
+          "type": "object",
+          "format": "coda-agent",
+          "default": {
+            "agent": "antigravity",
+            "model": "gemini-4-neon",
+            "effort": "xhigh",
+            "mode": "full"
+          },
           "order": 6
         },
+        "dickda.architectStandard": {
+          "title": "Executors · Architect（Standard）",
+          "description": "负责Normal 任务的 L1 架构骨架、L2 Executable Spec Lint 实现与 L3 Outcome-Oriented Verification设计。",
+          "type": "object",
+          "format": "coda-agent",
+          "default": {
+            "agent": "antigravity",
+            "model": "claude-opus-5-5",
+            "effort": "high",
+            "mode": "full"
+          },
+          "order": 7
+        },
+        "dickda.architectSenior": {
+          "title": "Executors · Architect（Senior）",
+          "description": "复杂架构演进或Standard架构Work Order多次被打回时升级接手。",
+          "type": "object",
+          "format": "coda-agent",
+          "default": {
+            "agent": "antigravity",
+            "model": "gemini-4-carbon",
+            "effort": "high",
+            "mode": "full"
+          },
+          "order": 8
+        },
+        "dickda.builderStandard": {
+          "title": "Executors · Builder（Standard）",
+          "description": "负责Standard工程编码实现（复现、实验回退、择优重放，遵守锁定的 Lint 与测试契约）。",
+          "type": "object",
+          "format": "coda-agent",
+          "default": {
+            "agent": "codex",
+            "model": "gpt-6.2-astra",
+            "effort": "high"
+          },
+          "order": 9
+        },
         "dickda.builderSenior": {
-          "title": "执行者 · 实现（高级）",
-          "description": "高难实现或常规实现工单多次被打回时升级接手。",
+          "title": "Executors · Builder（Senior）",
+          "description": "高难实现或Standard实现Work Order多次被打回时升级接手。",
           "type": "object",
           "format": "coda-agent",
           "default": {
@@ -104,11 +147,11 @@
             "model": "gpt-6.2-astra",
             "effort": "max"
           },
-          "order": 7
+          "order": 10
         },
         "dickda.verifierStandard": {
-          "title": "执行者 · 验证（常规级）",
-          "description": "专职找问题、独立代码审查（review-commit）及运行黑盒/UI 自动化验收测试。",
+          "title": "Executors · Verifier（Standard）",
+          "description": "专职找问题、Independent Code Review（review-commit）及运行黑盒/UI 自动化验收测试。",
           "type": "object",
           "format": "coda-agent",
           "default": {
@@ -116,10 +159,10 @@
             "model": "gpt-6.1-sol",
             "effort": "high"
           },
-          "order": 8
+          "order": 11
         },
         "dickda.verifierSenior": {
-          "title": "执行者 · 验证（高级）",
+          "title": "Executors · Verifier（Senior）",
           "description": "深水区系统缺陷排查或复杂多端 UI 实证验收时升级接手。",
           "type": "object",
           "format": "coda-agent",
@@ -128,20 +171,20 @@
             "model": "gpt-6.1-sol",
             "effort": "max"
           },
-          "order": 9
+          "order": 12
         },
         "dickda.escalationThreshold": {
-          "title": "自动升级打回阈值",
-          "description": "常规级工程师在同一工单连续未通过门禁或被打回达到该次数时，自动提示并升级为高级工程师接手。",
+          "title": "Escalation Threshold",
+          "description": "Standard工程师在同一Work Order连续未通过门禁或被打回达到该次数时，自动提示并升级为Senior Engineer接手。",
           "type": "integer",
           "minimum": 1,
           "maximum": 5,
           "default": 2,
-          "order": 10
+          "order": 13
         },
         "dickda.mergeMethod": {
           "title": "合并方式",
-          "description": "用户批准合并后将交付 PR 合入默认分支的方式。",
+          "description": "用户批准合并后将交付 PR 合入Default Branch的方式。",
           "type": "string",
           "enum": [
             "merge",
@@ -149,7 +192,7 @@
             "rebase"
           ],
           "default": "merge",
-          "order": 11
+          "order": 14
         }
       }
     }

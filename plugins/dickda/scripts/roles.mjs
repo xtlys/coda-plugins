@@ -7,11 +7,14 @@ export const TRADES = ['architect', 'builder', 'verifier'];
 export const TIERS = ['standard', 'senior'];
 
 export const DEFAULT_SETTINGS = {
-  'dickda.interactor': { agent: 'antigravity', model: 'gemini-4-neon', effort: 'xhigh' },
-  'dickda.thinker': { agent: 'antigravity', model: 'gemini-4-carbon', effort: 'high' },
-  'dickda.lead': { agent: 'antigravity', model: 'gemini-4-neon', effort: 'xhigh' },
-  'dickda.architectStandard': { agent: 'antigravity', model: 'claude-opus-5-5', effort: 'high' },
-  'dickda.architectSenior': { agent: 'antigravity', model: 'gemini-4-carbon', effort: 'high' },
+  'dickda.interactor': { agent: 'antigravity', mode: 'full', model: 'gemini-4-neon', effort: 'xhigh' },
+  'dickda.thinker': { agent: 'antigravity', mode: 'full', model: 'gemini-4-carbon', effort: 'high' },
+  'dickda.thinkerCoordinator': { agent: 'antigravity', mode: 'full', model: 'gemini-4-neon', effort: 'xhigh' },
+  'dickda.thinkerCarbon': { agent: 'antigravity', mode: 'full', model: 'gemini-4-carbon', effort: 'high' },
+  'dickda.thinkerAstra': { agent: 'codex', model: 'gpt-6.2-astra', effort: 'high' },
+  'dickda.lead': { agent: 'antigravity', mode: 'full', model: 'gemini-4-neon', effort: 'xhigh' },
+  'dickda.architectStandard': { agent: 'antigravity', mode: 'full', model: 'claude-opus-5-5', effort: 'high' },
+  'dickda.architectSenior': { agent: 'antigravity', mode: 'full', model: 'gemini-4-carbon', effort: 'high' },
   'dickda.builderStandard': { agent: 'codex', model: 'gpt-6.2-astra', effort: 'high' },
   'dickda.builderSenior': { agent: 'codex', model: 'gpt-6.2-astra', effort: 'max' },
   'dickda.verifierStandard': { agent: 'codex', model: 'gpt-6.1-sol', effort: 'high' },
@@ -21,15 +24,18 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const ROLE_LABELS = {
-  interactor: { group: '交互者', title: '交互者（Interactor）', tiered: false },
-  thinker: { group: '思考者', title: '思考者（Thinker）', tiered: false },
-  lead: { group: '执行者', title: '执行者 · 主控（Lead）', tiered: false },
-  architect: { group: '执行者', title: '执行者 · 架构（Architect）', tiered: true },
-  builder: { group: '执行者', title: '执行者 · 实现（Builder）', tiered: true },
-  verifier: { group: '执行者', title: '执行者 · 验证（Verifier）', tiered: true },
+  interactor: { group: 'Interactor', title: 'Interactor', tiered: false },
+  thinker: { group: 'Thinker', title: 'Thinker', tiered: false },
+  thinkerCoordinator: { group: 'Thinker', title: 'Thinker · Heavy Mode · Coordinator', tiered: false },
+  thinkerCarbon: { group: 'Thinker', title: 'Thinker · Heavy Mode · Carbon', tiered: false },
+  thinkerAstra: { group: 'Thinker', title: 'Thinker · Heavy Mode · Astra', tiered: false },
+  lead: { group: 'Executors', title: 'Executors · Lead', tiered: false },
+  architect: { group: 'Executors', title: 'Executors · Architect', tiered: true },
+  builder: { group: 'Executors', title: 'Executors · Builder', tiered: true },
+  verifier: { group: 'Executors', title: 'Executors · Verifier', tiered: true },
 };
 
-function validAgent(spec, label) {
+function normalizeAgent(spec, label) {
   requireValue(spec && typeof spec === 'object' && !Array.isArray(spec) && typeof spec.agent === 'string' && spec.agent.trim(), `${label} 须包含有效的 agent 字段`);
   const clean = { agent: spec.agent.trim() };
   for (const key of ['model', 'effort', 'mode']) {
@@ -38,6 +44,7 @@ function validAgent(spec, label) {
   if (spec.options && typeof spec.options === 'object' && !Array.isArray(spec.options) && Object.keys(spec.options).length) {
     clean.options = spec.options;
   }
+  if (clean.agent === 'antigravity') clean.mode = 'full';
   return clean;
 }
 
@@ -52,20 +59,23 @@ export function loadSettings(rawEnv = process.env.CODA_PLUGIN_SETTINGS, override
   const mergeMethod = merged['dickda.mergeMethod'];
   requireValue(['merge', 'squash', 'rebase'].includes(mergeMethod), 'mergeMethod 须为 merge、squash 或 rebase');
   return {
-    interactor: validAgent(merged['dickda.interactor'], 'interactor'),
-    thinker: validAgent(merged['dickda.thinker'], 'thinker'),
-    lead: validAgent(merged['dickda.lead'], 'lead'),
+    interactor: normalizeAgent(merged['dickda.interactor'], 'interactor'),
+    thinker: normalizeAgent(merged['dickda.thinker'], 'thinker'),
+    thinkerCoordinator: normalizeAgent(merged['dickda.thinkerCoordinator'], 'thinkerCoordinator'),
+    thinkerCarbon: normalizeAgent(merged['dickda.thinkerCarbon'], 'thinkerCarbon'),
+    thinkerAstra: normalizeAgent(merged['dickda.thinkerAstra'], 'thinkerAstra'),
+    lead: normalizeAgent(merged['dickda.lead'], 'lead'),
     architect: {
-      standard: validAgent(merged['dickda.architectStandard'], 'architectStandard'),
-      senior: validAgent(merged['dickda.architectSenior'], 'architectSenior'),
+      standard: normalizeAgent(merged['dickda.architectStandard'], 'architectStandard'),
+      senior: normalizeAgent(merged['dickda.architectSenior'], 'architectSenior'),
     },
     builder: {
-      standard: validAgent(merged['dickda.builderStandard'], 'builderStandard'),
-      senior: validAgent(merged['dickda.builderSenior'], 'builderSenior'),
+      standard: normalizeAgent(merged['dickda.builderStandard'], 'builderStandard'),
+      senior: normalizeAgent(merged['dickda.builderSenior'], 'builderSenior'),
     },
     verifier: {
-      standard: validAgent(merged['dickda.verifierStandard'], 'verifierStandard'),
-      senior: validAgent(merged['dickda.verifierSenior'], 'verifierSenior'),
+      standard: normalizeAgent(merged['dickda.verifierStandard'], 'verifierStandard'),
+      senior: normalizeAgent(merged['dickda.verifierSenior'], 'verifierSenior'),
     },
     escalationThreshold: threshold,
     mergeMethod,
@@ -81,6 +91,9 @@ function parseOverrideAgent(raw) {
 export function effectiveSettings(env = process.env) {
   return loadSettings(env.CODA_PLUGIN_SETTINGS, {
     'dickda.thinker': parseOverrideAgent(env.THINKER),
+    'dickda.thinkerCoordinator': parseOverrideAgent(env.THINKER_COORDINATOR),
+    'dickda.thinkerCarbon': parseOverrideAgent(env.THINKER_CARBON),
+    'dickda.thinkerAstra': parseOverrideAgent(env.THINKER_ASTRA),
     'dickda.lead': parseOverrideAgent(env.LEAD),
     'dickda.architectStandard': parseOverrideAgent(env.ARCHITECT),
     'dickda.architectSenior': parseOverrideAgent(env.ARCHITECT_SENIOR),
@@ -102,20 +115,20 @@ export function resolveEngineer(trade, { tier, difficulty = 'normal', rejections
   const threshold = settings.escalationThreshold;
 
   let resolvedTier = 'standard';
-  let reason = '常规任务';
+  let reason = 'Normal 任务';
   let escalated = false;
 
   if (tier === 'senior') {
     resolvedTier = 'senior';
-    reason = '主控显式指派高级工程师';
+    reason = 'Lead显式指派Senior Engineer';
     escalated = count > 0 || difficulty === 'hard';
   } else if (difficulty === 'hard') {
     resolvedTier = 'senior';
-    reason = '高难任务自动启用高级工程师';
+    reason = 'Hard 任务自动启用Senior Engineer';
     escalated = true;
   } else if (count >= threshold) {
     resolvedTier = 'senior';
-    reason = `常规工程师已连续被打回 ${count} 次（阈值 ${threshold}），自动升级为高级工程师`;
+    reason = `Standard Engineer已连续被打回 ${count} 次（阈值 ${threshold}），自动升级为Senior Engineer`;
     escalated = true;
   }
 
@@ -132,13 +145,19 @@ export function resolveEngineer(trade, { tier, difficulty = 'normal', rejections
   };
 }
 
+// Script outputs are scalar; BPMN assembles the coda-agent context from these fields.
+export function reviewerOutputs(agent) {
+  return Object.fromEntries(['agent', 'model', 'effort', 'mode'].map(key =>
+    [`reviewer${key[0].toUpperCase()}${key.slice(1)}`, agent[key] ?? '']));
+}
+
 export function formatAgent(spec) {
   if (!spec) return '未配置';
   return [spec.agent, spec.model, spec.effort, spec.mode].filter(Boolean).join(' / ');
 }
 
 export function agentArgs(spec) {
-  const clean = validAgent(spec, 'coda-agent');
+  const clean = normalizeAgent(spec, 'coda-agent');
   const args = [];
   for (const key of ['agent', 'model', 'effort', 'mode']) {
     if (clean[key]) args.push(`--${key}`, clean[key]);
@@ -155,7 +174,7 @@ export function rolePrompt(role) {
 }
 
 export function listRoles(settings = loadSettings()) {
-  return ROLES.map(role => {
+  return Object.keys(ROLE_LABELS).map(role => {
     const meta = ROLE_LABELS[role];
     if (!meta.tiered) {
       return {
@@ -175,7 +194,7 @@ export function listRoles(settings = loadSettings()) {
       standard: settings[role].standard,
       senior: settings[role].senior,
       escalationThreshold: settings.escalationThreshold,
-      display: `常规 ${formatAgent(settings[role].standard)} ｜ 高级 ${formatAgent(settings[role].senior)}`,
+      display: `Standard ${formatAgent(settings[role].standard)} ｜ Senior ${formatAgent(settings[role].senior)}`,
     };
   });
 }

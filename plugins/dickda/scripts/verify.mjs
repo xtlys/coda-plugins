@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { agentFailure, callCodaAgent } from './agent.mjs';
 import { assetsByKind, hasAgentVerifiers, runLints } from './assets.mjs';
 import { agentArgs, effectiveSettings, loadSettings, resolveEngineer, rolePrompt } from './roles.mjs';
 import { appendGithubOutput, config, git, listFiles, managed, remoteGit, repo, requireValue } from './store.mjs';
@@ -73,25 +74,123 @@ export function runCodeVerifiers(root) {
     verifiers: checks,
     summary: [
       `L2 Lints：${lintOutcome.total ? `${lintOutcome.total - lintOutcome.failed}/${lintOutcome.total} 通过` : '无自定义规则'}`,
-      `L3 代码验证器：${checks.length ? `${checks.length - failedVerifier.length}/${checks.length} 通过` : '无代码验证脚本'}`,
+      `L3 Code Verifier：${checks.length ? `${checks.length - failedVerifier.length}/${checks.length} 通过` : '无代码验证脚本'}`,
       ...lintOutcome.results.filter(r => !r.passed).map(r => `  - [Lint 失败] ${r.path}：${r.output}`),
       ...failedVerifier.map(c => `  - [验证失败] ${c.id}：${c.output}`),
     ].join('\n'),
   };
 }
 
-export function extractJsonBlock(text, tag = 'VERDICT_JSON') {
-  const tagged = new RegExp(`\`\`\`(?:json)?\\s*//\\s*${tag}\\s*\\n([\\s\\S]*?)\`\`\``).exec(text)
-    ?? new RegExp(`${tag}\\s*[:=]?\\s*\`\`\`(?:json)?\\s*\\n([\\s\\S]*?)\`\`\``).exec(text);
-  if (tagged) return JSON.parse(tagged[1].trim());
-  const blocks = [...String(text ?? '').matchAll(/```json\s*\n([\s\S]*?)```/g)];
-  for (let i = blocks.length - 1; i >= 0; i--) {
-    try { return JSON.parse(blocks[i][1].trim()); } catch {}
+export function extractJsonBlock(text) {
+  text = String(text ?? '');
+  const markerSource = String.raw`(?:(?://|#)\s*)?(?:VERDICT|DECISION|DIAGNOSIS)_JSON\s*[:=]?\s*`;
+  const markerLine = new RegExp(`^${markerSource}$`);
+  const leadingLines = new RegExp(String.raw`^(?:\s*(?://[^\r\n]*(?:\r?\n|$)|${markerSource}(?:\r?\n|$)|${markerSource}(?=[{\[])))*`);
+  const bareMarker = /^(?:(?:\/\/|#)\s*)?(?:VERDICT|DECISION|DIAGNOSIS)_JSON\s*[:=]\s*$/;
+  const fenceRanges = [];
+  let opening = null;
+  for (const line of text.matchAll(/[^\n]*(?:\n|$)/g)) {
+    const match = line[0].trim().match(/^(`{3,}|~{3,})([^\s`~]*)\s*$/);
+    if (!opening) {
+      if (!match) continue;
+      const previousLine = text.slice(0, line.index).trimEnd().split('\n').at(-1)?.trim();
+      opening = {
+        fence: match[1], start: line.index, bodyStart: line.index + line[0].length,
+        json: /^(?:jsonc?)?$/i.test(match[2]), quoted: false, escaped: false,
+        marked: markerLine.test(previousLine),
+      };
+      continue;
+    }
+    if (match && !match[2] && match[1][0] === opening.fence[0] && match[1].length >= opening.fence.length
+      && (!opening.json || !opening.quoted)) {
+      fenceRanges.push({ ...opening, bodyEnd: line.index, end: line.index + line[0].length });
+      opening = null;
+    } else if (opening.json) {
+      // Only JSON strings can hide a closing fence; shell quoting must not affect pairing.
+      if (!opening.quoted && line[0].trimStart().startsWith('//')) continue;
+      for (const char of line[0]) {
+        if (opening.quoted) {
+          if (opening.escaped) opening.escaped = false;
+          else if (char === '\\') opening.escaped = true;
+          else if (char === '"') opening.quoted = false;
+        } else if (char === '"') opening.quoted = true;
+      }
+    }
   }
-  return null;
+  if (opening) fenceRanges.push({ ...opening, end: text.length });
+  let fenced = null;
+  const marked = [];
+  for (const range of fenceRanges) {
+    const body = text.slice(range.bodyStart, range.bodyEnd ?? range.end);
+    const prefix = body.match(leadingLines)[0];
+    const explicit = range.marked || prefix.trim().split('\n').some(line => markerLine.test(line.trim()));
+    const candidate = { start: range.start, value: null };
+    if (explicit) marked.push(candidate);
+    if ((!range.json && !explicit) || range.bodyEnd === undefined) continue;
+    try {
+      candidate.value = JSON.parse(body.slice(prefix.length));
+      if (range.json) fenced = candidate.value;
+    } catch {}
+  }
+  const candidates = [];
+  for (let start = 0; start < text.length; start++) {
+    const range = fenceRanges.find(range => range.start <= start && start < range.end);
+    if (range) { start = range.end - 1; continue; }
+    if (text[start] !== '{' && text[start] !== '[') continue;
+    const prefix = text.slice(0, start).trimEnd().split('\n').at(-1)?.trim();
+    const explicit = bareMarker.test(prefix);
+    const candidate = { start, value: null };
+    if (explicit) marked.push(candidate);
+    const stack = [];
+    let quoted = false;
+    let escaped = false;
+    for (let end = start; end < text.length; end++) {
+      const char = text[end];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') quoted = false;
+        continue;
+      }
+      if (char === '"') quoted = true;
+      else if (char === '{' || char === '[') stack.push(char);
+      else if (char === '}' || char === ']') {
+        if (stack.pop() !== (char === '}' ? '{' : '[')) break;
+        if (!stack.length) {
+          try {
+            candidate.value = JSON.parse(text.slice(start, end + 1));
+            candidates.push(candidate);
+          } catch {}
+          start = end;
+          break;
+        }
+      }
+    }
+  }
+
+  if (marked.length) return marked.sort((a, b) => a.start - b.start).at(-1).value;
+  return fenced ?? candidates.filter(candidate => !Array.isArray(candidate.value)).at(-1)?.value ?? null;
 }
 
-function skippedAgent(summary = 'L3 Agent/UI 验证器：当前 .dickda/verifiers/ 无 Agent/UI 规约文件，跳过。') {
+export function parseVerifierAnswer(answer) {
+  try {
+    const verdict = extractJsonBlock(answer);
+    requireValue(verdict && typeof verdict.passed === 'boolean', 'Verifier未输出含布尔值 passed 的结构化 JSON 结论');
+    const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+    if ('findings' in verdict) {
+      requireValue(Array.isArray(verdict.findings) && verdict.findings.every(isObject), 'Verifier findings 须为数组且每项须为非 null 普通对象');
+    }
+    if ('evidence' in verdict) {
+      requireValue(Array.isArray(verdict.evidence) && verdict.evidence.every(item => typeof item === 'string' || isObject(item)), 'Verifier evidence 须为数组且每项须为文本或非 null 普通对象');
+    }
+    if ('summary' in verdict) requireValue(typeof verdict.summary === 'string', 'Verifier summary 须为文本');
+    return { verdict };
+  } catch (error) {
+    return { error: error.message, failureKind: 'invalid_output' };
+  }
+}
+
+function skippedAgent(summary = 'L3 Agent/UI Verifier：当前 .dickda/verifiers/ 无 Agent/UI 规约文件，跳过。') {
   return { passed: true, skipped: true, summary, findings: [], evidence: [] };
 }
 
@@ -116,27 +215,34 @@ export function runAgentVerifiers(root, { tier, difficulty = 'normal', rejection
   try {
     const args = [
       ...(commit ? ['--commit', commit] : []),
-      '--title', `dickda模式 · 实证验收（${resolved.tier}）`,
+      '--title', `dickda Mode · 实证验收（${resolved.tier}）`,
       ...agentArgs(resolved.agent),
       '--json',
       '--prompt-file', promptFile,
     ];
-    const exec = runner ?? (cmdArgs => spawnSync('coda-agent', cmdArgs, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }));
-    const res = exec(args);
-    if (res.error) throw res.error;
-    requireValue(res.status === 0, `coda-agent 验证会话异常退出（退出码 ${res.status}）`);
-    const payload = JSON.parse(res.stdout);
-    const verdict = extractJsonBlock(payload.answer ?? '');
-    requireValue(verdict && typeof verdict.passed === 'boolean', '验证工程师未返回包含 passed 布尔值的结构化 JSON 结论');
+    const res = callCodaAgent(args, root, runner);
+    const failure = (reason, failureKind = res.failureKind || 'invalid_output') => {
+      const diagnostics = { exitCode: res.status, signal: res.signal, session: res.session, failureKind };
+      const summary = `L3 Agent/UI Track：${reason}\n${agentFailure({ ...res, failureKind })}`;
+      return {
+        passed: false, skipped: false, tier: resolved.tier, escalated: resolved.escalated,
+        agent: resolved.summary, ...diagnostics, summary, evidence: [],
+        findings: [{ level: 'must', title: reason, ...diagnostics, detail: summary }],
+      };
+    };
+    if (res.status !== 0 || !res.parsed) return failure('coda-agent 验证会话异常退出');
+    const payload = res.parsed;
+    const { verdict, error } = parseVerifierAnswer(payload.answer ?? '');
+    if (error) return failure(error, 'invalid_output');
     const findings = Array.isArray(verdict.findings) ? verdict.findings : [];
     const hasMust = findings.some(f => f.level === 'must');
     const passed = verdict.passed === true && !hasMust;
     if (passed) {
       const hasText = value => typeof value === 'string' && value.trim().length > 0;
-      requireValue(hasText(verdict.summary), 'Agent/UI 验收通过时 summary 须为非空文本');
+      if (!hasText(verdict.summary)) return failure('Agent/UI 验收通过时 summary 须为非空文本');
       const hasEvidence = item => hasText(item) || (item && typeof item === 'object'
         && !Array.isArray(item) && Object.values(item).some(hasText));
-      requireValue(Array.isArray(verdict.evidence) && verdict.evidence.some(hasEvidence), 'Agent/UI 验收通过时 evidence 须至少包含一项非空实证证据');
+      if (!Array.isArray(verdict.evidence) || !verdict.evidence.some(hasEvidence)) return failure('Agent/UI 验收通过时 evidence 须至少包含一项非空实证证据');
     }
     return {
       passed,
@@ -144,8 +250,9 @@ export function runAgentVerifiers(root, { tier, difficulty = 'normal', rejection
       tier: resolved.tier,
       escalated: resolved.escalated,
       agent: resolved.summary,
-      session: payload.session,
-      summary: `L3 Agent/UI 验证（${resolved.summary}）：${passed ? '通过' : '未通过'} — ${verdict.summary ?? ''}`,
+      session: res.session ?? null,
+      ...(!passed ? { exitCode: res.status ?? 0, signal: res.signal ?? null, failureKind: 'gate_rejected' } : {}),
+      summary: `L3 Agent/UI Track（${resolved.summary}）：${passed ? '通过' : '未通过'} — ${verdict.summary ?? ''}`,
       evidence: verdict.evidence ?? [],
       findings,
     };
@@ -173,7 +280,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       } else if (action === 'code') {
         result = runCodeVerifiers(root);
       } else {
-        result = process.env.UI === 'false' ? skippedAgent('L3 Agent/UI 验证已按参数跳过。') : runAgentVerifiers(root, {
+        result = process.env.UI === 'false' ? skippedAgent('L3 Agent/UI Track已按参数跳过。') : runAgentVerifiers(root, {
           tier: process.env.TIER || undefined,
           commit,
           device: process.env.DEVICE || '',
@@ -190,13 +297,18 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       const codeRes = artifacts && existsSync(join(artifacts, 'code-verify.json'))
         ? JSON.parse(readFileSync(join(artifacts, 'code-verify.json'), 'utf8'))
         : null;
-      requireValue(codeRes && typeof codeRes.passed === 'boolean' && codeRes.commit, '缺少代码验证轨道结果或提交 SHA');
+      requireValue(codeRes && typeof codeRes.passed === 'boolean' && codeRes.commit, '缺少Code Track 结果或提交 SHA');
       const agentRes = artifacts && existsSync(join(artifacts, 'agent-verify.json'))
         ? JSON.parse(readFileSync(join(artifacts, 'agent-verify.json'), 'utf8'))
-        : { passed: true, skipped: true, commit: codeRes.commit, summary: 'L3 Agent/UI 验证未启用。', evidence: [], findings: [] };
-      requireValue(agentRes.commit === codeRes.commit, `双轨验证提交不一致：代码轨道 ${codeRes.commit} vs 实证轨道 ${agentRes.commit}`);
+        : { passed: true, skipped: true, commit: codeRes.commit, summary: 'L3 Agent/UI Track未启用。', evidence: [], findings: [] };
+      requireValue(agentRes.commit === codeRes.commit, `Dual-Track Verification提交不一致：Code Track ${codeRes.commit} vs Agent/UI Track ${agentRes.commit}`);
       const passed = Boolean(codeRes.passed && agentRes.passed);
-      const report = [`验证提交：\`${codeRes.commit}\``, codeRes.summary, agentRes.summary].filter(Boolean).join('\n\n');
+      const agentDiagnostics = !agentRes.passed ? [
+        `Agent/UI Track：failureKind=${agentRes.failureKind}, exitCode=${agentRes.exitCode}`,
+        agentRes.signal ? `signal=${agentRes.signal}` : '',
+        agentRes.session ? `session=${agentRes.session}` : '',
+      ].filter(Boolean).join(', ') : '';
+      const report = [`验证提交：\`${codeRes.commit}\``, codeRes.summary, [agentRes.summary, agentDiagnostics].filter(Boolean).join('\n')].filter(Boolean).join('\n\n');
       appendGithubOutput({
         commit: codeRes.commit,
         passed,
@@ -205,7 +317,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         findings: JSON.stringify(agentRes.findings ?? []),
       });
       if (process.env.GITHUB_STEP_SUMMARY) {
-        writeFileSync(process.env.GITHUB_STEP_SUMMARY, `## dickda模式 · 双轨验证（${codeRes.commit.slice(0, 12)}）：${passed ? '通过' : '未通过'}\n\n${report}\n`, { flag: 'a' });
+        writeFileSync(process.env.GITHUB_STEP_SUMMARY, `## dickda Mode · Dual-Track Verification（${codeRes.commit.slice(0, 12)}）：${passed ? '通过' : '未通过'}\n\n${report}\n`, { flag: 'a' });
       }
     } else {
       throw new Error(`未知 verify 动作：${action}`);

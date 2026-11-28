@@ -1,23 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:coda="https://coda.pub/schema/bpmn/1.0"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="dickda-refine-definitions" targetNamespace="https://coda.pub/plugins/dickda">
-  <process id="dickda-refine" name="dickda模式 · 五层提纯与重构" isExecutable="true" coda:title="dickda模式 · 五层提纯与重构">
+  <process id="dickda-refine" name="dickda Mode · 五层Refine与重构" isExecutable="true" coda:title="dickda Mode · 五层Refine与重构">
     <extensionElements>
-      <coda:input name="branch" label="起始分支" type="branch" defaultFrom="session.branch" description="从此分支读取待消费归档；留空从目标分支开始" />
-      <coda:input name="base" label="目标分支" type="string" default="" description="仅允许仓库默认分支，留空自动读取" />
-      <coda:input name="thinker" label="思考者覆盖" type="agent" description="留空采用插件设置（默认 carbon-high）" />
-      <coda:input name="architect" label="架构（常规）覆盖" type="agent" description="留空采用插件设置（默认 antigravity claude-opus-5-5 high）" />
-      <coda:input name="architectSenior" label="架构（高级）覆盖" type="agent" description="留空采用插件设置（默认 carbon-high）" />
-      <coda:input name="builder" label="实现（常规）覆盖" type="agent" description="留空采用插件设置（默认 astra-high）" />
-      <coda:input name="builderSenior" label="实现（高级）覆盖" type="agent" description="留空采用插件设置（默认 astra-max）" />
-      <coda:input name="verifier" label="验证（常规）覆盖" type="agent" description="留空采用插件设置（默认 sol-high）" />
-      <coda:input name="verifierSenior" label="验证（高级）覆盖" type="agent" description="留空采用插件设置（默认 sol-max）" />
+      <coda:input name="branch" label="起始分支" type="branch" defaultFrom="session.branch" description="从此分支读取Pending Archive；留空从目标分支开始" />
+      <coda:input name="base" label="目标分支" type="string" default="" description="仅允许仓库Default Branch，留空自动读取" />
+      <coda:input name="thinker" label="Thinker覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="architect" label="Architect（Standard）覆盖" type="agent" description="留空采用插件设置（默认 antigravity claude-opus-5-5 high）" />
+      <coda:input name="architectSenior" label="Architect（Senior）覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="builder" label="Builder（Standard）覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="builderSenior" label="Builder（Senior）覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="verifier" label="Verifier（Standard）覆盖" type="agent" description="留空采用插件设置" />
+      <coda:input name="verifierSenior" label="Verifier（Senior）覆盖" type="agent" description="留空采用插件设置" />
     </extensionElements>
 
     <startEvent id="start" />
     <sequenceFlow id="start-prepare" sourceRef="start" targetRef="prepare" />
 
-    <scriptTask id="prepare" name="校验默认分支并确定项目锁" scriptFormat="bash" coda:timeout="5" coda:retry="2">
+    <scriptTask id="prepare" name="校验Default Branch并确定项目锁" scriptFormat="bash" coda:timeout="5" coda:retry="2">
       <extensionElements>
         <coda:env name="BASE" value="=inputs.base" />
         <coda:output name="group" />
@@ -35,7 +35,7 @@
     </serviceTask>
     <sequenceFlow id="hold-collect" sourceRef="hold" targetRef="collect" />
 
-    <scriptTask id="collect" name="读取最早未消费归档" scriptFormat="bash" coda:timeout="5" coda:retry="2">
+    <scriptTask id="collect" name="读取最早Pending Archive" scriptFormat="bash" coda:timeout="5" coda:retry="2">
       <extensionElements>
         <coda:env name="BRANCH" value="=inputs.branch" />
         <coda:output name="hasArchive" />
@@ -45,19 +45,19 @@
     </scriptTask>
     <sequenceFlow id="collect-gate" sourceRef="collect" targetRef="has-archive" />
 
-    <exclusiveGateway id="has-archive" name="是否存在待消费归档" default="no-archive" />
+    <exclusiveGateway id="has-archive" name="是否存在Pending Archive" default="no-archive" />
     <sequenceFlow id="archive-found" sourceRef="has-archive" targetRef="diagnose">
       <conditionExpression xsi:type="tFormalExpression">=collect.hasArchive = true</conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="no-archive" sourceRef="has-archive" targetRef="empty-done" />
 
-    <endEvent id="empty-done" name="无待提纯归档">
+    <endEvent id="empty-done" name="无Pending Archive">
       <extensionElements>
-        <coda:output name="summary" value="当前 .dickda/learning/ 下没有未消费的调查归档。" />
+        <coda:output name="summary" value="当前 .dickda/learning/ 下没有未消费的Investigation Archive。" />
       </extensionElements>
     </endEvent>
 
-    <scriptTask id="diagnose" name="思考者诊断五层落点" scriptFormat="bash" coda:timeout="30" coda:status="思考者正在分析归档落层">
+    <scriptTask id="diagnose" name="Thinker诊断五层落点" scriptFormat="bash" coda:timeout="30" coda:status="Thinker正在分析归档落层">
       <extensionElements>
         <coda:env name="THINKER" value="=inputs.thinker" />
         <coda:output name="needsRefactor" />
@@ -69,9 +69,9 @@
     </scriptTask>
     <sequenceFlow id="diagnose-decide" sourceRef="diagnose" targetRef="decide" />
 
-    <userTask id="decide" name="决策层拍板重构落层" coda:noteLabel="补充指示（可选）" coda:status="等待交互者确认五层演进方案">
+    <userTask id="decide" name="决策层拍板重构落层" coda:noteLabel="补充指示（可选）" coda:status="等待Interactor确认五层演进方案">
       <documentation>归档批次：{{collect.archive}}
-思考者五层落点诊断：{{diagnose.layers}}
+Thinker五层落点诊断：{{diagnose.layers}}
 是否建议结构重构 / 规则硬化：{{if diagnose.needsRefactor = true then "是" else "否（仅文档沉淀）"}}
 
 诊断摘要：
@@ -80,12 +80,12 @@
 拟执行动作清单：
 {{diagnose.plan}}
 
-你是顶层交互者（Neon）：涉及对外契约或较大重构时向用户图文说明并确认；小范围 L2 Lint / L3 Verifier 硬化可直接拍板。
-- 选「执行五层重构与提纯」：串联执行对应工种提交 L1–L3 改动、精简 L4 旧条文、推送提纯提交，交项目检查与独立审查；
-- 选「仅更新 L4 知识经验」：更新知识经验后同样检查、独立审查并提交 PR。用户批准合入默认分支后完成归档消费；
+你是顶层Interactor：涉及对外契约或较大重构时向用户图文说明并确认；小范围 L2 Lint / L3 Verifier 硬化可直接拍板。
+- 选「执行五层重构与Refine」：串联执行对应工种提交 L1–L3 改动、精简 L4 旧条文、推送Refine提交，交项目检查与Independent Code Review；
+- 选「仅更新 L4 知识经验」：更新知识经验后同样检查、Independent Code Review并提交 PR。用户批准合入Default Branch后完成Archive Consumption；
 - 选「暂不处理」：保留原归档退出。</documentation>
       <extensionElements>
-        <coda:choice id="refactor" name="执行五层重构与提纯" primary="true" />
+        <coda:choice id="refactor" name="执行五层重构与Refine" primary="true" />
         <coda:choice id="prose" name="仅更新 L4 知识经验" />
         <coda:choice id="skip" name="暂不处理" />
       </extensionElements>
@@ -113,7 +113,7 @@
       </extensionElements>
     </endEvent>
 
-    <scriptTask id="execute" name="串联提交重构改动、精简 L4 并运行验证" scriptFormat="bash" coda:timeout="60" coda:status="执行层正在串联落地五层提纯">
+    <scriptTask id="execute" name="串联提交重构改动、精简 L4 并运行验证" scriptFormat="bash" coda:timeout="60" coda:status="执行层正在串联落地五层Refine">
       <extensionElements>
         <coda:env name="ARCHITECT" value="=inputs.architect" />
         <coda:env name="ARCHITECT_SENIOR" value="=inputs.architectSenior" />
@@ -129,7 +129,7 @@
     <sequenceFlow id="execute-to-repair" sourceRef="execute-error" targetRef="repair" />
     <sequenceFlow id="execute-to-checks" sourceRef="execute" targetRef="checks" />
 
-    <serviceTask id="checks" name="运行提纯提交的项目检查" coda:action="run-workflows">
+    <serviceTask id="checks" name="运行Refine提交的项目检查" coda:action="run-workflows">
       <extensionElements>
         <coda:param name="hook" value="check" />
         <coda:param name="commit" value="=if repair.head = null then execute.head else repair.head" />
@@ -145,7 +145,7 @@
     </scriptTask>
     <sequenceFlow id="checks-to-repair" sourceRef="checks-failed" targetRef="repair" />
 
-    <scriptTask id="repair" name="从提纯分支最新提交修复并验证" scriptFormat="bash" coda:timeout="60">
+    <scriptTask id="repair" name="从Refine分支最新提交修复并验证" scriptFormat="bash" coda:timeout="60">
       <extensionElements>
         <coda:env name="ARCHITECT" value="=inputs.architect" />
         <coda:env name="ARCHITECT_SENIOR" value="=inputs.architectSenior" />
@@ -169,8 +169,8 @@
     </scriptTask>
     <sequenceFlow id="status-to-help" sourceRef="repair-status" targetRef="repair-help" />
 
-    <userTask id="repair-help" name="提纯修复受阻" coda:noteLabel="继续修复的指示或停止原因">
-      <documentation>归档 {{collect.archive}}，提纯提交 {{repair-status.head}}。修复记录见 coda://workflow-runs/{{run.id}}。
+    <userTask id="repair-help" name="Refine修复受阻" coda:noteLabel="继续修复的指示或停止原因">
+      <documentation>归档 {{collect.archive}}，Refine提交 {{repair-status.head}}。修复记录见 coda://workflow-runs/{{run.id}}。
 {{repair-status.reason}}</documentation>
       <extensionElements>
         <coda:choice id="continue" name="指示继续修复" primary="true" note="required" />
@@ -183,14 +183,14 @@
       <conditionExpression xsi:type="tFormalExpression">=repair-help.chose.continue</conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="help-stop" sourceRef="help-choice" targetRef="record-stop" />
-    <scriptTask id="continue-repair" name="记录交互者修复指示" scriptFormat="bash" coda:checkout="false">
+    <scriptTask id="continue-repair" name="记录Interactor修复指示" scriptFormat="bash" coda:checkout="false">
       <extensionElements><coda:env name="NOTE" value="=repair-help.note" /></extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/refine.mjs" continue-repair</script>
     </scriptTask>
     <sequenceFlow id="continue-to-repair" sourceRef="continue-repair" targetRef="repair" />
 
     <sequenceFlow id="checks-to-review" sourceRef="checks" targetRef="prepare-review" />
-    <scriptTask id="prepare-review" name="准备独立审查与复评基线" scriptFormat="bash" coda:checkout="false">
+    <scriptTask id="prepare-review" name="准备Independent Code Review与复评基线" scriptFormat="bash" coda:checkout="false">
       <extensionElements>
         <coda:env name="VERIFIER" value="=inputs.verifier" />
         <coda:env name="VERIFIER_SENIOR" value="=inputs.verifierSenior" />
@@ -199,20 +199,30 @@
         <coda:output name="head" />
         <coda:output name="previous" />
         <coda:output name="tier" />
+        <coda:output name="reviewerAgent" />
+        <coda:output name="reviewerModel" />
+        <coda:output name="reviewerEffort" />
+        <coda:output name="reviewerMode" />
         <coda:output name="task" />
         <coda:output name="evidence" />
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/refine.mjs" prepare-review</script>
     </scriptTask>
     <sequenceFlow id="prepare-to-review" sourceRef="prepare-review" targetRef="review-commit" />
-    <callActivity id="review-commit" name="独立审查提纯提交" calledElement="review-commit">
+    <callActivity id="review-commit" name="Independent Code ReviewRefine提交" calledElement="review-commit">
       <extensionElements>
         <coda:param name="base" value="=prepare-review.base" />
         <coda:param name="head" value="=prepare-review.head" />
         <coda:param name="previous" value="=prepare-review.previous" />
-        <coda:param name="reviewer" value='=if prepare-review.tier = "senior"
+        <coda:param name="reviewer" value='={r: if prepare-review.tier = "senior"
           then (if inputs.verifierSenior != null then inputs.verifierSenior else vars.dickda.verifierSenior)
-          else (if inputs.verifier != null then inputs.verifier else vars.dickda.verifierStandard)' />
+          else (if inputs.verifier != null then inputs.verifier else vars.dickda.verifierStandard), reviewer: context merge([
+            { agent: prepare-review.reviewerAgent },
+            if prepare-review.reviewerModel = "" then {} else { model: prepare-review.reviewerModel },
+            if prepare-review.reviewerEffort = "" then {} else { effort: prepare-review.reviewerEffort },
+            if prepare-review.reviewerMode = "" then {} else { mode: prepare-review.reviewerMode },
+            if r.options instance of context and count(get entries(r.options)) &gt; 0 then { options: r.options } else {}
+          ])}.reviewer' />
         <coda:param name="task" value="=prepare-review.task" />
         <coda:param name="evidence" value="=prepare-review.evidence" />
       </extensionElements>
@@ -239,11 +249,11 @@
     </sequenceFlow>
     <sequenceFlow id="review-incomplete" sourceRef="review-gate" targetRef="review-retry" />
 
-    <userTask id="review-retry" name="独立审查未完成">
-      <documentation>提交 {{prepare-review.head}} 尚无有效的独立审查结论。请查看本次 review-commit 的运行记录。
+    <userTask id="review-retry" name="Independent Code Review未完成">
+      <documentation>提交 {{prepare-review.head}} 尚无有效的Independent Code Review结论。请查看本次 review-commit 的运行记录。
 {{reviewed.reason}}</documentation>
       <extensionElements>
-        <coda:choice id="retry" name="重试独立审查" primary="true" />
+        <coda:choice id="retry" name="重试Independent Code Review" primary="true" />
         <coda:choice id="stop" name="停止并保留归档" />
       </extensionElements>
     </userTask>
@@ -254,8 +264,8 @@
     </sequenceFlow>
     <sequenceFlow id="retry-stop" sourceRef="retry-choice" targetRef="record-stop" />
 
-    <userTask id="adjudicate" name="交互者裁决独立审查意见" coda:noteLabel="修复指示或不采纳的客观依据">
-      <documentation>提纯提交 {{prepare-review.head}}
+    <userTask id="adjudicate" name="Interactor裁决Independent Code Review意见" coda:noteLabel="修复指示或不采纳的客观依据">
+      <documentation>Refine提交 {{prepare-review.head}}
 {{reviewed.reason}}
 
 不采纳的依据将与原审查结论一并写入 PR 和用户批准卡。</documentation>
@@ -279,7 +289,7 @@
     </sequenceFlow>
     <sequenceFlow id="decision-repair" sourceRef="review-choice" targetRef="repair" />
 
-    <scriptTask id="deliver" name="创建或更新提纯交付 PR" scriptFormat="bash" coda:timeout="5" coda:retry="2">
+    <scriptTask id="deliver" name="创建或更新Refine交付 PR" scriptFormat="bash" coda:timeout="5" coda:retry="2">
       <extensionElements>
         <coda:output name="commit" />
         <coda:output name="pr" />
@@ -289,7 +299,7 @@
     </scriptTask>
     <sequenceFlow id="deliver-to-premerge" sourceRef="deliver" targetRef="premerge" />
 
-    <serviceTask id="premerge" name="合并前检查（hook=premerge）" coda:action="run-workflows" coda:status="运行合并前检查">
+    <serviceTask id="premerge" name="Premerge Checks（hook=premerge）" coda:action="run-workflows" coda:status="运行Premerge Checks">
       <extensionElements>
         <coda:param name="hook" value="premerge" />
         <coda:param name="commit" value="=deliver.commit" />
@@ -300,9 +310,9 @@
     </boundaryEvent>
     <sequenceFlow id="premerge-err-flow" sourceRef="premerge-err" targetRef="premerge-failed" />
 
-    <scriptTask id="premerge-failed" name="记录合并前检查失败" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
+    <scriptTask id="premerge-failed" name="记录Premerge Checks失败" scriptFormat="bash" coda:checkout="false" coda:timeout="5">
       <extensionElements>
-        <coda:env name="STEP" value="合并前检查" />
+        <coda:env name="STEP" value="Premerge Checks" />
       </extensionElements>
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/refine.mjs" failed</script>
     </scriptTask>
@@ -355,7 +365,7 @@
     </scriptTask>
     <sequenceFlow id="check-to-approve" sourceRef="approval-check" targetRef="approve" />
 
-    <userTask id="approve" name="批准合并五层提纯 PR" coda:assignee="user" coda:status="等待用户裁决并批准合并">
+    <userTask id="approve" name="批准合并五层Refine PR" coda:assignee="user" coda:status="等待用户裁决并批准合并">
       <documentation>{{approval-check.summary}}
 
 - **GitHub 检查**：{{if github-checks.lines = null or github-checks.lines = "" then "无额外项" else github-checks.lines}}
@@ -363,7 +373,7 @@
       <extensionElements>
         <coda:choice id="merge" name="合并" primary="true">
           <coda:optionList value="=joiners.list" />
-          <coda:option id="notify" name="全部完成后通知交互者" default="true" />
+          <coda:option id="notify" name="全部完成后通知Interactor" default="true" />
         </coda:choice>
         <coda:choice id="stop" name="暂不合并" note="required" />
       </extensionElements>
@@ -376,7 +386,7 @@
     </sequenceFlow>
     <sequenceFlow id="approve-stop" sourceRef="approve-gate" targetRef="record-stop" />
 
-    <scriptTask id="record-stop" name="记录停止原因与保留的提纯分支" scriptFormat="bash" coda:checkout="false">
+    <scriptTask id="record-stop" name="记录停止原因与保留的Refine分支" scriptFormat="bash" coda:checkout="false">
       <extensionElements>
         <coda:env name="REASON" value="=if approve.chose.stop then approve.note else if repair-help.chose.stop then repair-help.note else review-retry.note" />
         <coda:output name="reason" />
@@ -386,7 +396,7 @@
       <script>"$CODA_NODE" "$CODA_PLUGIN_PATH/scripts/refine.mjs" stopped</script>
     </scriptTask>
     <sequenceFlow id="recorded-stop" sourceRef="record-stop" targetRef="stopped" />
-    <endEvent id="stopped" name="停止提纯，保留归档与交付分支" coda:notify="true">
+    <endEvent id="stopped" name="停止Refine，保留归档与交付分支" coda:notify="true">
       <extensionElements>
         <coda:output name="reason" value="=record-stop.reason" />
         <coda:output name="pr" value="=record-stop.pr" />
@@ -489,22 +499,22 @@ PR {{deliver.pr}} 已合并（{{merge.commit}}）。请在备注填写对应面�
     </scriptTask>
     <sequenceFlow id="summary-to-done" sourceRef="merged-summary" targetRef="done" />
 
-    <endEvent id="done-none" name="提纯已合入默认分支" coda:notify="=approval-parse.notify">
+    <endEvent id="done-none" name="Refine已合入Default Branch" coda:notify="=approval-parse.notify">
       <extensionElements>
         <coda:output name="pr" value="=deliver.pr" />
         <coda:output name="commit" value="=merge.commit" />
         <coda:output name="consumed" value="=collect.archive" />
-        <coda:output name="summary" value="已在默认分支消费归档 {{collect.archive}}。" />
+        <coda:output name="summary" value="已在Default BranchArchive Consumption {{collect.archive}}。" />
         <coda:output name="afterMerge" value="没有运行合并后的流程" />
       </extensionElements>
     </endEvent>
 
-    <endEvent id="done" name="提纯及合并后流程完成" coda:notify="=approval-parse.notify">
+    <endEvent id="done" name="Refine及合并后流程完成" coda:notify="=approval-parse.notify">
       <extensionElements>
         <coda:output name="pr" value="=deliver.pr" />
         <coda:output name="commit" value="=merge.commit" />
         <coda:output name="consumed" value="=collect.archive" />
-        <coda:output name="summary" value="已在默认分支消费归档 {{collect.archive}}。" />
+        <coda:output name="summary" value="已在Default BranchArchive Consumption {{collect.archive}}。" />
         <coda:output name="afterMerge" value="=merged-summary.line" />
       </extensionElements>
     </endEvent>

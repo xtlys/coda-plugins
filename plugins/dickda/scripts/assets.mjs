@@ -56,7 +56,7 @@ export function assetsByKind(root, kind) {
       title: basename(file),
       path: relPath,
       track: isCode ? 'code' : 'agent',
-      summary: isCode ? 'L3 代码验证器（确定性自动执行）' : 'L3 Agent/UI 实证验证规约',
+      summary: isCode ? 'L3 Code Verifier（确定性自动执行）' : 'L3 Agent/UI Verifier',
       body,
     };
   });

@@ -2,25 +2,25 @@ export function reviewVerdict(head, review) {
   if (!review || typeof review !== 'object' || !review.decision) {
     return {
       route: 'retry',
-      reason: `提交 ${head} 的独立代码审查调用失败或未返回结论，不能放行交付。`,
+      reason: `提交 ${head} 的Independent Code Review调用失败或未返回结论，不能放行交付。`,
     };
   }
   if (review.head !== head) {
     return {
       route: 'retry',
-      reason: `独立代码审查返回的提交（${review.head || '空'}）与当前交付 HEAD（${head}）不一致，不能放行交付。`,
+      reason: `Independent Code Review返回的提交（${review.head || '空'}）与当前交付 HEAD（${head}）不一致，不能放行交付。`,
     };
   }
   if (review.decision === 'INCOMPLETE') {
     return {
       route: 'retry',
-      reason: `提交 ${head} 的独立代码审查未完成（INCOMPLETE）：${review.line ?? '未知原因'}`,
+      reason: `提交 ${head} 的Independent Code Review未完成（INCOMPLETE）：${review.line ?? '未知原因'}`,
     };
   }
   if (review.decision === 'REQUEST_CHANGES') {
     return {
       route: 'changes',
-      reason: `### 独立代码审查结论：REQUEST_CHANGES\n${review.line ?? ''}\n${review.report ?? ''}`,
+      reason: `### Independent Code Review结论：REQUEST_CHANGES\n${review.line ?? ''}\n${review.report ?? ''}`,
     };
   }
   if (review.decision === 'APPROVE' || review.decision === 'COMMENT') {
@@ -28,7 +28,7 @@ export function reviewVerdict(head, review) {
   }
   return {
     route: 'retry',
-    reason: `未知的独立代码审查结论：${review.decision}`,
+    reason: `未知的Independent Code Review结论：${review.decision}`,
   };
 }
 
